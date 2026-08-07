@@ -10,8 +10,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Required by the ASP.NET Core HTTP integration (IActionResult, HttpRequest). -->
+    <!-- Required by the ASP.NET Core HTTP integration (IActionResult, HttpRequest). --> 
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The ISBM contract types (IIsbmClient, IsbmMessage, IsbmSessionKind,
+      IIsbmSessionStore, IsbmException) are shared. The REST implementation and the
+      SQL session store stay here: the store is backed by the cir schema and is not
+      reusable.
+    -->
+    <ProjectReference Include="../Oiie.Isbm.Client/Oiie.Isbm.Client.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,3 +1,27 @@
+/// <summary>
+/// The ISBM message record, session kinds and fault exception are shared with the
+/// rest of the OIIE solution and live in <c>Oiie.Isbm.Client</c>. They were
+/// duplicated here while ws-CIR was a separate repository.
+///
+/// Re-exported through this namespace so application code referring to them keeps
+/// compiling unchanged.
+///
+/// The interfaces below are deliberately NOT taken from the shared library. The
+/// shared <c>IIsbmClient</c> covers the whole Messaging Service Model — channel
+/// management, publishing, consumer requests — and the shared
+/// <c>IIsbmSessionStore</c> adds message cursors. ws-CIR is only a request
+/// provider plus a subscriber, so adopting those would force it to implement
+/// routes it never calls. It keeps the narrow interfaces it actually uses.
+///
+/// The shared <c>IsbmSessionKind</c> carries four values rather than the two
+/// ws-CIR uses. That is safe for existing <c>cir.IsbmSession</c> rows because
+/// <c>SqlIsbmSessionStore</c> persists the kind by name, not by ordinal, and both
+/// names it writes are present in the shared enum.
+/// </summary>
+global using IsbmException = Oiie.Isbm.Client.IsbmException;
+global using IsbmMessage = Oiie.Isbm.Client.IsbmMessage;
+global using IsbmSessionKind = Oiie.Isbm.Client.IsbmSessionKind;
+
 using System.Xml.Linq;
 
 namespace CirProvider.Application;
@@ -55,20 +79,6 @@ public sealed class IsbmOptions
 }
 
 /// <summary>
-/// One message read from an ISBM channel.
-///
-/// <see cref="Content"/> is null when the payload could not be parsed as XML.
-/// The message is still returned rather than swallowed: an unreadable message at
-/// the head of a queue blocks every message behind it until something removes it,
-/// and reporting the queue as empty hides that completely.
-/// </summary>
-public sealed record IsbmMessage(
-    string MessageId,
-    XElement? Content,
-    string RawContent,
-    IReadOnlyList<string> Topics);
-
-/// <summary>
 /// The subset of the ISA-95.00.06 Messaging Service Model this provider needs.
 /// ws-CIR is a request provider: it reads requests posted by consumers and posts
 /// responses back, and separately subscribes for the no-response BODs.
@@ -101,12 +111,6 @@ public interface IIsbmClient
     /// DELETE sessions/{id} — so the kind has to be supplied.
     /// </summary>
     Task CloseSessionAsync(IsbmSessionKind kind, string sessionId, CancellationToken ct = default);
-}
-
-public enum IsbmSessionKind
-{
-    ProviderRequest,
-    Subscription
 }
 
 /// <summary>

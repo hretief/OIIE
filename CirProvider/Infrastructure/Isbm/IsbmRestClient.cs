@@ -339,26 +339,3 @@ public sealed class IsbmRestClient(
             fault);
     }
 }
-
-public sealed class IsbmException(string message, HttpStatusCode status, string? fault = null)
-    : Exception(message)
-{
-    public HttpStatusCode Status { get; } = status;
-
-    /// <summary>The ISBM fault name, when the provider supplied one.</summary>
-    public string? Fault { get; } = fault;
-
-    /// <summary>
-    /// The session is unusable — either the broker never had it, or it has expired.
-    /// Recognised by the fault name as well as the status, because a Session fault
-    /// can arrive as 422 rather than 404.
-    /// </summary>
-    public bool IsSessionProblem =>
-        string.Equals(Fault, "Session", StringComparison.OrdinalIgnoreCase)
-        || Status is HttpStatusCode.NotFound or HttpStatusCode.Gone or HttpStatusCode.Conflict
-        // A server error on a session-scoped call may mean the session's stored
-        // state is no longer compatible with the provider — for instance after the
-        // provider is redeployed. Retiring the id costs one extra open; keeping it
-        // fails every poll indefinitely.
-        || Status == HttpStatusCode.InternalServerError;
-}

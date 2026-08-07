@@ -70,8 +70,13 @@ cd testing;  pwsh -NoProfile -File .\test-sandbox.ps1
 
 ## Known gaps
 
-- The ISBM client is still implemented twice, in `Oiie.Isbm.Client` and in
-  `CirProvider/Infrastructure/Isbm`. Consolidating them is the next task.
+- The ISBM *contract* types (`IsbmMessage`, `IsbmSessionKind`, `IsbmException`)
+  are now shared from `Oiie.Isbm.Client`, but the REST *implementation* is still
+  written twice: `Oiie.Isbm.Client/IsbmRestClient.cs` and
+  `CirProvider/Infrastructure/Isbm/IsbmRestClient.cs`. Sharing the implementation
+  as well means reconciling the two interfaces — the shared `IIsbmClient` covers
+  the whole Messaging Service Model, while ws-CIR needs eight operations — so it
+  was left as a separate change.
 - Deploy pipelines are still to be written. CI currently builds and tests only;
   deployment is still driven by the scripts under `deploy/`.
 
