@@ -68,6 +68,18 @@ cd SimHost;  dotnet run --launch-profile SimHost   # leave running
 cd testing;  pwsh -NoProfile -File .\test-sandbox.ps1
 ```
 
+The launch profile is `SimHost`. There is no `https` profile, and passing a name
+that does not exist silently skips `ASPNETCORE_ENVIRONMENT=Development`, so
+`appsettings.Development.json` is never loaded and every database connection
+fails with `Configuration 'Sandbox:Environment' is not set.`
+
+## Decisions worth reading first
+
+`docs/decision-records/2026-08-managed-identity-and-consolidation.md` covers how
+Service Bus authentication works (managed identity, no keys anywhere — including
+what a developer needs granted to run locally) and why `CirProvider` shares only
+the ISBM contract types rather than the client interface.
+
 ## Known gaps
 
 - The ISBM *contract* types (`IsbmMessage`, `IsbmSessionKind`, `IsbmException`)

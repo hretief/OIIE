@@ -77,8 +77,10 @@ OIIE Participant Systems (REST clients)
    zero additional resources, zero additional cost. Table Storage handles the access patterns
    (point reads by key, partition scans by channelUri) efficiently at any scale.
 
-7. **Service Bus connection flexibility.** The app accepts either a full connection string
-   (local dev / SharedAccessKey) or a bare namespace hostname (production / managed identity).
+7. **Service Bus authentication by managed identity.** The app is given the namespace
+   hostname, never a key. Both the deployed Function App and local development
+   authenticate with `DefaultAzureCredential`, so no SAS connection string is stored
+   anywhere. See `docs/decision-records/2026-08-managed-identity-and-consolidation.md`.
 
 ## Project layout
 
@@ -331,7 +333,10 @@ PUT {expirationListenerUrl}/expirations/{sessionId}/{messageId}
    - `AzureWebJobsStorage` — use `UseDevelopmentStorage=true` for Azurite, or a real
      storage connection string. This is also used for Table Storage (channels, sessions,
      correlations).
-   - `ServiceBusConnection` — full connection string with SharedAccessKey for local dev.
+   - `ServiceBusConnection__fullyQualifiedNamespace` — the namespace hostname. Auth is by
+     managed identity (`DefaultAzureCredential`), so locally this uses your signed-in
+     Azure CLI / Visual Studio identity. That identity needs **Azure Service Bus Data
+     Owner** on the namespace. Do not put a SharedAccessKey connection string here.
    - `KeyVault__uri` — set to your vault URI, or leave as `REPLACE` to use the stub
      (always validates, good for dev without Key Vault).
    - Notification triggers — disable locally unless you've created the `isbm-notifications`
@@ -482,7 +487,9 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
   -ExistingKeyVaultName mndot
 ```
 
-The script auto-fetches the Service Bus connection string — no need to paste it manually.
+The script passes the Service Bus namespace name only. It fetches no keys: the template
+grants the Function App's managed identity **Azure Service Bus Data Owner** on the
+namespace instead.
 
 **Code-only republish (skip infrastructure):**
 ```powershell
