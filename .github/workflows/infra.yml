@@ -1,0 +1,42 @@
+name: infra
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'infra/**'
+      - '.github/workflows/infra.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'infra/**'
+      - '.github/workflows/infra.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bicep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Bicep templates
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          templates=(infra/**/main.bicep)
+          if [ ${#templates[@]} -eq 0 ]; then
+            echo "No Bicep templates found under infra/." >&2
+            exit 1
+          fi
+          for t in "${templates[@]}"; do
+            echo "::group::$t"
+            az bicep build --file "$t" --stdout > /dev/null
+            echo "::endgroup::"
+          done

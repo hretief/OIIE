@@ -9,3 +9,6 @@ SimHost/appsettings.Development.json
 
 # Build output from deploy/deploy.ps1
 artifacts/
+
+# Test result files produced by dotnet test --results-directory
+TestResults/
