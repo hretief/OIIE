@@ -1,0 +1,28 @@
+meta {
+  name: Full reset
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/admin/reset
+  body: none
+  auth: none
+}
+
+docs {
+  Run this before every session. Ordering matters and is why this exists as one
+  operation rather than three:
+
+    1. close open ISBM sessions - must happen while the ids are still readable,
+       or they leak on the provider
+    2. delete and recreate channels - discards publications posted before the
+       reset, which the next run would otherwise read as its own
+    3. drop and recreate the SQL tables
+
+  Failures at steps 1 and 2 are logged and do not abort: a session or channel the
+  provider has already forgotten is the desired end state.
+
+  After this, run "ENG - add tag" onwards. Channels are already created, so
+  "ISBM - ensure channels" is not needed.
+}

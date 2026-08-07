@@ -1,0 +1,26 @@
+meta {
+  name: 08 GetEntriesByCIRID - malformed CIRID
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/entries?cirid=not-a-uuid
+  body: none
+  auth: none
+}
+
+params:query {
+  cirid: not-a-uuid
+}
+
+tests {
+  test("returns 400", function () {
+    expect(res.getStatus()).to.equal(400);
+  });
+}
+
+docs {
+  CIRID is an ISO/IEC 9834-8 UUID; anything else is a malformed request rather
+  than an empty result.
+}

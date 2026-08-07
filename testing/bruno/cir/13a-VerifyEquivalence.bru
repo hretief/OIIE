@@ -1,0 +1,36 @@
+meta {
+  name: 13a Verify the new alias joined the set
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/entries?cirid={{ciridA}}
+  body: none
+  auth: none
+}
+
+params:query {
+  cirid: {{ciridA}}
+}
+
+tests {
+  test("returns 200", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("the equivalence set now has three members", function () {
+    const entries = (res.getBody().registry || [])
+      .flatMap(r => r.categories || [])
+      .flatMap(c => c.entries || []);
+    expect(entries).to.have.lengthOf(3);
+    expect(entries.map(e => e.sourceId).sort())
+      .to.deep.equal(["System A", "System B", "System D"]);
+  });
+}
+
+docs {
+  Run 13 first. This is the practical shape of identifier reconciliation: one
+  asset register record, and aliases attached incrementally as each integration
+  comes online.
+}

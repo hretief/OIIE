@@ -1,0 +1,36 @@
+meta {
+  name: 15 UpdateEntryCIRID
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/cirids/replace
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "oldCirid": [ "{{ciridB}}" ],
+    "newCirid": "{{ciridA}}"
+  }
+}
+
+tests {
+  test("returns 204", function () {
+    expect(res.getStatus()).to.equal(204);
+  });
+}
+
+docs {
+  §3.1.4 collapses OldCIRID [1..*] onto a single NewCIRID. The specification
+  defines no faults, so an OldCIRID matching nothing is a no-op.
+
+  One UPDATE ... WHERE Cirid IN (...) inside one transaction. This is the
+  operation that argued hardest against Table Storage: there the same fan-out
+  crosses arbitrarily many partitions and cannot be made atomic.
+
+  Destructive to the fixture — run before the teardown requests, and expect
+  request 04 to return three entries afterwards rather than two.
+}

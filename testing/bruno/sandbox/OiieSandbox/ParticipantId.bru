@@ -1,0 +1,19 @@
+meta {
+  name: ParticipantId
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/admin/cir/last?participantId=eng
+  body: none
+  auth: inherit
+}
+
+params:query {
+  participantId: eng
+}
+
+settings {
+  encodeUrl: true
+}

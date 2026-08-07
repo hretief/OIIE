@@ -1,0 +1,17 @@
+{
+  "version": "2.0",
+  "logging": {
+    "applicationInsights": {
+      "samplingSettings": { "isEnabled": true, "excludedTypes": "Request" }
+    }
+  },
+  "extensions": {
+    "durableTask": {
+      "hubName": "IsbmSessions"
+    },
+    "serviceBus": {
+      "prefetchCount": 0,
+      "messageHandlerOptions": { "maxConcurrentCalls": 16, "autoComplete": false }
+    }
+  }
+}

@@ -1,0 +1,34 @@
+@page "/"
+@inject ParticipantRegistry Registry
+
+<PageTitle>OIIE Sandbox</PageTitle>
+
+<h1>OIIE Sandbox</h1>
+
+<p>@Registry.All.Count participant(s) configured.</p>
+
+<table>
+    <thead>
+        <tr>
+            <th>Participant</th>
+            <th>Schema</th>
+            <th>Source ID</th>
+            <th>Channels</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var participant in Registry.All)
+        {
+            <tr>
+                <td>
+                    <span style="border-left: 4px solid @participant.Config.AccentColour; padding-left: 8px;">
+                        @participant.Config.DisplayName
+                    </span>
+                </td>
+                <td>@participant.Schema</td>
+                <td>@participant.Config.SourceId</td>
+                <td>@participant.Config.Channels.Count</td>
+            </tr>
+        }
+    </tbody>
+</table>

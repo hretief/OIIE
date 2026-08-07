@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "baseName": { "value": "isbm" },
+    "sqlAdminUser": { "value": "isbmadmin" },
+    "sqlAdminPassword": { "value": "" },
+    "sqlSku": { "value": "Basic" },
+    "serviceBusSku": { "value": "Standard" },
+    "securityLevel": { "value": 3 },
+
+    "_comment": "Leave existing* params empty for greenfield; set them to reuse infrastructure",
+    "existingServiceBusName": { "value": "" },
+    "existingStorageAccountName": { "value": "" },
+    "existingSqlServerName": { "value": "" },
+    "existingSqlDatabaseName": { "value": "IsbmProvider" },
+    "existingKeyVaultName": { "value": "" },
+    "existingAppInsightsName": { "value": "" }
+  }
+}

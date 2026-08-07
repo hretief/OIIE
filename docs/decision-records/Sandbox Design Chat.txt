@@ -1,0 +1,198 @@
+the topic is how to test the CIR and ISBM workflows discussed in this project.  Testing should also incude a way to show the whole ecosystem work together without needing actual implementations of the participating applications.
+
+OIIE talks about REG-LOCATION, REG-ASET, REG-MATERIAL, REG-PRODUCT systems.
+
+Propose a way we can create placeholder web apps that represent these "REG" applications.  These placeholders need to perform realistic workflows, potemtially from OIIE using the relevant BODs.
+
+
+Architected multi-layered testing framework with shared participant engine
+Architected multi-layered testing framework with shared participant engine
+The core idea: one engine, several personalities
+Don't build four apps. Build one participant runtime (SimHost) that is entirely config-driven, and give it four personality packs. A "REG app" then becomes a folder of configuration + BOD handlers + seed data, not a codebase. Adding CONSTRUCT, ENG, or MMS later costs a config file, not a project.
+
+Sandbox/
+  SimHost/                    Blazor Server app + headless runner
+    Participant/              identity, channel binding, lifecycle
+    Isbm/                     (references shared Oiie.Isbm.Client)
+    Bods/                     dispatcher, readers/writers per noun
+    Store/                    per-participant SQLite "system of record"
+    Cir/                      registration + equivalence resolution client
+    Ui/                       inbox/outbox, data grids, trigger buttons
+  Personalities/
+    reg-location/  reg-asset/  reg-product/  reg-material/
+    eng/  construct/  mms/
+  Scenarios/                  YAML choreographies + assertions
+  Testing/                    xUnit ecosystem tests
+Phase 0 is a prerequisite: extract IsbmRestClient, SessionHelper.OpenAndConfirmAsync, and the session store out of CIR/CirProvider/Infrastructure/ into Oiie.Isbm.Client. Every participant must use the tested client. Hand-rolling HTTP in the simulator is how you end up debugging channelUri vs uri again in seven places.
+
+What each personality owns and does
+Mapping straight onto the OIIE scenario table and the REG rows of the BOD catalog (mim_5xxx):
+
+Participant	Owns	Scenarios	BODs
+ENG (source stub)	design network/segment/tag	1, 27	SyncSegments publish
+REG-LOCATION	Segments, breakdown structure, functional locations	1, 2, 27, 28	in: SyncSegments; out: SyncSegments, Get/ShowSegments (5004, 5015, 5018), GetBreakdownStructureChildren (5047)
+CONSTRUCT (source stub)	as-built asset records	4, 40	SyncAssets, ProcessAssetSegmentEvent
+REG-ASSET	Assets, AssetSegmentEvents	4, 5, 33	Get/ShowAssets (5005), ProcessAssetSegmentEvent → AcknowledgeAssetSegmentEvent (5040/5041), SyncAssetSegmentEvent
+REG-PRODUCT	Models, model revisions	7, 8, 25, 26, 37	Get/ShowModels (5006), GetModelChildRevisions (5011), GetModelParentRevisions (5017), SyncModels
+REG-MATERIAL	part/material master, stock, model↔material links	36, 38	GetModels/ShowModels, GetManufacturers→ShowOrganizations (5003)
+MMS / O&M (sink)	its own local tag + asset IDs	2, 5, 11, 33	subscriber; resolves foreign IDs via CIR
+REG-ASSET is the one to build first after REG-LOCATION — it's the only participant that exercises request/response and publish/subscribe and BOD confirmation in a single flow.
+
+Every participant registers its own objects into ws-CIR on write (Category = Segment / Asset / Model / Material, SourceID = participant ID, SourceOwnerID = org), and resolves foreign identifiers through GetRegistry / GetEquivalentEntries on read. That's what makes the demo about CIR rather than incidentally using it.
+
+The choreographies
+Each is a YAML file: participants, channel/topic setup, ordered steps, and assertions.
+
+A — Information handover (UC1). ENG publishes SyncSegments. REG-LOCATION ingests, registers entries in CIR, republishes on the O&M channel. MMS receives, sees an unknown SourceID, calls CIR, gets the CIRID cluster, maps to its own tag. Proves: pub/sub fan-out + CIR as the identity bridge.
+
+B — Asset install (UC5). CONSTRUCT posts ProcessAssetSegmentEvent on a request channel. REG-ASSET reads it, applies, posts AcknowledgeAssetSegmentEvent as the response, then publishes SyncAssetSegmentEvent to O&M. Proves: request/response, response correlation on sessions/{id}/requests/{requestMessageId}/response, confirmation semantics, and the pub/sub follow-on.
+
+C — Product data pull (UC4). REG-MATERIAL issues GetModels with a filter; REG-PRODUCT answers ShowModels. Then REG-PRODUCT publishes an engineering change advisory that REG-MATERIAL and MMS both consume (scenarios 25/26).
+
+D — Identity reconciliation. ENG and CONSTRUCT both describe the same physical tag under different IDs. Operator uses the control tower to merge; the sandbox issues ChangeEntryCIRID; MMS re-resolves and now sees one object. This is the scenario that justifies CIR's existence to a non-technical audience.
+
+E — Cold bootstrap via Service Directory. A new participant starts knowing only the Service Directory endpoint. It sends GetIsbmService, receives ShowIsbmService, self-configures endpoint/channel/topic/token, and joins scenario A mid-flight. This is your acceptance test for the Service Directory work that's next up, and it's the most persuasive demo in the set.
+
+F — Negative paths. Expired publications, sessions abandoned and recovered, filter that matches nothing, schema-invalid BOD rejected with a fault, duplicate delivery. Also: give participants a real NotifyListener endpoint — the sandbox is the natural vehicle to close the three ISBM conformance skips.
+
+How this becomes a test suite, not just a demo
+Two run modes over identical code:
+
+--mode ci — headless, seeded deterministic IDs, injected clock, exits non-zero on assertion failure. Lives in Sandbox/Testing/Ecosystem.Tests, runs against the deployed Azure ISBM/CIR endpoints or a local pair.
+--mode demo — Blazor UI, manual stepping, pause-on-step.
+Assertion vocabulary in the scenario files:
+
+yaml
+- assert: message_received
+  at: mms
+  channel: /Enterprise/Site/OandM
+  bod: SyncSegments
+  within: 30s
+- assert: bod_valid          # XSD validation, not just well-formed
+- assert: store_contains
+  at: reg-asset
+  query: "AssetSegmentEvent where AssetId='P-101-A' and Type='Install'"
+- assert: cir_equivalent
+  entries: ["ENG:TIC-106", "REG-LOCATION:234443", "MMS:UNIT101.TOP_TEMP"]
+Correlation is the piece that makes debugging tractable. Generate a scenario GUID, carry it in the BOD ApplicationArea/BODID and in an ISBM message topic or property, and stamp it as a custom dimension on every App Insights event from every participant plus the ISBM and CIR providers. One KQL query then reconstructs the entire multi-hop exchange as a single timeline — which is also, incidentally, exactly the artifact you want to show a customer.
+
+The web UI
+Per-participant page: identity card (SourceID, SourceOwnerID, ISBM endpoint, channels/topics/session state), a grid of the objects it owns, an inbox/outbox with raw BOD XML and a green/red schema-validation badge, and buttons for the actions this participant can initiate ("Publish as-built segment", "Request models matching…").
+
+Control tower page: live swimlane of messages crossing participants, the channel topology, and a CIR equivalence explorer showing CIRID clusters spanning sources. This is the single screen that answers "does the ecosystem work?" without anyone reading XML.
+
+Scenario runner: pick a choreography, step or run, watch assertions turn green.
+
+Deployment: one Azure Container App or App Service running all personalities as configured tenants, not seven Function Apps. Keeps cost and provisioning noise down, and provision.ps1 can carry the ISBM/CIR settings forward the way it already does.
+
+Phasing
+Phase	Deliverable
+0	Oiie.Isbm.Client extracted from CIR; shared session helper
+1	SimHost engine, headless mode, ENG + REG-LOCATION, Scenario A
+2	REG-ASSET, request/response + confirmations, Scenarios B and D
+3	REG-PRODUCT + REG-MATERIAL, Scenario C
+4	Blazor UI + control tower + App Insights correlation view
+5	Service Directory bootstrap, Scenario E; notification listeners, Scenario F
+Phases 1–2 alone give you a defensible end-to-end ecosystem test. Phase 4 is what you show people.
+
+The open dependency
+The project files give us the ws-CIR BOD schemas and Meta.xsd, but not the CCOM 4.x BOD schemas for the REG nouns — SyncSegments, ShowAssets, ProcessAssetSegmentEvent, ShowModels and friends. Without those, participants can exchange structurally plausible XML but the bod_valid assertion has nothing to validate against, and given the defect history in both the ws-CIR package and the Service Directory PDF, inferring those shapes is exactly the kind of guessing that has cost time before.
+
+Do you have the CCOM BOD schema package (or a MIMOSA reference implementation of it) available? If yes, phase 1 can validate from day one. If not, I'd scope phases 1–2 to the BODs we hold schemas for and treat CCOM payloads as opaque-but-shaped until the package lands.
+
+
+Diagnosed missing telemetry data and response routing issues
+Diagnosed missing telemetry data and response routing issues
+The observed line is blank — BODID , ISBM message , — so /admin/cir/last returned nothing and we're diagnosing from an empty object. Fixing the diagnostic before drawing any conclusion:
+
+
+Ran 4 commands, read a file
+Ran 4 commands, read a file
+Progress worth noting: 29 passed now — the CIR registry clear succeeded, so DELETE /registries/OIIE-SANDBOX worked and that step is doing its job.
+
+But the finding is blank, and I shouldn't have let the script print BODID , as though it were an observation. It now fails explicitly when the exchange is missing, rather than reporting empty fields.
+
+The code is wired correctly here — CirTelemetry is registered, injected, and Record is called before the post, so it can't be missed on a failure path. Which leaves two possibilities, and the guard will tell you which:
+
+The deployed build predates the telemetry. You redeployed for the CirClient rename, but CirTelemetry.cs and the /admin/cir/last endpoint went in afterwards.
+
+The app restarted between the registration and the query. It's in-memory by design.
+
+Redeploy and rerun. Before that, one direct check that costs nothing:
+
+powershell
+$key = az keyvault secret show --vault-name mndot --name sandbox-admin-key-demo --query value -o tsv
+Invoke-RestMethod -Uri "https://oiie-sandbox-demo.azurewebsites.net/admin/cir/last" `
+  -Headers @{ 'x-sandbox-admin-key' = $key } | ConvertTo-Json -Depth 4
+Without ?participantId= it returns every recorded exchange. If that's empty too, it's the build. A 404 means the endpoint isn't deployed at all, which settles it immediately.
+
+
+test-sandbox.ps1
+ 
+
+Oiie sandbox
+ZIP 
+Invoke-RestMethod -Uri "https://oiie-sandbox-demo.azurewebsites.net/admin/cir/last" `
+  -Headers @{ 'x-sandbox-admin-key' = $key } | ConvertTo-Json -Depth 4
+
+Response []
+
+
+Investigated missing telemetry data despite successful registration
+Investigated missing telemetry data despite successful registration
+Endpoint is deployed (200 with [], not 404), so CirTelemetry and the Record call are in the build — they went in as one change. Something cleared it or the query hit a different instance.
+
+Two commands settle it:
+
+powershell
+$url = "https://oiie-sandbox-demo.azurewebsites.net"
+$h = @{ 'x-sandbox-admin-key' = $key }
+
+Invoke-RestMethod -Method Post -Uri "$url/admin/eng/cir/register" -Headers $h | ConvertTo-Json
+Invoke-RestMethod -Uri "$url/admin/cir/last" -Headers $h | ConvertTo-Json -Depth 4
+Run them back to back. Record happens before the post, so if the register call reaches ExchangeAsync at all, last cannot be empty a second later.
+
+If it's populated — the earlier emptiness was the app recycling between the test and your query. In-memory telemetry is the wrong place for something we keep needing after the fact; it should go in the Message archive alongside every other BOD, which survives restarts and is already per-participant.
+
+If it's still empty — ExchangeAsync isn't being reached, and the register call's own response will say why. Most likely SyncEngAsync returned early, in which case the response carries a note.
+
+Also worth ruling out scale-out, which would explain it entirely:
+
+powershell
+az webapp show -g HilmarRetiefRG -n oiie-sandbox-demo --query "{instances:siteConfig.numberOfWorkers, alwaysOn:siteConfig.alwaysOn}"
+More than one worker and the picture is clear: the registration ran on one instance, /admin/cir/last answered from another. That would also mean the inbox pump is running twice and two subscriptions are competing for the same channel — worth knowing regardless of this bug.
+
+
+Message collapsed
+
+Diagnosed response delivery gap, escalated to CIR team
+Diagnosed response delivery gap, escalated to CIR team
+Telemetry works — the earlier empty result was the app recycling. Fresh evidence, and it isolates the problem precisely.
+
+BODID 9dbcab4f-c86e-4752-bf1f-d9ee4129023d, ISBM message f74d038f-b5a2-4878-a365-96ea05643939, sent 2026-08-07T15:34:05Z.
+
+The important realisation: their manual test used POST /api/bods, which bypasses ISBM entirely. So we know their BOD reader and fault generation work, but we have never once seen the CIR post a response over ISBM. That leg is untested on their side and is exactly where this is failing.
+
+Adding our session id so they can correlate:
+
+
+Ran a command, read a file
+Ran a command, read a file
+For the CIR agent
+BODID 9dbcab4f-c86e-4752-bf1f-d9ee4129023d, ISBM request message f74d038f-b5a2-4878-a365-96ea05643939, posted 2026-08-07T15:34:05Z to /OIIE/CIR/Request topic ws-CIR. No response within 120s.
+
+Your POST /api/bods test proved the reader and the fault path work — but that endpoint bypasses ISBM. We have never observed the CIR post a response over ISBM. That leg is the untested one, and it's where this fails.
+
+Same document as before, now against an empty registry — we clear OIIE-SANDBOX at the start of every run, so this should have been a clean AcknowledgeRegistry, not a duplicate.
+
+What would settle it, from your logs on that BODID:
+
+Did the timer consume this message? If it never appears, the request wasn't read despite being queued.
+
+Was PostResponse called, and what did it return? Your note says a response that can't be posted leaves the message queued for retry — but our queue check showed it emptied, so either it posted or it was removed some other way.
+
+Which session and message id did you post the response against? We await at sessions/{consumerSession}/requests/f74d038f-b5a2-4878-a365-96ea05643939/response. If your provider read a different message id, the response lands somewhere we never look. Our loopback confirmed the two ids match within one process, but never across two.
+
+Worth adding your own equivalent of /admin/cir/last — the outbound response XML plus the message id it was posted against. Our version turned this from speculation into two specific questions, and the symmetric capture on your side would close the remaining gap.
+
+Redeploy when convenient; the next capture will include consumerSessionId and waitedSeconds, which is the pair they'd need to compare against their own

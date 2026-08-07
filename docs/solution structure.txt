@@ -1,0 +1,212 @@
+Guiding principles
+One repo, one solution → Copilot sees the whole SANDBOX → CIR → ISBM flow.
+Deploy independently → keep separate infra + path-filtered CI/CD per app.
+Extract shared contracts → eliminate the CCOM/ISBM/BOD duplication you have today.
+Solution folders + .slnf filters → full context for Copilot, focused loading when you want it.
+What's duplicated today (the real problem)
+Concept	Currently lives in	Should becomeCCOM model	Oiie.Ccom, XSD/CCOM XSD, Schemas/ccom, CIR Domain/Bod	OpenOM.Ccom + /schemas/ccom
+ISBM abstractions	Oiie.Isbm.Abstractions, ISBM ISBMProvider/Abstractions	OpenOM.Isbm.Abstractions
+ISBM client	Oiie.Isbm.Client, CIR Infrastructure/Isbm	OpenOM.Isbm.Client
+BOD / OAGIS	Sandbox Bods/Oagis, CIR Domain/Bod, Schemas/oagis	OpenOM.Bod + /schemas/oagis
+XSD sets	XSD/, Schemas/, CIR Testing	single /schemas root
+Middleware/correlation	duplicated in each app's Middleware	OpenOM.Common
+Proposed structure
+Plain Text
+1
+OpenOM/ # monorepo root
+2
+├── OpenOM.sln # ← single solution (Copilot sees everything)
+3
+│
+4
+├── src/
+5
+│ ├── shared/ # versioned, independently packable libs
+6
+│ │ ├── OpenOM.Common/ # middleware, correlation, logging
+7
+│ │ ├── OpenOM.Ccom/ # canonical CCOM domain model
+8
+│ │ ├── OpenOM.Bod/ # OAGIS/BOD verbs + nouns
+9
+│ │ ├── OpenOM.Isbm.Abstractions/ # interfaces (channels, topics)
+10
+│ │ └── OpenOM.Isbm.Client/ # ISBM HTTP/SOAP client impl
+11
+│ │
+12
+│ ├── isbm/ # ── DELIVERABLE 1 ──
+13
+│ │ └── OpenOM.Isbm.Provider/ # func app (Durable, Http, Functions)
+14
+│ │
+15
+│ ├── cir/ # ── DELIVERABLE 2 ──
+16
+│ │ └── OpenOM.Cir.Provider/ # func app (Application/Domain/Infra)
+17
+│ │
+18
+│ └── sandbox/ # ── DELIVERABLE 3 ──
+19
+│ └── OpenOM.Sandbox.SimHost/ # web app (Components, Personalities)
+20
+│
+21
+├── tests/
+22
+│ ├── OpenOM.Isbm.Tests/
+23
+│ ├── OpenOM.Cir.Tests/
+24
+│ └── OpenOM.Sandbox.Tests/ # (was SimHost.Tests)
+25
+│
+26
+├── schemas/ # ← single source of truth for all XSD
+27
+│ ├── ccom/
+28
+│ ├── cir/
+29
+│ ├── bod/
+30
+│ └── oagis/
+31
+│
+32
+├── infra/ # per-deliverable, stays independent
+33
+│ ├── isbm/ (modules)
+34
+│ ├── cir/ (modules)
+35
+│ └── sandbox/
+36
+│
+37
+├── deploy/ # per-deliverable deploy scripts + sql
+38
+│ ├── isbm/
+39
+│ ├── cir/
+40
+│ └── sandbox/sql/
+41
+│
+42
+├── testing/
+43
+│ └── bruno/ # consolidated collections + environments
+44
+│ ├── isbm/
+45
+│ ├── cir/
+46
+│ └── sandbox/
+47
+│
+48
+├── docs/
+49
+│ ├── architecture.md # SANDBOX → CIR → ISBM overview
+50
+│ ├── sequence-diagrams.md
+51
+│ └── troubleshooting.md
+52
+│
+53
+└── .github/
+54
+└── workflows/ # path-filtered = independent deploys
+55
+├── isbm.yml
+56
+├── cir.yml
+57
+├── sandbox.yml
+58
+└── shared.yml
+Show less
+How you keep independent deliverables
+
+This is the key part — single solution does not mean single deployment.
+
+1. Path-filtered GitHub Actions. Each app deploys only when its own code (or a shared lib it depends on) changes:
+
+YAML
+1
+# .github/workflows/cir.yml
+2
+on:
+3
+push:
+4
+paths:
+5
+- 'src/cir/**'
+6
+- 'src/shared/**' # CIR depends on shared contracts
+7
+- 'infra/cir/**'
+Show more lines
+
+2. Separate infra folders — each deliverable owns its Bicep modules and deploy scripts, so releases stay decoupled.
+
+3. Project references for shared libs (simplest), or promote src/shared/* to versioned NuGet packages on a private feed if you want hard version boundaries between apps. Start with project references; move to NuGet only if teams need to pin versions.
+
+Solution folders (what Copilot and you see in VS)
+Plain Text
+1
+OpenOM.sln
+2
+├── 01-Apps
+3
+│ ├── ISBM.Provider
+4
+│ ├── CIR.Provider
+5
+│ └── Sandbox.SimHost
+6
+├── 02-Shared
+7
+│ ├── OpenOM.Common
+8
+│ ├── OpenOM.Ccom
+9
+│ ├── OpenOM.Bod
+10
+│ ├── OpenOM.Isbm.Abstractions
+11
+│ └── OpenOM.Isbm.Client
+12
+├── 03-Tests
+13
+└── 04-Solution Items # docs/, schemas/, README
+Show more lines
+
+Add schemas/ and docs/ as Solution Items — that way Copilot Enterprise indexes your XSDs and architecture.md as context, so questions like "trace a publication request from SANDBOX through CIR into ISBM" get answered against real contracts.
+
+Focused loading with .slnf
+
+Keep OpenOM.sln for full Copilot context, but add solution filters for day-to-day focus:
+
+Plain Text
+1
+OpenOM.sln # everything (Copilot context)
+2
+Cir.slnf # CIR + shared + tests
+3
+Isbm.slnf # ISBM + shared + tests
+4
+Sandbox.slnf # SANDBOX + shared + tests
+Show more lines
+Suggested migration order
+Create OpenOM.sln and add all three existing app projects as-is (nothing moves yet).
+Extract OpenOM.Isbm.Abstractions + OpenOM.Isbm.Client from Sandbox; repoint CIR's Infrastructure/Isbm to reference them. This alone kills a big duplication.
+Extract OpenOM.Ccom and consolidate the three schema copies into /schemas.
+Extract OpenOM.Bod (OAGIS verbs/nouns).
+Pull middleware/correlation into OpenOM.Common.
+Add path-filtered workflows and delete the per-repo .github/workflows once verified.
+Add .slnf filters and docs/architecture.md.

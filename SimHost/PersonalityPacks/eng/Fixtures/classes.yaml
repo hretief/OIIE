@@ -1,0 +1,67 @@
+# Reference data as ENG holds it.
+#
+# ENG works to the full library including leaf classes, because engineering is
+# where classification originates. REG-LOCATION deliberately holds less - see its
+# own fixture file.
+
+propertyDefinitions:
+  - key: rdl:RangeMinimum
+    name: Range minimum
+    dataType: Numeric
+    unitOfMeasure: degC
+  - key: rdl:RangeMaximum
+    name: Range maximum
+    dataType: Numeric
+    unitOfMeasure: degC
+  - key: rdl:ControlAction
+    name: Control action
+    dataType: Character
+  - key: rdl:SafetyIntegrityLevel
+    name: Safety integrity level
+    dataType: Character
+
+classes:
+  - key: rdl:Equipment
+    name: Equipment
+    appliesTo: Segment
+    kind: Taxonomy
+    # No properties. Identity and description are CCOM spine fields
+    # (IDInInfoSource, ShortName, Description); a class property set that
+    # redeclares them would claim Required values that never arrive as
+    # properties, because the sender puts them in the spine.
+    properties: []
+
+  - key: rdl:Instrument
+    name: Instrument
+    parent: rdl:Equipment
+    appliesTo: Segment
+    kind: Taxonomy
+    properties:
+      - definition: rdl:RangeMinimum
+        requirement: Recommended
+      - definition: rdl:RangeMaximum
+        requirement: Recommended
+        minValue: -273
+        maxValue: 2000
+
+  - key: rdl:TemperatureIndicatingController
+    name: Temperature indicating controller
+    parent: rdl:Instrument
+    appliesTo: Segment
+    kind: Taxonomy
+    properties:
+      - definition: rdl:ControlAction
+        requirement: Required
+      # Narrowing: an instrument's range is Recommended and unbounded above 2000,
+      # but a temperature controller must have one and cannot exceed 1200.
+      - definition: rdl:RangeMaximum
+        requirement: Required
+        maxValue: 1200
+
+  - key: rdl:SafetyCritical
+    name: Safety critical
+    appliesTo: Segment
+    kind: Aspect
+    properties:
+      - definition: rdl:SafetyIntegrityLevel
+        requirement: Required

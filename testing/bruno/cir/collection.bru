@@ -1,0 +1,23 @@
+headers {
+  x-functions-key: {{functionKey}}
+}
+
+auth {
+  mode: none
+}
+
+docs {
+  # ws-CIR Provider conformance pass
+
+  Run the whole folder top to bottom. Requests are ordered so that state created
+  early is asserted against and then torn down at the end — a full pass leaves
+  the database exactly as it found it.
+
+  CIRIDs are supplied explicitly rather than minted server-side, because
+  CreateRegistry returns no body (the spec's AcknowledgeRegistry BOD carries no
+  generated identifiers either). Fixed UUIDs keep the suite deterministic.
+
+  Operations still pending in the store return 501 with a problem+json body
+  naming the spec clause. Those tests assert 501 on purpose — flip them to the
+  success case as each one lands.
+}

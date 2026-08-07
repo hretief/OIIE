@@ -1,0 +1,56 @@
+meta {
+  name: 13 CreateEquivalentEntries
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/equivalent-entries
+  body: json
+  auth: none
+}
+
+body:json {
+  [
+    {
+      "existingIdInSource": "234443",
+      "existingSourceId": "System A",
+      "registryId": "{{registryId}}",
+      "categoryId": "{{categoryId}}",
+      "categorySourceId": "{{categorySourceId}}",
+      "entry": {
+        "idInSource": "TIC-106",
+        "sourceId": "System D",
+        "name": "Top Temp Control"
+      }
+    }
+  ]
+}
+
+script:post-response {
+  // The new entry should have adopted ciridA from the existing entry.
+  bru.setVar("expectedCirid", bru.getEnvVar("ciridA"));
+}
+
+tests {
+  test("returns 201", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  §3.1.2, the semantic core of the specification: this is where equivalence is
+  actually asserted. Everything else manages a registry.
+
+  Three CIRID merge rules:
+
+  1. The existing Entry has a CIRID -> the new Entry adopts it, and any CIRID
+     supplied on the new Entry is discarded.
+  2. Only the new Entry has one -> it propagates BACKWARD onto the existing
+     Entry. This modifies a record the caller never asked to change, and is the
+     rule implementations most often get wrong.
+  3. Neither has one -> the server mints a UUID and assigns it to both.
+
+  Here entry 234443/System A already carries ciridA, so rule 1 applies and
+  TIC-106/System D joins that equivalence set. Verify with request 13a.
+}

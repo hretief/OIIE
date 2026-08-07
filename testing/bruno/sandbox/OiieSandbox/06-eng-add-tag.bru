@@ -1,0 +1,27 @@
+meta {
+  name: ENG - add tag
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/admin/eng/tags
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "tagNumber": "TIC-106",
+    "serviceDescription": "Top temperature control",
+    "unitNumber": "101",
+    "classKey": "rdl:TemperatureIndicatingController"
+  }
+}
+
+docs {
+  Creates a tag in ENG's own vocabulary. No message is sent: edits accrue without
+  ceremony, and publication is a separate deliberate act.
+
+  Omit classKey to see the validation gate block promotion.
+}

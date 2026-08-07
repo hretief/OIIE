@@ -1,0 +1,183 @@
+@startuml phase0-loopback
+title Phase 0 — end-to-end loopback\nENG publishes SyncSegments to a live ISBM provider and reads it back
+
+skinparam responseMessageBelowArrow true
+skinparam sequenceMessageAlign left
+skinparam maxMessageSize 240
+skinparam ParticipantPadding 10
+skinparam BoxPadding 12
+
+actor "Operator" as User
+
+box "SimHost"
+  participant "ENG\npersonality" as Eng
+  participant "Outbox\ndispatcher" as Outbox
+  participant "Inbox\npump" as Inbox
+  participant "Session\nmanager" as Sessions
+end box
+
+database "Azure SQL\nschema: eng" as Db
+database "Blob\nsandbox-payloads" as Blob
+participant "ws-ISBM provider" as Isbm
+
+== One-time setup ==
+
+User -> Eng : POST /admin/schema/init
+activate Eng
+Eng -> Db : create tables from the EF model
+note right of Eng
+  No migrations. The schema name is a
+  parameter, and every session starts
+  from reset — there is nothing to
+  migrate and no history worth keeping.
+end note
+Eng --> User : 10 tables in schema eng
+deactivate Eng
+
+User -> Isbm : POST /admin/isbm/channels/ensure
+activate Isbm
+Isbm --> User : channel /OIIE-SANDBOX/Enterprise/Site/Eng
+deactivate Isbm
+
+== Authoring — no messages ==
+
+User -> Eng : POST /admin/eng/tags\nTIC-106
+activate Eng
+Eng -> Db : INSERT Tag, Provenance\n(one transaction)
+note right of Eng
+  ENG's own vocabulary: TagNumber,
+  ServiceDescription, PidReference.
+  Nothing here is a Segment.
+end note
+Eng --> User : WorkInProgress
+deactivate Eng
+
+== Release event ==
+
+User -> Eng : POST /admin/eng/promote\n"Rev C — Unit 101 reroute"
+activate Eng
+
+Eng -> Eng : validation gate
+
+alt findings present
+  Eng -> Db : INSERT ValidationFinding
+  Eng --> User : 422 with findings — release blocked
+else gate passes
+  Eng -> Db : UPDATE Tag → Published\nINSERT NamedVersion, Outbox\n(single transaction)
+  note right of Eng
+    Publication intent commits with the
+    domain change, so the BOD is derived
+    from persisted state. A form never
+    authors a BOD.
+  end note
+  Eng --> User : released
+end
+deactivate Eng
+
+== Dispatch ==
+
+Outbox -> Db : SELECT Outbox WHERE Pending
+activate Outbox
+
+Outbox -> Outbox : SyncSegmentsBuilder\nTag rows → Segment + attributes
+note right of Outbox
+  The mapper is the interoperability
+  work: ENG column names on one side,
+  CCOM elements on the other.
+end note
+
+Outbox -> Sessions : session for Publication
+activate Sessions
+Sessions -> Db : SELECT IsbmSession
+alt no stored session
+  Sessions -> Isbm : POST publication-sessions\n{channelUri}
+  activate Isbm
+  Isbm --> Sessions : sessionId
+  deactivate Isbm
+  Sessions -> Sessions : confirm before use
+  note right of Sessions
+    Session state is eventually
+    consistent; a post issued straight
+    after open can fail against a
+    session not yet visible.
+  end note
+  Sessions -> Db : INSERT IsbmSession
+end
+Sessions --> Outbox : sessionId
+deactivate Sessions
+
+Outbox -> Isbm : POST sessions/{id}/publications\nmessageContent{mediaType, inlineContent}
+activate Isbm
+Isbm --> Outbox : messageId
+deactivate Isbm
+
+Outbox -> Blob : store BOD body
+Outbox -> Db : INSERT Message (Outbound)\nUPDATE Outbox → Posted
+deactivate Outbox
+
+== Delivery ==
+
+Inbox -> Sessions : session for Subscription
+activate Inbox
+activate Sessions
+Sessions -> Isbm : POST subscription-sessions\n{channelUri, topics, filterExpressions}
+note right of Sessions
+  filterExpressions must be present.
+  Absent leaves it null rather than
+  empty, and the provider's filter
+  engine has no null guard.
+end note
+Sessions --> Inbox : sessionId
+deactivate Sessions
+
+Inbox -> Isbm : GET sessions/{id}/publication
+activate Isbm
+Isbm --> Inbox : messageId, inlineContent
+deactivate Isbm
+
+Inbox -> Db : SELECT cursor
+alt already handled
+  Inbox -> Isbm : DELETE sessions/{id}/publication
+  note right of Inbox
+    Read but not removed on an earlier
+    run. Removing rather than
+    reprocessing is what stops a restart
+    duplicating work.
+  end note
+else new message
+  Inbox -> Inbox : BodEnvelope.Parse\nvalidate against XSDs
+  Inbox -> Blob : store BOD body
+  Inbox -> Db : INSERT Message (Inbound)
+
+  alt handler registered
+    Inbox -> Inbox : bind classes, ingest properties
+    Inbox -> Db : UPDATE Message → Applied
+  else no handler
+    Inbox -> Db : UPDATE Message → Pending
+    note right of Inbox
+      Archived, not dropped. A participant
+      is expected to receive BODs it
+      cannot act on, and the wire view has
+      to show them.
+    end note
+  end
+
+  Inbox -> Db : UPDATE cursor
+  Inbox -> Isbm : DELETE sessions/{id}/publication
+end
+deactivate Inbox
+
+== Result ==
+
+User -> Eng : GET /admin/eng/messages
+activate Eng
+Eng --> User : two rows, one correlationId\nOutbound then Inbound
+deactivate Eng
+
+note over User, Isbm
+  The correlation id travels in ApplicationArea/BODID, so it survives the
+  store-and-forward hop that HTTP tracing cannot. One query reconstructs the
+  exchange across every participant and both providers.
+end note
+
+@enduml

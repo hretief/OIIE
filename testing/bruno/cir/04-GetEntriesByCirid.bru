@@ -1,0 +1,44 @@
+meta {
+  name: 04 GetEntriesByCIRID - equivalents
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/entries?cirid={{ciridA}}
+  body: none
+  auth: none
+}
+
+params:query {
+  cirid: {{ciridA}}
+}
+
+tests {
+  const flat = (b) => (b.registry || [])
+    .flatMap(r => r.categories || [])
+    .flatMap(c => c.entries || []);
+
+  test("returns 200", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("returns both equivalent entries", function () {
+    expect(flat(res.getBody())).to.have.lengthOf(2);
+  });
+
+  test("all entries carry the requested CIRID", function () {
+    flat(res.getBody()).forEach(e => expect(e.cirid.toLowerCase())
+      .to.equal(bru.getEnvVar("ciridA").toLowerCase()));
+  });
+
+  test("preserves the nested Registry graph", function () {
+    const r = res.getBody().registry[0];
+    expect(r.id).to.equal(bru.getEnvVar("registryId"));
+    expect(r.categories[0].sourceId).to.equal(bru.getEnvVar("categorySourceId"));
+  });
+}
+
+docs {
+  §3.2.3. Exercises IX_Entry_Cirid and the flat-join-to-nested-graph reshaping.
+}

@@ -1,0 +1,16 @@
+meta {
+  name: ENG - retry failed outbox
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/admin/eng/outbox/retry
+  body: none
+  auth: none
+}
+
+docs {
+  Requeues Failed items after fixing whatever the provider objected to, so the
+  domain change does not have to be recreated to get another attempt.
+}

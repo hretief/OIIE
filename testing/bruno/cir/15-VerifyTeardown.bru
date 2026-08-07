@@ -1,0 +1,30 @@
+meta {
+  name: 15 Verify teardown
+  type: http
+  seq: 18
+}
+
+get {
+  url: {{baseUrl}}/entries?cirid={{ciridA}}
+  body: none
+  auth: none
+}
+
+params:query {
+  cirid: {{ciridA}}
+}
+
+tests {
+  test("returns 200", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("the cascade removed every seeded entry", function () {
+    expect(res.getBody().registry).to.be.an("array").that.is.empty;
+  });
+}
+
+docs {
+  Confirms the delete cascaded and leaves the collection re-runnable from the
+  top. If this fails with entries still present, the FK cascade did not fire.
+}

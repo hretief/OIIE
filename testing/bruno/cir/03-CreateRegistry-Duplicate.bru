@@ -1,0 +1,56 @@
+meta {
+  name: 03 CreateRegistry - duplicate entry
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/registries
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "registry": [
+      {
+        "id": "{{registryId}}",
+        "categories": [
+          {
+            "id": "{{categoryId}}",
+            "sourceId": "{{categorySourceId}}",
+            "entries": [
+              {
+                "idInSource": "234443",
+                "sourceId": "System A",
+                "name": "Duplicate of the seed entry"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "createCirid": false
+  }
+}
+
+tests {
+  test("returns 409", function () {
+    expect(res.getStatus()).to.equal(409);
+  });
+
+  test("names DuplicateEntryFault", function () {
+    expect(res.getBody().title).to.equal("DuplicateEntryFault");
+    expect(res.getBody().faults[0].code).to.equal("DuplicateEntryFault");
+  });
+
+  test("is problem+json", function () {
+    expect(res.getHeader("content-type")).to.contain("application/problem+json");
+  });
+}
+
+docs {
+  Hits UQ_Entry_Natural. Confirms the SQL 2601/2627 translation and that §3.1's
+  atomicity holds — the registry and category already existed, so a partial
+  write here would be a spec violation.
+}

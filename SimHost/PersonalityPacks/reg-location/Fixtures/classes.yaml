@@ -1,0 +1,44 @@
+# Reference data as REG-LOCATION holds it.
+#
+# Deliberately one level short of ENG: no rdl:TemperatureIndicatingController.
+#
+# That asymmetry is the fixture's whole purpose. When ENG sends a tag classified
+# against the leaf, REG-LOCATION binds at rdl:Instrument instead and flags the
+# result degraded - partial understanding rather than rejection. A library that
+# every participant held completely would make graceful degradation untestable,
+# and it is the behaviour that argues for governed reference data in the first
+# place.
+
+propertyDefinitions:
+  - key: rdl:RangeMinimum
+    name: Range minimum
+    dataType: Numeric
+    unitOfMeasure: degC
+  - key: rdl:RangeMaximum
+    name: Range maximum
+    dataType: Numeric
+    unitOfMeasure: degC
+
+classes:
+  - key: rdl:Equipment
+    name: Equipment
+    appliesTo: Segment
+    kind: Taxonomy
+    # No properties. Identity and description are CCOM spine fields
+    # (IDInInfoSource, ShortName, Description); a class property set that
+    # redeclares them would claim Required values that never arrive as
+    # properties, because the sender puts them in the spine.
+    properties: []
+
+  - key: rdl:Instrument
+    name: Instrument
+    parent: rdl:Equipment
+    appliesTo: Segment
+    kind: Taxonomy
+    properties:
+      - definition: rdl:RangeMinimum
+        requirement: Recommended
+      - definition: rdl:RangeMaximum
+        requirement: Recommended
+        minValue: -273
+        maxValue: 2000

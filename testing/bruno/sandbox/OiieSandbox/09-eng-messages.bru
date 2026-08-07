@@ -1,0 +1,16 @@
+meta {
+  name: ENG - message archive
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/admin/eng/messages
+  body: none
+  auth: none
+}
+
+docs {
+  The loopback is proven when this shows two rows sharing one correlationId: an
+  Outbound Sync/Segments and an Inbound one.
+}

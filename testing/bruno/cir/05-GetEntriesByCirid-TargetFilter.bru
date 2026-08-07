@@ -1,0 +1,30 @@
+meta {
+  name: 05 GetEntriesByCIRID - TargetSourceID exact
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/entries?cirid={{ciridA}}&targetSourceId=System B
+  body: none
+  auth: none
+}
+
+params:query {
+  cirid: {{ciridA}}
+  targetSourceId: System B
+}
+
+tests {
+  test("returns 200", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("narrows to the requested source", function () {
+    const entries = (res.getBody().registry || [])
+      .flatMap(r => r.categories || [])
+      .flatMap(c => c.entries || []);
+    expect(entries).to.have.lengthOf(1);
+    expect(entries[0].sourceId).to.equal("System B");
+  });
+}

@@ -1,0 +1,157 @@
+@startuml uc01-handover
+title Scenario uc01 — information handover\nENG → REG-LOCATION → MMS, with CIR identity resolution
+
+skinparam responseMessageBelowArrow true
+skinparam sequenceMessageAlign left
+skinparam maxMessageSize 220
+skinparam ParticipantPadding 12
+skinparam BoxPadding 12
+
+actor "Engineer" as EngUser
+actor "Location steward" as StewardUser
+actor "Maintenance planner" as PlannerUser
+
+box "SimHost — simulated participants"
+  participant "ENG" as ENG
+  participant "REG-LOCATION" as LOC
+  participant "MMS" as MMS
+end box
+
+participant "ws-ISBM provider" as ISBM
+participant "ws-CIR provider" as CIR
+
+== Authoring (no messages yet) ==
+
+EngUser -> ENG : edit tags in Unit 101
+activate ENG
+ENG -> ENG : persist Tag rows\nchangeset accrues automatically
+note right of ENG
+  Changesets are **not** the release trigger.
+  Nobody decides to make one.
+end note
+ENG --> EngUser : tags shown as Work in progress
+deactivate ENG
+
+== Release event: named version promotion ==
+
+EngUser -> ENG : promote named version\n"Rev C — Unit 101 reroute"
+activate ENG
+
+ENG -> ENG : validation gate\nagainst effective property set
+
+alt findings present
+  ENG --> EngUser : promotion blocked\nValidationFinding list
+  note right of ENG
+    Every tag classified; all Required
+    properties present and in range;
+    no orphaned values.
+  end note
+else gate passes
+  ENG -> ENG : commit NamedVersion + Outbox rows\n(single transaction)
+  note right of ENG
+    The BOD is derived from committed rows.
+    A form never authors a BOD directly.
+  end note
+  ENG --> EngUser : issued
+end
+
+deactivate ENG
+
+== Dispatch ==
+
+ENG -> ISBM : OpenPublicationSession(/Enterprise/Site/Eng)
+activate ISBM
+ISBM --> ENG : sessionId
+ENG -> ISBM : PostPublication(SyncSegments, topic=Segments)
+ISBM --> ENG : messageId
+deactivate ISBM
+
+ENG -> ISBM : PostRequest(ProcessRegistry)
+activate ISBM
+ISBM -> CIR : deliver ProcessRegistry
+activate CIR
+CIR -> CIR : create entries\nSourceID=ENG, assign CIRIDs
+CIR -> ISBM : PostResponse(AcknowledgeRegistry)
+deactivate CIR
+ISBM --> ENG : AcknowledgeRegistry
+deactivate ISBM
+
+note over ISBM, CIR
+  The CIR is itself an ISBM participant.
+  Registration and resolution traverse the
+  bus — there is no direct registry call.
+end note
+
+== Stewardship gate ==
+
+ISBM -> LOC : ReadPublication → SyncSegments
+activate LOC
+LOC -> LOC : bind class chain\ningest properties (mapped / unmapped)
+LOC -> LOC : create StewardshipItem rows
+deactivate LOC
+
+StewardUser -> LOC : open review queue
+activate LOC
+LOC --> StewardUser : 11 proposed locations
+
+alt steward rejects
+  StewardUser -> LOC : reject with reason
+  LOC -> ISBM : ConfirmBOD (error)
+else steward approves
+  StewardUser -> LOC : approve into authoritative model
+  LOC -> LOC : commit Location rows + Outbox rows
+  note right of LOC
+    REG-LOCATION is a governance gate,
+    not a relay. This approval is its
+    release event.
+  end note
+end
+deactivate LOC
+
+LOC -> ISBM : PostRequest(ProcessRegistry)
+activate ISBM
+ISBM -> CIR : deliver
+activate CIR
+CIR -> CIR : register SourceID=REG-LOCATION\nreuse CIRIDs from ENG entries
+CIR -> ISBM : AcknowledgeRegistry
+deactivate CIR
+ISBM --> LOC : AcknowledgeRegistry
+deactivate ISBM
+
+LOC -> ISBM : PostPublication(SyncSegments)\non /Enterprise/Site/OandM
+
+== Consumption and identity resolution ==
+
+ISBM -> MMS : ReadPublication → SyncSegments
+activate MMS
+MMS -> MMS : foreign SourceID / IDInSource\nnot recognised
+
+alt IdentityMap hit and still live
+  MMS -> MMS : use cached CIRID
+else miss, stale, or invalidated
+  MMS -> ISBM : PostRequest(GetRegistry)
+  activate ISBM
+  ISBM -> CIR : deliver
+  activate CIR
+  CIR -> ISBM : ShowRegistry (CIRID cluster)
+  deactivate CIR
+  ISBM --> MMS : ShowRegistry
+  deactivate ISBM
+  MMS -> MMS : cache in IdentityMap\nwith StaleAfter
+end
+
+MMS -> MMS : bind or create\nFunctionalLocationRecord
+deactivate MMS
+
+PlannerUser -> MMS : open equipment register
+activate MMS
+MMS --> PlannerUser : record shown with\n"3 identities" chip
+deactivate MMS
+
+note over PlannerUser
+  No BOD is visible here. The location
+  simply appeared in the maintenance
+  system — which is the actual claim.
+end note
+
+@enduml

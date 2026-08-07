@@ -1,0 +1,55 @@
+meta {
+  name: 09 GetEquivalentEntries
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/queries/equivalent-entries
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "entryIdentifier": [
+      {
+        "registryId": "{{registryId}}",
+        "categoryId": "{{categoryId}}",
+        "categorySourceId": "{{categorySourceId}}",
+        "entryIdInSource": "234443",
+        "entrySourceId": "System A"
+      }
+    ],
+    "targetSourceId": []
+  }
+}
+
+tests {
+  const flat = (b) => (b.registry || [])
+    .flatMap(r => r.categories || [])
+    .flatMap(c => c.entries || []);
+
+  test("returns 200", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("includes the specified entry as well as its equivalent", function () {
+    const ids = flat(res.getBody()).map(e => e.idInSource).sort();
+    expect(ids).to.deep.equal(["234443", "423ABC"]);
+  });
+
+  test("de-duplicates across partial results", function () {
+    expect(flat(res.getBody())).to.have.lengthOf(2);
+  });
+}
+
+docs {
+  §3.2.2. Unlike GetEntriesByCIRID this returns the specified entry too, so the
+  client can correlate even when that entry has no CIRID of its own. The store
+  fetches the entry, reads its CIRID, fetches the equivalents, then merges — the
+  de-duplication test guards that merge.
+
+  POST rather than GET: the input is 1..* five-part composite keys, and the
+  SourceID components routinely contain spaces and '#'.
+}

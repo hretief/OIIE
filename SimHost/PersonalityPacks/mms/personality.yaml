@@ -1,0 +1,36 @@
+participantId: mms
+displayName: MMS - Maintenance Management
+schema: mms
+sourceId: MMS
+sourceOwnerId: ACME-OPERATIONS
+logicalId: urn:oiie-sandbox:mms
+accentColour: "#b45309"
+releaseMode: Manual
+identifierStyle: numeric
+
+# Consumer only. MMS publishes nothing in phase 1 - it is the end of the chain and
+# the participant with the least context about what it receives.
+channels:
+  - channelUri: /OIIE-SANDBOX/Enterprise/Site/OandM
+    role: Subscriber
+    topics:
+      - Segments
+    useNotifications: false
+
+isbm:
+  baseUrl: https://isbm-func-44p2f3n6dv7p4.azurewebsites.net/api
+  tokenSecretName: sandbox-isbm-token-mms
+
+cir:
+  # The CIR provider's own request channel and topic, taken from its deployed
+  # configuration rather than invented here. Both already have a passing round-trip
+  # test behind them on the provider side.
+  #
+  # This channel belongs to the CIR provider: reset ensures it exists but never
+  # deletes it, because deleting it would destroy the provider's long-lived
+  # provider-request session.
+  channelUri: /OIIE/CIR/Request
+  requestTopic: ws-CIR
+  baseUrl: https://cir-func-44p2f3n6.azurewebsites.net/api
+  registryId: OIIE-SANDBOX
+  identityCacheTtl: 00:05:00

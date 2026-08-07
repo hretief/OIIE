@@ -1,0 +1,398 @@
+using Microsoft.EntityFrameworkCore;
+using Oiie.Ccom.Cir;
+using Oiie.Isbm.Client;
+using SimHost.Application.Participants;
+using SimHost.Domain.Common;
+using SimHost.Infrastructure.Isbm;
+using SimHost.Infrastructure.Sql;
+
+namespace SimHost.Application.Cir;
+
+public sealed record RegistrationResult(
+    int Registered, IReadOnlyList<CirFault> Faults, string CorrelationId)
+{
+    public bool Succeeded => Faults.Count == 0;
+}
+
+public sealed record ResolutionResult(
+    Guid? Cirid,
+    IReadOnlyList<Entry> Equivalents,
+    bool FromCache,
+    string? Detail);
+
+/// <summary>
+/// Registers entries with the ws-CIR provider and resolves foreign identifiers
+/// against it.
+///
+/// Every call travels over ISBM as an Annex A BOD, not as a REST call to the
+/// registry. The CIR provider is itself an ISBM participant, so a participant needs
+/// exactly one integration mechanism rather than two — which is the property the
+/// whole ecosystem argument rests on.
+/// </summary>
+public sealed class CirClient(
+    IsbmSessionManager sessions,
+    IIsbmClientAccessor clients,
+    IParticipantDbContextFactory factory,
+    CirTelemetry telemetry,
+    ILogger<CirClient> logger)
+{
+    private static readonly TimeSpan ResponsePollInterval = TimeSpan.FromSeconds(1);
+
+    private static string Truncate(string? value, int max = 1500) =>
+        string.IsNullOrWhiteSpace(value) ? "(empty)"
+        : value.Length <= max ? value
+        : value[..max] + "…";
+
+    public async Task<RegistrationResult> RegisterAsync(
+        ParticipantContext participant,
+        string categoryId,
+        IReadOnlyList<Entry> entries,
+        CancellationToken ct = default)
+    {
+        var config = participant.Config;
+        var correlationId = Guid.NewGuid().ToString();
+
+        var registry = new Registry
+        {
+            ID = config.Cir.RegistryId,
+            Category =
+            [
+                new Category
+                {
+                    ID = categoryId,
+                    // The authority that defined the category, so two organisations
+                    // can both have a "Segment" category without collision.
+                    CategorySourceID = "OIIE-SANDBOX",
+                    Entry = entries.ToList()
+                }
+            ]
+        };
+
+        var document = CirBods.ProcessRegistry(
+            registry, config.LogicalId, correlationId, createCirid: true);
+
+        var response = await ExchangeAsync(participant, document, correlationId, ct);
+
+        if (response is null)
+        {
+            return new RegistrationResult(0, [new CirFault("NoResponse",
+                $"No response within {(int)participant.Config.Cir.ResponseTimeout.TotalSeconds}s. " +
+                "Run GET /admin/cir/diagnose to see whether the request is still queued.")],
+                correlationId);
+        }
+
+        if (response.HasFaults)
+        {
+            // Acknowledgement is not success. Faults arrive inside a well-formed
+            // acknowledgement, so a caller treating any response as confirmation
+            // would discard exactly what the round trip exists to obtain.
+            foreach (var fault in response.Faults)
+            {
+                logger.LogWarning(
+                    "CIR {Kind} registering for {ParticipantId}: {Detail}",
+                    fault.Kind, participant.ParticipantId, fault.Detail);
+            }
+
+            return new RegistrationResult(0, response.Faults, correlationId);
+        }
+
+        // A response that is neither an acknowledgement nor a recognised fault is
+        // still a failure, and reporting it as success would be the worst outcome:
+        // the caller proceeds as though entries were registered.
+        if (!response.Verb.StartsWith("Acknowledge", StringComparison.Ordinal))
+        {
+            return new RegistrationResult(0,
+                [new CirFault("UnexpectedResponse",
+                    $"Expected an Acknowledge verb, got '{response.Verb}'. " +
+                    $"Response was: {Truncate(response.RawXml)}")],
+                correlationId);
+        }
+
+        return new RegistrationResult(entries.Count, response.Faults, correlationId);
+    }
+
+    /// <summary>
+    /// Asserts that new entries denote the same things as entries already in the
+    /// registry.
+    ///
+    /// Distinct from registration, and the distinction is the whole point: three
+    /// participants registering independently produce three identities for one pump,
+    /// which is the duplication the registry is meant to prevent. Equivalence
+    /// produces one identity with three names.
+    /// </summary>
+    public async Task<RegistrationResult> AssertEquivalenceAsync(
+        ParticipantContext participant,
+        IReadOnlyList<EquivalentEntry> equivalences,
+        CancellationToken ct = default)
+    {
+        var correlationId = Guid.NewGuid().ToString();
+
+        var document = CirBods.ProcessEquivalentEntries(
+            equivalences, participant.Config.LogicalId, correlationId);
+
+        var response = await ExchangeAsync(participant, document, correlationId, ct);
+
+        if (response is null)
+        {
+            return new RegistrationResult(0, [new CirFault("NoResponse",
+                "The registry did not respond within the timeout.")], correlationId);
+        }
+
+        foreach (var fault in response.Faults)
+        {
+            logger.LogWarning(
+                "CIR {Kind} asserting equivalence for {ParticipantId}: {Detail}",
+                fault.Kind, participant.ParticipantId, fault.Detail);
+        }
+
+        if (response.HasFaults)
+        {
+            return new RegistrationResult(0, response.Faults, correlationId);
+        }
+
+        if (!response.Verb.StartsWith("Acknowledge", StringComparison.Ordinal))
+        {
+            return new RegistrationResult(0,
+                [new CirFault("UnexpectedResponse",
+                    $"Expected an Acknowledge verb, got '{response.Verb}'. " +
+                    $"Response was: {Truncate(response.RawXml)}")],
+                correlationId);
+        }
+
+        return new RegistrationResult(equivalences.Count, response.Faults, correlationId);
+    }
+
+    /// <summary>
+    /// Resolves a foreign identifier to its shared identity, consulting the local
+    /// cache first.
+    ///
+    /// The cache is a feature rather than an optimisation: it is what makes stale
+    /// mappings possible, and correcting one after a merge is a behaviour worth
+    /// being able to demonstrate.
+    /// </summary>
+    public async Task<ResolutionResult> ResolveAsync(
+        ParticipantContext participant,
+        string foreignSourceId,
+        string foreignIdInSource,
+        CancellationToken ct = default)
+    {
+        await using var db = factory.Create(participant.ParticipantId);
+
+        var cached = await db.IdentityMap.FirstOrDefaultAsync(
+            m => m.ForeignSourceId == foreignSourceId && m.ForeignIdInSource == foreignIdInSource, ct);
+
+        if (cached is not null && cached.IsLive(DateTimeOffset.UtcNow))
+        {
+            return new ResolutionResult(cached.Cirid, [], FromCache: true, null);
+        }
+
+        var config = participant.Config;
+        var correlationId = Guid.NewGuid().ToString();
+
+        var filter = new Filter
+        {
+            RegistryFilter = new RegistryFilter { ID = config.Cir.RegistryId },
+            EntryFilter = new EntryFilter
+            {
+                SourceID = foreignSourceId,
+                IDInSource = foreignIdInSource
+            }
+        };
+
+        var document = CirBods.GetRegistry([filter], config.LogicalId, correlationId);
+        var response = await ExchangeAsync(participant, document, correlationId, ct);
+
+        if (response is null)
+        {
+            return new ResolutionResult(null, [], false, "The registry did not respond.");
+        }
+
+        var match = response.AllEntries.FirstOrDefault(e =>
+            string.Equals(e.SourceID, foreignSourceId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(e.IDInSource, foreignIdInSource, StringComparison.OrdinalIgnoreCase));
+
+        if (match?.CIRID is not { } cirid)
+        {
+            return new ResolutionResult(null, [], false, "No entry with a shared identity.");
+        }
+
+        // Everything else the registry knows under that identity. This is the answer
+        // to "what else is this thing called", and the reason resolution is worth
+        // more than a lookup table.
+        var equivalentEntries = await FindEquivalentsAsync(participant, cirid, ct);
+
+        var entry = cached ?? new IdentityMapEntry
+        {
+            ForeignSourceId = foreignSourceId,
+            ForeignIdInSource = foreignIdInSource
+        };
+
+        entry.Cirid = cirid;
+        entry.ForeignName = match.Name;
+        entry.ResolvedAt = DateTimeOffset.UtcNow;
+        entry.StaleAfter = DateTimeOffset.UtcNow.Add(config.Cir.IdentityCacheTtl);
+        entry.Invalidated = false;
+        entry.InvalidatedReason = null;
+
+        if (cached is null) db.IdentityMap.Add(entry);
+        await db.SaveChangesAsync(ct);
+
+        logger.LogInformation(
+            "{ParticipantId} resolved {SourceId}:{IdInSource} to {Cirid} with {Count} equivalent(s)",
+            participant.ParticipantId, foreignSourceId, foreignIdInSource, cirid, equivalentEntries.Count);
+
+        return new ResolutionResult(cirid, equivalentEntries, false, null);
+    }
+
+    private async Task<IReadOnlyList<Entry>> FindEquivalentsAsync(
+        ParticipantContext participant, Guid cirid, CancellationToken ct)
+    {
+        var correlationId = Guid.NewGuid().ToString();
+
+        var filter = new Filter
+        {
+            RegistryFilter = new RegistryFilter { ID = participant.Config.Cir.RegistryId },
+            EntryFilter = new EntryFilter { CIRID = cirid }
+        };
+
+        var document = CirBods.GetRegistry(
+            [filter], participant.Config.LogicalId, correlationId);
+
+        var response = await ExchangeAsync(participant, document, correlationId, ct);
+        return response?.AllEntries.ToList() ?? [];
+    }
+
+    /// <summary>
+    /// Posts a request on the CIR channel and waits for the response.
+    ///
+    /// This is the first use of the ISBM consumer-request path, which ws-CIR itself
+    /// never exercised — it is a request provider, not a consumer. Failures here are
+    /// as likely to be route shapes as logic.
+    /// </summary>
+    private async Task<CirResponse?> ExchangeAsync(
+        ParticipantContext participant,
+        System.Xml.Linq.XDocument request,
+        string correlationId,
+        CancellationToken ct)
+    {
+        var channelUri = participant.Config.Cir.ChannelUri;
+
+        if (string.IsNullOrWhiteSpace(channelUri))
+        {
+            logger.LogError(
+                "{ParticipantId} has no CIR channel configured.", participant.ParticipantId);
+            return null;
+        }
+
+        var client = clients.For(participant.ParticipantId);
+
+        var sessionId = await sessions.GetOrOpenAsync(
+            participant.ParticipantId, IsbmSessionKind.ConsumerRequest, channelUri, [], ct);
+
+        // Exactly one topic, and it must match what the provider's listener
+        // subscribes to. Configured rather than derived from the BOD name: a topic
+        // per BOD would require the subscriber to enumerate every request BOD, and a
+        // missing one fails silently — the request is accepted and never delivered.
+        var topic = participant.Config.Cir.RequestTopic;
+
+        // Recorded before the post, so a request that is consumed and discarded can
+        // still be produced verbatim afterwards.
+        var exchange = new CirExchange
+        {
+            ParticipantId = participant.ParticipantId,
+            Bod = request.Root!.Name.LocalName,
+            CorrelationId = correlationId,
+            ChannelUri = channelUri,
+            Topic = topic,
+            RequestXml = request.ToString(System.Xml.Linq.SaveOptions.None)
+        };
+
+        await telemetry.SaveAsync(exchange, ct);
+
+        var requestMessageId = await client.PostRequestAsync(
+            sessionId, request.Root!, [topic], null, ct);
+
+        exchange.RequestMessageId = requestMessageId;
+        exchange.ConsumerSessionId = sessionId;
+
+        // Persisted again now the ids are known. Until this point the row says what
+        // was sent but not where, and "where" is half of what the provider's owner
+        // needs to find it.
+        await telemetry.SaveAsync(exchange, ct);
+
+        logger.LogDebug(
+            "{ParticipantId} posted {Bod} on topic {Topic} as {RequestMessageId} [{CorrelationId}]",
+            participant.ParticipantId, request.Root!.Name.LocalName, topic,
+            requestMessageId, correlationId);
+
+        var timeout = participant.Config.Cir.ResponseTimeout;
+        var deadline = DateTimeOffset.UtcNow.Add(timeout);
+        var waited = 0;
+
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var message = await client.ReadResponseAsync(sessionId, requestMessageId, ct);
+
+            if (message?.Content is not null)
+            {
+                var response = CirResponse.Parse(new System.Xml.Linq.XDocument(message.Content));
+
+                logger.LogInformation(
+                    "{ParticipantId} received {Verb} with {FaultCount} fault(s) [{CorrelationId}]: {Raw}",
+                    participant.ParticipantId, response.Verb, response.Faults.Count,
+                    correlationId, Truncate(response.RawXml, 4000));
+
+                exchange.ResponseXml = response.RawXml;
+                exchange.ResponseVerb = response.Verb;
+                exchange.Faults = response.Faults.Select(f => $"{f.Kind}: {f.Detail}").ToList();
+                exchange.Outcome = response.HasFaults ? "Faulted" : "Answered";
+                exchange.AnsweredUtc = DateTimeOffset.UtcNow;
+
+                await telemetry.SaveAsync(exchange, ct);
+
+                await client.RemoveResponseAsync(sessionId, requestMessageId, ct);
+                return response;
+            }
+
+            if (message is not null)
+            {
+                logger.LogError(
+                    "CIR response {MessageId} could not be parsed as XML.", message.MessageId);
+                await client.RemoveResponseAsync(sessionId, requestMessageId, ct);
+                return null;
+            }
+
+            await Task.Delay(ResponsePollInterval, ct);
+            waited++;
+
+            // Logged periodically so a long wait is visibly a wait rather than a
+            // hang, and so a cold provider is distinguishable from a silent one.
+            if (waited % 15 == 0)
+            {
+                logger.LogInformation(
+                    "{ParticipantId} still waiting for a CIR response after {Seconds}s [{CorrelationId}]",
+                    participant.ParticipantId, waited, correlationId);
+            }
+        }
+
+        // A timeout most often means the topic is not one the provider subscribes
+        // to, rather than that the provider is slow: an undelivered request looks
+        // exactly like an unanswered one.
+        exchange.Outcome = "NoResponse";
+        exchange.WaitedSeconds = waited;
+
+        // The case this record was added for: nothing came back, and the request XML
+        // is now the only thing that can be handed to whoever owns the provider.
+        // CancellationToken.None deliberately — a cancelled wait is exactly when the
+        // evidence must still be written.
+        await telemetry.SaveAsync(exchange, CancellationToken.None);
+
+        logger.LogWarning(
+            "{ParticipantId} timed out after {Seconds}s waiting for a CIR response on topic " +
+            "{Topic} [{CorrelationId}]. Either the provider is not consuming this channel and " +
+            "topic, or it never woke.",
+            participant.ParticipantId, (int)timeout.TotalSeconds, topic, correlationId);
+
+        return null;
+    }
+}

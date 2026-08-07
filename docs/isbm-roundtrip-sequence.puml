@@ -1,0 +1,170 @@
+@startuml isbm-roundtrip
+' ws-CIR BODs over ws-ISBM — the flow exercised by Testing/test-isbm-roundtrip.ps1
+' Render: java -jar plantuml.jar docs/isbm-roundtrip-sequence.puml
+
+title ws-CIR over ws-ISBM — end-to-end round trip
+
+skinparam sequenceMessageAlign left
+skinparam maxMessageSize 260
+skinparam BoxPadding 12
+
+actor "test-isbm-roundtrip.ps1\n(consumer + publisher)" as Test
+
+box "ws-ISBM Provider" #F4F7FB
+    participant "REST API" as ISBM
+    participant "Durable Entity\n(session state)" as Entity
+end box
+
+queue "Service Bus\nreq-/resp-/pub-<hash>" as SB
+
+box "ws-CIR Provider" #F7F4FB
+    participant "IsbmBodListener" as Listener
+    participant "BodDispatcher" as Dispatcher
+    participant "SqlCirStore" as Store
+end box
+
+database "Azure SQL" as SQL
+
+autonumber
+
+== 01  Provider is listening ==
+
+Test -> Listener : GET /api/isbm/status
+Listener -> SQL : SELECT cir.IsbmSession
+SQL --> Listener : ProviderRequest + Subscription session ids
+Listener --> Test : enabled, topics, open sessions
+
+note over Listener, SQL
+  Session ids are persisted. On Consumption the host recycles
+  freely, and re-opening per poll would leak sessions on the
+  broker that still accumulate messages nobody reads.
+end note
+
+== 02  Request-response: ProcessRegistry -> AcknowledgeRegistry ==
+
+Test -> ISBM : POST /consumer-request-sessions\n{ channelUri, topics, listenerUrl, ... }
+ISBM -> Entity : signal open (asynchronous)
+ISBM --> Test : { sessionId }
+
+note right of Test #FFF3CD
+  **Race.** The id is returned before the entity commits.
+  Using the session immediately yields
+  "Session does not exist or wrong type" — the same
+  message as a genuine type mismatch.
+  The script waits and retries on {"fault":"Session"}.
+end note
+
+Test -> ISBM : POST /sessions/{consumerId}/requests\n{ mediaType, **inlineContent** = ProcessRegistry BOD }
+activate ISBM
+ISBM -> SB : send -> req-<hash> queue
+ISBM --> Test : { messageId }
+deactivate ISBM
+
+note right of Test #FFF3CD
+  **inlineContent**, not content. It is optional, so a wrong
+  name returns 200 with a messageId and silently discards
+  the payload. mediaType is required and fails loudly.
+end note
+
+Test -> Listener : POST /api/isbm/drain
+
+activate Listener
+Listener -> SQL : read ProviderRequest session id
+Listener -> ISBM : GET /sessions/{providerId}/request
+ISBM -> SB : receive from req-<hash>
+SB --> ISBM : message
+ISBM --> Listener : { messageId, messageContent.inlineContent }
+
+Listener -> Dispatcher : DispatchAsync(XDocument)
+activate Dispatcher
+Dispatcher -> Dispatcher : parse envelope\nverb = oa:Process, noun = cir:CreateRegistry\nacknowledgeCode = Always
+Dispatcher -> Store : CreateRegistryAsync(...)
+Store -> SQL : INSERT Registry / Category / Entry\n(single ReadCommitted transaction)
+SQL --> Store : committed
+Store --> Dispatcher : ok
+Dispatcher -> Dispatcher : build AcknowledgeRegistry\nno fault elements = success
+Dispatcher --> Listener : AcknowledgeRegistry BOD
+deactivate Dispatcher
+
+Listener -> ISBM : POST /sessions/{providerId}/response\n{ requestMessageId, messageContent }
+ISBM -> SB : send -> resp-<hash> topic
+Listener -> ISBM : DELETE /sessions/{providerId}/request
+note left of Listener
+  Removal is unconditional. Leaving the head in place
+  replays it forever; an unreadable message is removed
+  and reported in the drain report's `discarded` array.
+end note
+Listener --> Test : { requestsHandled: 1, responsesPosted: 1, errors: [] }
+deactivate Listener
+
+Test -> Store : POST /api/queries/registry (verify the entry landed)
+Store -> SQL : SELECT with REGEXP_LIKE predicate
+SQL --> Store : Registry graph
+Store --> Test : entry with CIRID intact
+
+Test -> ISBM : GET /sessions/{consumerId}/requests/{requestMessageId}/response
+ISBM -> SB : receive from resp-<hash> subscription
+SB --> ISBM : message
+ISBM --> Test : AcknowledgeRegistry
+
+note right of Test
+  OriginalApplicationArea sits **inside** oa:Acknowledge
+  (ResponseVerbType), echoing the original BODID.
+  Annex A also permits omitting it when other correlation
+  exists — over ISBM that is OriginalMessageID.
+end note
+
+Test -> ISBM : DELETE /sessions/{consumerId}/requests/{requestMessageId}/response
+
+== 03  Publication: CancelRegistry has no response ==
+
+Test -> ISBM : POST /publication-sessions\n{ channelUri = /OIIE/CIR/Publication }
+ISBM --> Test : { sessionId }
+
+Test -> ISBM : POST /sessions/{publisherId}/publications\n{ mediaType, inlineContent = CancelRegistry BOD }
+ISBM -> SB : publish -> pub-<hash> topic
+ISBM --> Test : { messageId }
+
+Test -> Listener : POST /api/isbm/drain
+activate Listener
+Listener -> ISBM : GET /sessions/{subscriptionId}/publication
+ISBM -> SB : receive from subscription
+SB --> ISBM : message
+ISBM --> Listener : CancelRegistry BOD
+
+Listener -> Dispatcher : DispatchAsync(XDocument)
+activate Dispatcher
+Dispatcher -> Dispatcher : verb = oa:Cancel, noun = cir:DeleteRegistry
+Dispatcher -> Store : DeleteRegistryAsync("ISBM-Roundtrip")
+Store -> SQL : DELETE cir.Registry\n(ON DELETE CASCADE removes Categories, Entries, Properties)
+SQL --> Store : committed
+Dispatcher --> Listener : **null** — the catalogue defines no response BOD
+deactivate Dispatcher
+
+Listener -> ISBM : DELETE /sessions/{subscriptionId}/publication
+Listener --> Test : { publicationsHandled: 1, responsesPosted: 0 }
+deactivate Listener
+
+note over Listener, Dispatcher #D4EDDA
+  The four Cancel BODs and ChangeEntryCIRID define no
+  response, which is why they travel as **publications**
+  rather than requests. A publication that produces a
+  response BOD arrived on the wrong channel and is logged
+  as a warning.
+end note
+
+Test -> Store : POST /api/queries/registry (verify it is gone)
+Store --> Test : { registry: [] }
+
+== Teardown ==
+
+Test -> ISBM : DELETE /consumer-request-sessions/{consumerId}
+Test -> ISBM : DELETE /publication-sessions/{publisherId}
+
+note over Test, ISBM
+  Closing is per session type. There is no shared
+  DELETE /sessions/{id}, even though every other
+  session-scoped route is /sessions/{id}/...
+end note
+
+@enduml

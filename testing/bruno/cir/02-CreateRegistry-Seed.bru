@@ -1,0 +1,75 @@
+meta {
+  name: 02 CreateRegistry - seed
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/registries
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "registry": [
+      {
+        "id": "{{registryId}}",
+        "description": [
+          { "value": "Conformance fixture", "languageId": "en-US" }
+        ],
+        "categories": [
+          {
+            "id": "{{categoryId}}",
+            "sourceId": "{{categorySourceId}}",
+            "entries": [
+              {
+                "idInSource": "234443",
+                "sourceId": "System A",
+                "cirid": "{{ciridA}}",
+                "sourceOwnerId": "Refinery-01",
+                "name": "Loop 106"
+              },
+              {
+                "idInSource": "423ABC",
+                "sourceId": "System B",
+                "cirid": "{{ciridA}}",
+                "name": "Cmn Loop 106"
+              },
+              {
+                "idInSource": "TIC-8106",
+                "sourceId": "System C",
+                "cirid": "{{ciridB}}",
+                "name": "Top Temp Control",
+                "description": { "value": "Column overhead loop", "languageId": "en-US" },
+                "inactive": false,
+                "properties": [
+                  {
+                    "id": "ParentEntityID",
+                    "dataType": "string",
+                    "propertyValue": [
+                      { "key": "IDInSource", "value": "UNIT101" }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "createCirid": false
+  }
+}
+
+tests {
+  test("returns 201", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Two entries share ciridA — that is the equivalence assertion the whole spec
+  exists to express. The third carries ciridB and a property, so the nested
+  graph reshaping and the Property child table both get exercised.
+}

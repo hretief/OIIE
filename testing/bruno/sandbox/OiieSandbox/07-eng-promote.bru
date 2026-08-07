@@ -1,0 +1,23 @@
+meta {
+  name: ENG - promote named version
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/admin/eng/promote
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Rev C - Unit 101 reroute"
+  }
+}
+
+docs {
+  The release event. Runs the validation gate; only a pass writes outbox rows.
+
+  A 422 carries the findings - that is the gate working, not an error.
+}

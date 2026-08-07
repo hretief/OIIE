@@ -1,0 +1,20 @@
+meta {
+  name: ISBM - ensure channels
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/admin/isbm/channels/ensure
+  body: none
+  auth: none
+}
+
+docs {
+  Creates every channel the participants are bound to. Run before the first publish,
+  and after any reset that purges channels.
+
+  These routes are UNVERIFIED against the provider - ws-CIR consumes channels it did
+  not create, so nothing in the extracted client had exercised them. If the body
+  shape is wrong the response will say so, and the request body is logged at Debug.
+}

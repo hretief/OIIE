@@ -1,0 +1,21 @@
+meta {
+  name: 13 DeleteRegistry - unknown
+  type: http
+  seq: 15
+}
+
+delete {
+  url: {{baseUrl}}/registries/NoSuchRegistry
+  body: none
+  auth: none
+}
+
+tests {
+  test("returns 404", function () {
+    expect(res.getStatus()).to.equal(404);
+  });
+
+  test("names RegistryNotFoundFault", function () {
+    expect(res.getBody().title).to.equal("RegistryNotFoundFault");
+  });
+}

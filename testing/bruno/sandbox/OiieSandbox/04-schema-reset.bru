@@ -1,0 +1,17 @@
+meta {
+  name: Schema - reset
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/admin/schema/reset
+  body: none
+  auth: none
+}
+
+docs {
+  Drops and recreates every participant schema. This is the normal path before a
+  demo rather than a destructive escape hatch, so it is worth exercising early -
+  it tests the parameterised drop SQL and foreign-key-first ordering.
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "baseName": { "value": "cir" },
+    "functionAppOs": { "value": "windows" },
+    "sqlDatabaseName": { "value": "cir" },
+    "sqlAutoPauseDelayMinutes": { "value": 60 },
+    "sqlMaxVCores": { "value": 1 }
+  }
+}

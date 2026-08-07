@@ -1,0 +1,174 @@
+﻿ws-CIR: Web Service Common Interoperability Registry
+
+Tell me what you can find about this
+
+
+Synthesized technical standards framework for interoperability applications
+Synthesized technical standards framework for interoperability applications
+What it is
+ws-CIR 1.0 is an OpenO&M Candidate Standard (19 June 2015) defining a vendor-neutral object registration server for O&M — essentially a cross-system identity correlation service. Editors were Avin Mathew and Ken Bever (Assetricity/MIMOSA) plus Dennis Brandl (BR&L/ISA). It ships as a functional spec, WSDL + XSD service definitions, and an OAGIS-based message model.
+
+Note the status caveat in the doc itself: the spec is explicitly not stable, with the editor's draft tracked at github.com/mimosa-org/ws-cir.
+
+The core problem it solves
+Different systems name the same physical thing differently. Record TC101 in the engineering DB is the same loop as UNIT101.TOP_TEMP in the DCS and TIC-106 in the CMMS. ws-CIR gives each real-world object a CIRID — an ISO/IEC 9834-8 UUID — and entries sharing a CIRID are declared equivalent:
+
+IDInSource	SourceID	CIRID	Name
+234443	System A	550e8400-…-440000	Loop 106
+423ABC	System B	550e8400-…-440000	Cmn Loop 106
+TIC-106	System C	550e8400-…-440000	Top Temp Control
+TIC-8106	System C	550e8400-…-448778	Top Temp Control
+Data model
+Four nested levels, each with an explicit composite primary key:
+
+Registry — container for Categories (test registry, site registry, corporate registry). ID unique per server.
+Category — container for Entries; PK is (Registry.ID, Category.ID, Category.SourceID). SourceID identifies the defining spec, e.g. MIMOSA OSA-EAI V3, ISA 95-2000 EquipmentModel, BatchML.RecipeModelV4.04.01.
+Entry — PK is (Registry.ID, Category.ID, Category.SourceID, IDInSource, SourceID). Carries the optional CIRID, plus SourceOwnerID, Name, Description, Inactive flag.
+Property / PropertyValue — a small set of linking attributes (explicitly not a global property master). PropertyValue is key / value / unitOfMeasure, string-serialized.
+Types come from XML Schema primitives wrapped in UN/CEFACT Core Component Types 2.01 — cct:IDType, TextType (for language/locale on descriptions), CodeType (for UoM code lists).
+
+Three predefined OpenO&M properties matter: ParentEntityID, ChildEntityID (source-system hierarchy), and PossibleEquivalentEntryID, which carries JSON arrays of candidate matches with an optional PercentLikelihood — the hook for automated equivalency determination:
+
+json
+[{ "IDInSource": "TIC101", "SourceID": "Thor", "PercentLikelihood": 20 }]
+Services
+Command (all MUST be atomic — no partial writes on fault): CreateRegistry (with a CreateCIRID boolean controlling UUID minting), CreateEquivalentEntries, UpdateRegistry, UpdateEntryCIRID, DeleteRegistry/Category/Entries/Properties.
+
+Query: GetRegistry (filtered), GetEquivalentEntries, GetEntriesByCIRID.
+
+Filter semantics are worth noting if you ever implement it: within a Filter, the four filter types AND together; multiple filters of the same type OR together. Absent filter = logical TRUE.
+
+The CIRID merge rules in CreateEquivalentEntries are the interesting bit — existing entry's CIRID wins; if only the supplied entry has one, it propagates to both; if neither has one, the server mints a new one for both.
+
+Wildcards: a subset of POSIX regex (., *, +, ?, \), implicitly anchored at both ends — so substring matching needs .*term.*.
+
+Faults are a flat, predictable set: RegistryNotFoundFault, CategoryNotFoundFault, EntryNotFoundFault, PropertyNotFoundFault, DuplicateEntryFault, DuplicatePropertyFault, CreateRegistryFault, CreateCategoryFault.
+
+Relevance to your ISBM work
+Annex A is where these two specs meet. ws-CIR defines an OAGIS BOD set explicitly intended for transport over ws-ISBM — meaning CIR interactions become ordinary channel messages in your provider rather than SOAP calls:
+
+Request BOD	Response BOD
+ProcessRegistry	AcknowledgeRegistry
+ProcessEquivalentEntries	AcknowledgeEquivalentEntries
+ChangeRegistry	RespondRegistry
+GetRegistry	ShowRegistry
+GetEquivalentEntries	ShowEquivalentEntries
+GetEntriesByCIRID	ShowEntriesByCIRID
+Cancel BODs (CancelRegistry/Category/Entries/Properties) and ChangeEntryCIRID get no response — the former for OAGIS consistency, the latter because the underlying operation returns nothing and throws nothing.
+
+A few implementation details that intersect your provider directly:
+
+releaseID on BusinessObjectDocumentType MUST be 1.2.1 (the referenced OAGIS Platform Spec); versionID is the BOD version, 1.0.
+ApplicationArea minimally needs Sender LogicalID, CreationDateTime, BODID.
+OriginalApplicationArea may be omitted from Acknowledge/Respond/Show BODs if other correlation is used — which is exactly your ISBM OriginalMessageID mechanism. Worth keeping in mind when you build conformance tests.
+Get/Show paging attributes are unsupported because of the nested result structure.
+The message model permits multiple faults per response, unlike the WSDL binding's single-fault limit.
+Conformance is declarative rather than pass/fail: an implementation states support for Command Services, Query Services, Wildcards, SOAP 1.1 + 1.2, and specific BODs, plus an explicit statement of any non-conformance areas.
+
+Given where your provider is, the natural integration point is treating ws-CIR as just another BOD payload flowing through channels — no provider changes needed. If you later want CIRID-aware routing or content filtering, your XPath filter engine can already target the CIRID element in the DataArea.
+
+
+Diagnosed silent message discard and architected fault-response solution
+Diagnosed silent message discard and architected fault-response solution
+Their diagnosis is careful and their design point is correct. Let me address the fastest diagnostic first, then fix the silent-discard behaviour.
+
+
+Ran 5 commands, read a file
+Ran 5 commands, read a file
+The fastest test — no ISBM in the loop
+POST /api/bods runs the identical dispatcher synchronously. Send that exact document and the answer comes back in one call:
+
+powershell
+$key = az functionapp keys list -g HilmarRetiefRG -n cir-func-44p2f3n6 --query functionKeys.default -o tsv
+$xml = Get-Content .\that-processregistry.xml -Raw   # the requestXml from their report
+
+Invoke-WebRequest "https://cir-func-44p2f3n6.azurewebsites.net/api/bods" -Method Post `
+  -Headers @{'x-functions-key'=$key} -ContentType 'application/xml' `
+  -Body ([Text.Encoding]::UTF8.GetBytes($xml)) -SkipHttpErrorCheck |
+  ForEach-Object { [Text.Encoding]::UTF8.GetString($_.Content) }
+An AcknowledgeRegistry means the document is fine and the problem is in the ISBM path. A 400 names the element that failed. Either way it's seconds rather than a 120-second wait.
+
+Why requestsHandled 0 is expected and uninformative
+The timer polls every 15 seconds. Over their 120-second wait it fired about eight times. The message was almost certainly consumed by a timer invocation; the explicit drain afterwards found an empty queue and correctly reported handling nothing.
+
+Counters are per-invocation, so the drain response can never show what the timer did. That's why discarded came back empty too — it was empty for that call. Their instinct that a discard should be counted is right, and it now is; but the evidence for this message is in App Insights, not the drain response:
+
+powershell
+az monitor app-insights query -g HilmarRetiefRG --apps cir-ai-44p2f3n6 `
+  --analytics-query "traces | where timestamp > ago(3h) | where message has '3c3c8656' | project timestamp, message, severityLevel | order by timestamp asc" -o table
+Every outcome now logs the BODID, so that query is the answer for any future message.
+
+Their design point — implemented
+They're right, and it's the more valuable fix. BodDispatcher now resolves the BOD name first; any subsequent failure produces the response BOD carrying a fault rather than throwing. A malformed ProcessRegistry gets an AcknowledgeRegistry back with the parse error in the Description.
+
+One deliberate asymmetry: if the response can't be posted, the message is left queued for retry rather than removed — that failure is ours, not the sender's.
+
+Since the spec has no code for "unreadable document" and the reply must use a code the response schema declares, the first declared code is used with the real cause in Description. Recorded as an interpretation.
+
+On their schema check
+I agree with it — that document conforms, including CategorySourceID. Two things I'd verify before assuming the fix is live: dotnet list package timestamps aside, the simplest proof is the /api/bods call above. And POST /api/isbm/reset is still required after any deploy that changes channel or topic config, though not for a code-only change like this one.
+
+
+Boddispatcher
+CS 
+
+Isbmbodlistener
+CS 
+
+Cir
+ZIP 
+
+
+
+Message collapsed
+
+Diagnosed response routing failure and identified test idempotency issue
+Diagnosed response routing failure and identified test idempotency issue
+That response tells us a lot. Let me check their test script for how it handles re-runs.
+
+
+Diagnosed persistent registry state causing duplicate entry faults
+Diagnosed persistent registry state causing duplicate entry faults
+That response answers everything. Three findings.
+
+The document is fine and the fix is live
+CategorySourceID was accepted, and the fault came back with a Description child — both of yesterday's fixes are in the running app. Their schema check was correct.
+
+The \n was an artifact of the JSON report, not the wire. Their .Content simplification is right too.
+
+DuplicateEntryFault is the correct answer, and it's what's blocking them
+TIC-106/ENG already exists in OIIE-SANDBOX/Segment. So a ProcessRegistry succeeded on an earlier run — the CIR has been working.
+
+Their phase 02 reset drops the sandbox tables and closes ISBM sessions, but the CIR registry is a different database it never touches. So the registry persists, and every run after the first gets a duplicate fault. Their step 08 treats any fault as failure, so it can only ever pass once.
+
+The fix is one call in their reset:
+
+powershell
+# Phase 02, after the sandbox reset — the CIR registry is not part of it.
+if (-not $SkipCir -and $script:CirKey) {
+    $drop = Invoke-Cir DELETE '/registries/OIIE-SANDBOX'
+    # 204 deleted, 404 nothing to delete. Both fine.
+    if ($drop.Status -notin 204, 404) {
+        Fail 'CIR registry reset' 'CIR' "DELETE /registries/OIIE-SANDBOX returned $($drop.Status): $($drop.Raw)" ''
+    }
+}
+DeleteRegistry cascades to categories, entries and properties, so that's the whole cleanup.
+
+Worth them deciding deliberately: a duplicate registration is arguably correct behaviour to assert, and asserting on a fault code is stronger than asserting on its absence. But it needs to be a chosen assertion rather than an accident of ordering.
+
+One inference in their test is no longer safe
+Their branch reasons: queue emptied + requestsHandled 0 ⟹ consumed and dropped. That was reasonable, but the timer polls every 15 seconds, so across a 120-second wait it fired about eight times. The message was almost certainly consumed by a timer invocation, and the explicit drain correctly reported handling nothing.
+
+Counters are per-invocation. The drain response can't show what the timer did — which is also why discarded came back empty.
+
+The evidence now lives in the CIR's logs, keyed on the value both sides already share:
+
+powershell
+az monitor app-insights query -g HilmarRetiefRG --apps cir-ai-44p2f3n6 `
+  --analytics-query "traces | where timestamp > ago(6h) | where message has '3c3c8656' | project timestamp, message | order by timestamp asc" -o table
+Every outcome — answered, no response due, discarded, failed — now logs the BOD name and BODID.
+
+Their design point is implemented
+A recognised BOD that can't be processed now gets its response BOD back carrying a fault, rather than being discarded silently. They were right that this matters more than any specific element: it converts a two-day investigation into one round trip.
+
+The one deliberate exception is when the response can't be posted — that message is left queued for retry, since the failure is the provider's, not the sender's

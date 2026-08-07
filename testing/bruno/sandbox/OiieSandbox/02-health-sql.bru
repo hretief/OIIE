@@ -1,0 +1,18 @@
+meta {
+  name: Health - SQL identity
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/health/sql
+  body: none
+  auth: none
+}
+
+docs {
+  Each participant connects as its own contained user. Every row should report a
+  distinct user and default schema - sb_eng/eng, sb_reg_asset/reg_asset and so on.
+  Identical users across rows would mean the Key Vault path is not being used and
+  the grant model is not in force.
+}

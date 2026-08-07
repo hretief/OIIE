@@ -1,0 +1,30 @@
+meta {
+  name: 07 GetEntriesByCIRID - unknown CIRID
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/entries?cirid={{ciridUnknown}}
+  body: none
+  auth: none
+}
+
+params:query {
+  cirid: {{ciridUnknown}}
+}
+
+tests {
+  test("returns 200, not 404", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("returns an empty registry list", function () {
+    expect(res.getBody().registry).to.be.an("array").that.is.empty;
+  });
+}
+
+docs {
+  A query matching nothing is an empty result, not a fault. EntryNotFoundFault
+  belongs to the command services, where a named target genuinely must exist.
+}

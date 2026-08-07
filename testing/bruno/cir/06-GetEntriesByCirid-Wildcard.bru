@@ -1,0 +1,40 @@
+meta {
+  name: 06 GetEntriesByCIRID - wildcard TargetSourceID
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/entries?cirid={{ciridA}}&targetSourceId=System .
+  body: none
+  auth: none
+}
+
+params:query {
+  cirid: {{ciridA}}
+  targetSourceId: System .
+}
+
+tests {
+  const flat = (b) => (b.registry || [])
+    .flatMap(r => r.categories || [])
+    .flatMap(c => c.entries || []);
+
+  test("returns 200", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("'System .' matches both sources", function () {
+    expect(flat(res.getBody())).to.have.lengthOf(2);
+  });
+}
+
+docs {
+  §4 wildcards are a POSIX subset, implicitly anchored at both ends. The store
+  wraps the pattern as ^(...)$ because REGEXP_LIKE is otherwise a substring
+  match. 'System .' therefore matches "System A" and "System B" but would not
+  match "Systemic".
+
+  Note the '+' quantifier cannot travel in a query string unencoded — it decodes
+  to a space. Use %2B, or move the query to a POST body.
+}

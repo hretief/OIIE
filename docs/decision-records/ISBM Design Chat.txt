@@ -1,0 +1,137 @@
+As an expert software engineer I gave you the specs to implement an ISBM solution for interoperability.  Craft a solution based on modern tools and services, including those available from Azure that will be able to perform interoperability using the OIIE use cases
+
+
+Investigated project specifications to architect interoperability solution
+Investigated project specifications to architect interoperability solution
+I'll dig into your project specs first to ground the solution in the actual ISBM standard and OIIE use cases you've provided, rather than generic assumptions.
+
+
+Investigated service specifications and interoperability frameworks comprehensively
+Investigated service specifications and interoperability frameworks comprehensively
+Let me pull the specific service operations and the OIIE use case architecture.
+
+
+Synthesized ISBM framework and mapped OIIE use case architecture
+Synthesized ISBM framework and mapped OIIE use case architecture
+Now let me look at the OIIE use case architecture and the specific use cases.
+
+
+Synthesized ISBM framework requirements and Azure security considerations
+Synthesized ISBM framework requirements and Azure security considerations
+Let me pull the list of actual use cases and the ISBM security/conformance model, which will shape the Azure architecture.
+
+
+Synthesizing ISBM specs with Azure interoperability architecture
+Synthesizing ISBM specs with Azure interoperability architecture
+Let me pull the ISBM 2.x security levels and conformance model, which will drive the Azure security architecture.
+
+
+Architecting comprehensive markdown solution with integrated diagrams
+Architecting comprehensive markdown solution with integrated diagrams
+I now have a thorough grounding in the ISBM 2.x service model (SOAP + REST implementations of the ISA-95.00.06 MSM), the four security levels, and the OIIE Use Case Architecture with its 15 use cases and 42 scenarios. Let me check the markdown skill before I write the architecture document.
+
+
+Architected comprehensive markdown solution leveraging Azure and modern interoperability tools
+Architected comprehensive markdown solution leveraging Azure and modern interoperability tools
+No dedicated markdown skill exists, so I'll author the document directly. Let me build a comprehensive solution architecture that maps the ISBM service model and OIIE scenarios onto a concrete Azure design.
+
+
+Created a file, read a file
+Created a file, read a file
+Here's the solution architecture, grounded in your actual specs rather than a generic "put a bus in Azure" answer.
+
+The core design insight is that ISBM is a stateful broker with specific semantics — per-session read cursors with read-then-remove, recipient-aware message expiry (an expired message stays visible to a receiver who already read it), body-level content filtering (XPath 1.0 / JSONPath, not envelope metadata), async webhook listeners, and a four-tier security ladder. That state machine is the hard part, so the design keeps it explicit in Azure SQL and treats Service Bus as a replaceable transport rather than trying to make Service Bus be ISBM.
+
+The mapping that does most of the work:
+
+Publication channels → Service Bus Topics, Request channels → Service Bus Queues, driven by the OIIE rule that Publish→pub-sub and Push/Pull→request-response. Build those two flows and all 42 scenarios become configuration.
+NotifyListener and the Expiration Listener → Event Grid webhooks, so retry/back-off/dead-letter is handled for you instead of hand-rolled.
+Large CCOM BODs → Blob claim-check, since full asset/segment BODs blow past Service Bus size limits.
+Security Levels 1–4 → a clean Azure ladder: TLS + Key Vault tokens (L2), mTLS + Entra RBAC + B2B federation (L3, the default for inter-enterprise EPC↔O/O style exchanges), Managed HSM per-message envelope encryption (L4).
+I included a full end-to-end sequence for Use Case 5 / Scenario 11 (MMS→O&M asset install/remove publish) and a channel topology mapped to the OIIE systems landscape, plus a conformance-traceability section that ties the spec's Section 9 checklist to acceptance tests.
+
+Two things worth deciding before implementation, since they change the topology: whether you need Level 4 (message-at-rest confidentiality from the broker operator itself) for any tenant, and whether tenants need hard isolation (dedicated Service Bus namespace + Key Vault per org) versus shared multi-tenancy. If you tell me which OIIE use cases you're piloting first, I can turn the relevant channels and CCOM BOD schemas into concrete Bicep and the ASP.NET Core session/cursor state machine.
+
+
+Isbm oiie azure solution architecture
+Document · MD 
+
+
+Message collapsed
+
+Diagnosed Service Bus authorization rule mismatch and resource group discrepancy
+Diagnosed Service Bus authorization rule mismatch and resource group discrepancy
+The auto-fetch fails because either the auth rule name isn't RootManageSharedAccessKey on your namespace, or the namespace is looked up in the wrong resource group. Quickest path — pass it explicitly since you have it:
+
+powershell
+.\deploy\deploy.ps1 -ResourceGroup hilmarretiefrg `
+  -ExistingServiceBusName mndotdev `
+  -ExistingServiceBusConnectionString "Endpoint=sb://mndotdev.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=<redacted-rotate-this-key>" `
+  -ExistingStorageAccountName mndot `
+  -ExistingKeyVaultName mndot
+Let me also fix the script to try the FunctionAppAccess rule (which our Bicep may have created) and show which rule it tried:
+
+
+Edited a file, ran a command, read a file
+Edited a file, ran a command, read a file
+For now, use the explicit connection string command to get deployed. The updated script also tries both RootManageSharedAccessKey and FunctionAppAccess auth rules, so the auto-fetch should work on future runs if either exists on your namespace.
+
+
+Isbm
+ZIP 
+
+Message collapsed
+
+Diagnosed expired Azure CLI token as deployment blocker
+Diagnosed expired Azure CLI token as deployment blocker
+Your Azure login token expired. Re-authenticate and retry:
+
+powershell
+az login
+Then run the deploy again:
+
+powershell
+.\deploy\deploy.ps1 -ResourceGroup hilmarretiefrg `
+  -ExistingServiceBusName mndotdev `
+  -ExistingServiceBusConnectionString "Endpoint=sb://mndotdev.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=<redacted-rotate-this-key>" `
+  -ExistingStorageAccountName mndot `
+  -ExistingKeyVaultName mndot
+The AADSTS70043 error is your organization's conditional access policy expiring the refresh token after 7 days (issued July 28, expired August 4).
+
+how do I reset the environment. I see 10s of queues, publications and subscription queues on the service bus?
+
+
+Devised cleanup script to purge orphaned entities
+Devised cleanup script to purge orphaned entities
+Those are orphaned from test runs before we added the cleanup-on-delete fix. Here's a cleanup script:
+
+powershell
+# Clean up all ISBM Service Bus entities
+$ns = "mndotdev"
+$rg = "hilmarretiefrg"
+
+# Delete ISBM topics (pub-*, resp-*)
+az servicebus topic list --namespace-name $ns --resource-group $rg --query "[?starts_with(name,'pub-') || starts_with(name,'resp-')].name" -o tsv | ForEach-Object {
+    Write-Host "Deleting topic: $_"
+    az servicebus topic delete --namespace-name $ns --resource-group $rg --name $_ --output none
+}
+
+# Delete ISBM queues (req-*)
+az servicebus queue list --namespace-name $ns --resource-group $rg --query "[?starts_with(name,'req-')].name" -o tsv | ForEach-Object {
+    Write-Host "Deleting queue: $_"
+    az servicebus queue delete --namespace-name $ns --resource-group $rg --name $_ --output none
+}
+
+# Clear Table Storage tables (channels, sessions, correlations, tokens)
+$storageConn = az storage account show-connection-string --name mndot --resource-group $rg --query connectionString -o tsv
+foreach ($table in @("IsbmChannels", "IsbmTokens", "IsbmSessions", "IsbmCorrelations")) {
+    Write-Host "Deleting table: $table"
+    az storage table delete --name $table --connection-string $storageConn --output none 2>$null
+}
+
+Write-Host "`nDone. Verify:"
+Write-Host "  Topics: $(az servicebus topic list --namespace-name $ns --resource-group $rg --query "[?starts_with(name,'pub-') || starts_with(name,'resp-')].name" -o tsv | Measure-Object -Line | Select-Object -ExpandProperty Lines)"
+Write-Host "  Queues: $(az servicebus queue list --namespace-name $ns --resource-group $rg --query "[?starts_with(name,'req-')].name" -o tsv | Measure-Object -Line | Select-Object -ExpandProperty Lines)"
+This removes all pub-*, resp-* topics and req-* queues, plus all four ISBM Table Storage tables. The tables will be auto-recreated on the next function call. The isbm-notifications topic and isbm-expired queue are left untouched (those are infrastructure, not per-channel).
+
+Want me to add this as Testing/reset-environment.ps1 in the project?

@@ -1,0 +1,45 @@
+meta {
+  name: 11 CreateEquivalentEntries - pending
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/equivalent-entries
+  body: json
+  auth: none
+}
+
+body:json {
+  [
+    {
+      "existingIdInSource": "234443",
+      "existingSourceId": "System A",
+      "registryId": "{{registryId}}",
+      "categoryId": "{{categoryId}}",
+      "categorySourceId": "{{categorySourceId}}",
+      "entry": {
+        "idInSource": "TIC-106",
+        "sourceId": "System D",
+        "name": "Top Temp Control"
+      }
+    }
+  ]
+}
+
+tests {
+  test("returns 501 until implemented", function () {
+    expect(res.getStatus()).to.equal(501);
+  });
+
+  test("names the spec clause", function () {
+    expect(res.getBody().detail).to.contain("3.1.2");
+  });
+}
+
+docs {
+  CIRID merge rules to assert once this lands:
+  - existing entry has a CIRID  -> the new entry adopts it
+  - only the supplied entry has -> it propagates to the existing entry
+  - neither has one             -> the server mints one and assigns it to both
+}

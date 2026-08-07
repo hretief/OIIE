@@ -1,0 +1,160 @@
+@startuml phase1-handover
+title Phase 1 — information handover\nENG to REG-LOCATION to MMS, over a live ISBM provider
+
+skinparam responseMessageBelowArrow true
+skinparam sequenceMessageAlign left
+skinparam maxMessageSize 250
+skinparam ParticipantPadding 8
+skinparam BoxPadding 12
+
+actor "Engineer" as EngUser
+actor "Location steward" as StewardUser
+actor "Maintenance planner" as PlannerUser
+
+box "SimHost — independent participants"
+  participant "ENG" as Eng
+  participant "REG-LOCATION" as Loc
+  participant "MMS" as Mms
+end box
+
+participant "ws-ISBM provider" as Isbm
+
+== Reference data ==
+
+note over Eng, Mms
+  Fixtures are deliberately asymmetric.
+  ENG holds rdl:TemperatureIndicatingController.
+  REG-LOCATION stops at rdl:Instrument.
+  A library everyone held completely would make
+  graceful degradation untestable.
+end note
+
+== Authoring — no messages ==
+
+EngUser -> Eng : add tag TIC-106\nclass rdl:TemperatureIndicatingController\nrange 0..250 degC, action Reverse
+activate Eng
+Eng -> Eng : persist Tag
+note right of Eng
+  ENG's own vocabulary: TagNumber,
+  ServiceDescription, PidReference.
+  Nothing here is a Segment.
+end note
+Eng --> EngUser : WorkInProgress
+deactivate Eng
+
+== ENG's release event: named version promotion ==
+
+EngUser -> Eng : promote "Rev F — Unit 101"
+activate Eng
+Eng -> Eng : validation gate
+
+alt tag unclassified or incomplete
+  Eng --> EngUser : 422 with findings — release blocked
+else gate passes
+  Eng -> Eng : Tag → Published\n+ Outbox row (one transaction)
+  Eng --> EngUser : released
+end
+deactivate Eng
+
+Eng -> Eng : build SyncSegments from committed rows
+note right of Eng
+  Spine carries identity and description.
+  Class-governed values travel as
+  properties with rdl: keys.
+  ENG-local fields travel as eng: keys.
+  The ancestor chain travels too, so a
+  receiver can bind at a class it knows.
+end note
+
+Eng -> Isbm : POST sessions/{id}/publications\non /Enterprise/Site/Eng
+activate Isbm
+Isbm --> Eng : messageId
+deactivate Isbm
+
+== REG-LOCATION receives — arrival is not acceptance ==
+
+Isbm -> Loc : GET sessions/{id}/publication
+activate Loc
+
+Loc -> Loc : bind class against the sender's chain
+
+alt leaf class held
+  Loc -> Loc : exact match
+else leaf unknown, ancestor known
+  Loc -> Loc : bind rdl:Instrument, flag degraded
+  note right of Loc
+    Partial understanding rather than
+    all-or-nothing. The asset is still
+    usable at a coarser class.
+  end note
+else nothing in the chain known
+  Loc -> Loc : unbound — retained, not rejected
+end
+
+Loc -> Loc : ingest properties against the effective set
+note right of Loc
+  Two ranges map — rdl:Instrument confers them.
+  rdl:ControlAction does not: its definition
+  belongs to the leaf class REG-LOCATION lacks.
+  Two eng: fields are unknown entirely.
+  All three are retained and flagged.
+end note
+
+Loc -> Loc : queue StewardshipItem
+deactivate Loc
+
+StewardUser -> Loc : review queue
+activate Loc
+Loc --> StewardUser : proposal with binding state\nand mapped/unmapped counts
+
+alt steward rejects
+  StewardUser -> Loc : reject with reason
+  Loc -> Loc : nothing enters the model,\nnothing republished
+else steward approves
+  StewardUser -> Loc : approve
+  Loc -> Loc : Location LOC-000001\n+ Outbox row (one transaction)
+  note right of Loc
+    The registry does NOT adopt ENG's
+    identifier. That is deliberate: a
+    registry that reused the sender's key
+    would have nothing to reconcile.
+  end note
+end
+deactivate Loc
+
+Loc -> Isbm : POST sessions/{id}/publications\non /Enterprise/Site/OandM
+note right of Loc
+  A new act by a different participant:
+  new correlation id, new message id,
+  rebuilt from REG-LOCATION's own rows.
+  Not a forward.
+end note
+
+== MMS receives — and cannot tell what it has ==
+
+Isbm -> Mms : GET sessions/{id}/publication
+activate Mms
+Mms -> Mms : assign legacy key 234441\nstore foreign id REG-LOCATION:LOC-000001\nCirid = null
+note right of Mms
+  MMS can only match a foreign identifier
+  it has seen before. Another system
+  describing the same pump under a
+  different key is invisible to it.
+end note
+deactivate Mms
+
+PlannerUser -> Mms : open equipment register
+activate Mms
+Mms --> PlannerUser : 234441 — resolved: false
+deactivate Mms
+
+note over EngUser, Isbm
+  TIC-106, LOC-000001, 234441 — three systems, three identifiers,
+  one physical pump, and nothing connecting them.
+
+  This is the problem the ws-CIR resolves. Building it before the
+  gap is visible would mean demonstrating a solution to something
+  nobody had yet seen go wrong.
+end note
+
+@enduml

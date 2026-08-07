@@ -1,0 +1,18 @@
+meta {
+  name: ENG - outbox
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/admin/eng/outbox
+  body: none
+  auth: none
+}
+
+docs {
+  State 0 Pending, 1 Building, 2 Posted, 3 Failed, 4 Held.
+
+  lastError carries the provider's own fault text, which is usually more precise
+  than anything this side could infer.
+}

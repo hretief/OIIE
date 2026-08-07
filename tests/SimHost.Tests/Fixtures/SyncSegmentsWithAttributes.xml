@@ -1,0 +1,398 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<SyncSegments xmlns="http://www.mimosa.org/ccom4" releaseID="1.0"
+                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                xmlns:b="http://www.bentley.com/Interoperability/MimosaExtensions/1.0"
+                xsi:schemaLocation="http://www.mimosa.org/ccom4 file://../../ccom/BOD/Messages/configuration/syncsegments.xsd
+                                    http://www.bentley.com/Interoperability/MimosaExtensions/1.0 file://../../interoperability/xsd/Bentley.Interoperability.MimosaExtensions.1.0.xsd">
+  <ApplicationArea xmlns="http://www.openapplications.org/oagis/9">
+    <Sender>
+      <LogicalID>SourceSystem</LogicalID>
+      <ComponentID>IModelHub</ComponentID>
+      <TaskID>Segment Creation</TaskID>
+      <ReferenceID></ReferenceID>
+    </Sender>
+    <CreationDateTime>2017-06-05T13:21:00Z</CreationDateTime>
+    <BODID>62a1a6dd-a0f8-4609-970c-a2cadd75c740</BODID>
+  </ApplicationArea>
+  <DataArea>
+    <Sync xmlns="http://www.openapplications.org/oagis/9">
+      <ActionCriteria>
+        <ActionExpression actionCode="Replace" expressionLanguage="Xpath">/SyncSegments/DataArea/Segments</ActionExpression>
+      </ActionCriteria>
+    </Sync>
+    <Segments>
+      <Segment>
+        <UUID>499cf321-69b2-4e69-b3a0-e696c3ca8c3b</UUID>
+        <IDInInfoSource>5680</IDInInfoSource>
+        <InfoSource>
+          <UUID>7384187c-59a2-44d7-9302-14b31ae6a10e</UUID>
+          <ShortName>SourceSystemName</ShortName>
+          <URL>http://SourceSystem/Segments/4567</URL>
+        </InfoSource>
+        <!--<Attribute>
+          <UUID>bb5a7ec3-2ddf-47d4-aad6-4c5e3aec3762</UUID>
+          <Type>
+            <UUID>A62EE772-31A0-034C-9E7A-9A26159DE402</UUID>
+            <ShortName>Binary Data</ShortName>
+          </Type>
+          <ValueContent>
+            <BinaryData>
+              <StandardDataType>
+                <UUID>aa7355ed-b1a3-4ff3-a92e-f107fcb0333c</UUID>
+                <ShortName>IEEE 8-byte Unsigned Integer</ShortName>
+                <FullName>IEEE 8-byte Unsigned Integer, low-order byte first</FullName>
+              </StandardDataType>
+              <Data>0FB8 0E21</Data>
+              <UnitOfMeasure>
+                <UUID>1b5a6f92-6444-4495-8346-d3a7879b9b94</UUID>
+                <ShortName>Cubic Meters Per Second</ShortName>
+              </UnitOfMeasure>
+            </BinaryData>
+          </ValueContent>
+        </Attribute>-->
+        <!--<Attribute>
+          <UUID>cb5a7ec3-2ddf-47d4-aad6-4c5e3aec3762</UUID>
+          <Type>
+            <UUID>462EE772-31A0-034C-9E7A-9A26159DE402</UUID>
+            <ShortName>Binary Object</ShortName>
+          </Type>
+          <ValueContent>
+            <BinaryObject>
+              <BLOBDataType>
+                <UUID>ae780ee4-c900-4127-95b2-d281d8dce7fd</UUID>
+                <ShortName>PNG</ShortName>
+                <FullName>Image, Portable Network Graphics (PNG) Format</FullName>
+              </BLOBDataType>
+              <Value fileName="test.png" mimeCode="PNG" characterSetCode="" encodingCode="Base64" uri="">0FB8 0E21</Value>
+            </BinaryObject>
+          </ValueContent>
+        </Attribute>-->
+        <Attribute>
+          <UUID>683BEFEC-24BB-F94F-BBFB-AE393A81E538</UUID>
+          <Type>
+            <UUID>162EE772-31A0-034C-9E7A-9A26159DE402</UUID>
+            <ShortName>Duration</ShortName>
+          </Type>
+          <ValueContent>
+            <Measure>
+              <Value>1.0</Value>
+              <UnitOfMeasure>
+                <UUID>93770CEC-F196-7D47-BB4D-0BB6B8381CD5</UUID>
+                <ShortName>hr</ShortName>
+              </UnitOfMeasure>
+            </Measure>
+          </ValueContent>
+        </Attribute>
+        <Attribute>
+          <UUID>21ba52b9-5b96-4983-a49c-233b691cc904</UUID>
+          <Type>
+            <UUID>21ba52b9-5b96-4983-a49c-233b691cc904</UUID>
+            <ShortName>Percentage</ShortName>
+          </Type>
+          <ValueContent>
+            <Percentage>32.9</Percentage>
+          </ValueContent>
+        </Attribute>
+        <Attribute>
+          <UUID>a1ba52b9-5b96-4983-a49c-233b691cc904</UUID>
+          <Type>
+            <UUID>21ba52b9-5b96-4983-a49c-233b691cc904</UUID>
+            <ShortName>Probability</ShortName>
+          </Type>
+          <ValueContent>
+            <Probability>12.5</Probability>
+          </ValueContent>
+        </Attribute>
+        <Attribute>
+          <UUID>91ba52b9-5b96-4983-a49c-233b691cc904</UUID>
+          <Type>
+            <UUID>91ba52b9-5b96-4983-a49c-233b691cc904</UUID>
+            <ShortName>Uri</ShortName>
+          </Type>
+          <ValueContent>
+            <URI resourceName="foo">http://www.fakeurl.com</URI>
+          </ValueContent>
+        </Attribute>
+        <Attribute>
+          <UUID>92ba52b9-5b96-4983-a49c-233b691cc904</UUID>
+          <Type>
+            <UUID>92ba52b9-5b96-4983-a49c-233b691cc904</UUID>
+            <ShortName>Utc data time</ShortName>
+          </Type>
+          <ValueContent>
+            <UTCDateTime>2015-06-05T13:21:00Z</UTCDateTime>
+          </ValueContent>
+        </Attribute>
+        <Attribute>
+          <UUID>96aa52b9-5b96-4983-a49c-233b691cc904</UUID>
+          <Type>
+            <UUID>92aa52b9-5b96-4983-a49c-233b691cc904</UUID>
+            <ShortName>unique id</ShortName>
+          </Type>
+          <ValueContent>
+            <UUID>71974C84-CBE3-4EF0-88CC-CA7A5387124E</UUID>
+          </ValueContent>
+        </Attribute>
+        <Attribute>
+          <UUID>98aa52b9-5b96-4983-a49c-233b691cc904</UUID>
+          <Type>
+            <UUID>92aa52b9-5b96-4983-a49c-233b691cc904</UUID>
+            <ShortName>Coordinates</ShortName>
+          </Type>
+          <ValueContent>
+            <Coordinate>
+              <X>5.53</X>
+              <Y>6.37</Y>
+              <Z>36.5</Z>
+            </Coordinate>
+          </ValueContent>
+        </Attribute>
+        <Attribute>
+          <UUID>12aa52b9-5b96-4983-a49c-233b691cc904</UUID>
+          <Type>
+            <UUID>12aa52b9-5b96-4983-a49c-233b691cc904</UUID>
+            <ShortName>IsBoolean</ShortName>
+          </Type>
+          <ValueContent>
+            <Boolean>true</Boolean>
+          </ValueContent>
+        </Attribute>
+        <Attribute>
+          <UUID>32aa50b9-5b96-4983-a49c-233b691cc904</UUID>
+          <Type>
+            <UUID>12aa50b9-5b96-4983-a49c-233b691cc904</UUID>
+            <ShortName>Atex Category</ShortName>
+          </Type>
+          <ValueContent>
+            <Text>Zone 1</Text>
+          </ValueContent>
+        </Attribute>
+        <Attribute>
+          <UUID>83e9bc17-68ca-4691-a085-b33044577b7d</UUID>
+          <Type>
+            <UUID>83e9bc17-68ca-4691-a085-b33044577b7d</UUID>
+            <ShortName>Unit</ShortName>
+          </Type>
+          <ValueContent>
+            <EnumerationItem>
+              <UUID>65556630-6c50-5958-b56b-65564a70694c</UUID>
+              <ShortName>Enum1</ShortName>
+            </EnumerationItem>
+          </ValueContent>
+        </Attribute>
+        <Attribute>
+          <UUID>26e55273-2365-4098-858b-3dc74c012abc</UUID>
+          <ShortName>Total Cost</ShortName>
+          <Type>
+            <UUID>b8f2c935-8ea2-4573-a2b1-2f6c46336c21</UUID>
+            <ShortName>Total Cost</ShortName>
+          </Type>
+          <ValueContent>
+            <Number>45000</Number>
+          </ValueContent>
+        </Attribute>
+        <!--<Attribute>
+          <UUID>78c05fd8-a609-4f65-a6bd-774fcd453067</UUID>
+          <ShortName>Geometry</ShortName>
+          <Type>
+            <UUID>e3e36100-4950-4b88-ae52-9a3b78a24491</UUID>
+            <ShortName>Geometry</ShortName>
+          </Type>
+          <ValueContent>
+            <MultiParameter>
+              <ValueContent>
+                <XML format="GeoPosition">
+                  <GeoPosition>
+                    <UUID>76f3eebf-5a8b-4049-94bb-2118d1dbdbec</UUID>
+                    <GPSLocation>
+                      <UUID>eb099c23-d776-42fb-a3eb-f776ff8f2d64</UUID>
+                      --><!--co-ordinates must be specified as decimal degress, WGS 84 Co-ordinate system--><!--
+                      <Latitude>43.390509</Latitude>
+                      <Longitude>-79.776913</Longitude>
+                      <Elevation>5.5</Elevation>
+                      <GPSDatumType>
+                        <UUID>541033cb-8b4f-4771-a51b-6e5da0c8bae1</UUID>
+                        <ShortName>WGS84</ShortName>
+                      </GPSDatumType>
+                      --><!--This is part of the MIMOSA schema, but not currently used by AssetWise--><!--
+                      <GPSPrecisionType>
+                        <UUID>b2422cd4-d8b9-4e98-b2b8-9d9e774b6a5f</UUID>
+                        <ShortName>Undetermined</ShortName>
+                      </GPSPrecisionType>
+                    </GPSLocation>
+                  </GeoPosition>
+                </XML>
+              </ValueContent>
+              <ValueContent>
+                <XML format="GeoPosition">
+                  <GeoPosition>
+                    <UUID>76f3eebf-5a8b-4049-94bb-2118d1dbdbec</UUID>
+                    <GPSLocation>
+                      <UUID>eb099c23-d776-42fb-a3eb-f776ff8f2d64</UUID>
+                      --><!--co-ordinates must be specified as decimal degress, WGS 84 Co-ordinate system--><!--
+                      <Latitude>43.390550</Latitude>
+                      <Longitude>-79.776927</Longitude>
+                      <Elevation>5.5</Elevation>
+                      <GPSDatumType>
+                        <UUID>541033cb-8b4f-4771-a51b-6e5da0c8bae1</UUID>
+                        <ShortName>WGS84</ShortName>
+                      </GPSDatumType>
+                      --><!--This is part of the MIMOSA schema, but not currently used by AssetWise--><!--
+                      <GPSPrecisionType>
+                        <UUID>b2422cd4-d8b9-4e98-b2b8-9d9e774b6a5f</UUID>
+                        <ShortName>Undetermined</ShortName>
+                      </GPSPrecisionType>
+                    </GPSLocation>
+                  </GeoPosition>
+                </XML>
+              </ValueContent>
+            </MultiParameter>
+          </ValueContent>
+        </Attribute>-->
+        <!--Linear Asset Example - asset represents a section of track that is already loaded into AssetWise as part of the linked-node network-->
+        <!--<Attribute>
+          <UUID>982823eb-c133-4c81-8df5-52647a21f3d2</UUID>
+          <ShortName>Linear Extent</ShortName>
+          <Type>
+            <UUID>c6f21f03-5a22-4171-b2e4-0df09a17c8de</UUID>
+            <ShortName>Linear Extent</ShortName>
+          </Type>
+          <ValueContent>
+            <XML format="LinearExtent">
+              <b:LinearExtent>
+                <b:Corridor>SouthWest Corridor</b:Corridor>
+                <b:Element>Track #1</b:Element>
+                <b:GPS>
+                  <b:StartLocation>
+                    <UUID>00000000-0000-0000-0000-000000000000</UUID>
+                    --><!--co-ordinates must be specified as decimal degress, WGS 84 Co-ordinate system--><!--
+                    <Latitude>43.390550</Latitude>
+                    <Longitude>-79.776927</Longitude>
+                    <Elevation>5.5</Elevation>
+                    <GPSDatumType>
+                      <UUID>541033cb-8b4f-4771-a51b-6e5da0c8bae1</UUID>
+                      <ShortName>WGS84</ShortName>
+                    </GPSDatumType>
+                    --><!--This is part of the MIMOSA schema, but not currently used by AssetWise--><!--
+                    <GPSPrecisionType>
+                      <UUID>b2422cd4-d8b9-4e98-b2b8-9d9e774b6a5f</UUID>
+                      <ShortName>Undetermined</ShortName>
+                    </GPSPrecisionType>
+                  </b:StartLocation>
+                  <b:EndLocation>
+                    <UUID>00000000-0000-0000-0000-000000000000</UUID>
+                    --><!--co-ordinates must be specified as decimal degress, WGS 84 Co-ordinate system--><!--
+                    <Latitude>43.390550</Latitude>
+                    <Longitude>-79.776927</Longitude>
+                    <Elevation>5.5</Elevation>
+                    <GPSDatumType>
+                      <UUID>541033cb-8b4f-4771-a51b-6e5da0c8bae1</UUID>
+                      <ShortName>WGS84</ShortName>
+                    </GPSDatumType>
+                    --><!--This is part of the MIMOSA schema, but not currently used by AssetWise--><!--
+                    <GPSPrecisionType>
+                      <UUID>b2422cd4-d8b9-4e98-b2b8-9d9e774b6a5f</UUID>
+                      <ShortName>Undetermined</ShortName>
+                    </GPSPrecisionType>
+                  </b:EndLocation>
+                </b:GPS>
+              </b:LinearExtent>
+            </XML>
+          </ValueContent>
+        </Attribute>-->
+        <ShortName>5678</ShortName>
+        <FullName>Track Section 54 -- point a to point b</FullName>
+        <Description>Long text description...</Description>
+        <Type>
+          <UUID>bb01a641-63ce-41fc-96f7-3a25c6043e16</UUID>
+          <IDInInfoSource>1680</IDInInfoSource>
+          <ShortName>Maintainable Track Segment</ShortName>
+          <FullName>Type Full Description</FullName>
+          <InfoSource>
+            <UUID>A384187c-59a2-44d7-9302-14b31ae6a10e</UUID>
+          </InfoSource>
+        </Type>
+        <RegistrationSite>
+          <UUID>e20325f2-c4dd-4d43-890f-1248f90cd68b</UUID>
+          <IDInInfoSource>1280</IDInInfoSource>
+          <ShortName>Site1</ShortName>
+          <InfoSource>
+            <UUID>B384187c-59a2-44d7-9302-14b31ae6a10e</UUID>
+          </InfoSource>
+        </RegistrationSite>
+        <ParentComponent>
+          <UUID>ddd726c5-7f33-474b-9f65-4315a47ec0d1</UUID>
+          <!--If parent node is missing, then null the parent-->
+          <Parent>
+            <UUID>4dc56b99-8374-48b2-9ea8-abb2132c13af</UUID>
+            <IDInInfoSource>3455</IDInInfoSource>
+            <ShortName>9918</ShortName>
+            <FullName>Parent FullName</FullName>
+            <InfoSource>
+              <UUID>B484187c-59a2-44d7-9302-14b31ae6a10e</UUID>
+            </InfoSource>
+            <RegistrationSite>
+              <UUID>4Acc016f-3dc2-4106-a9bc-7ff54eb933dd</UUID>
+              <IDInInfoSource>1380</IDInInfoSource>
+              <ShortName>Parent Site1</ShortName>
+              <InfoSource>
+                <UUID>B584187c-59a2-44d7-9302-14b31ae6a10e</UUID>
+              </InfoSource>
+            </RegistrationSite>
+          </Parent>
+          <Child>
+            <UUID>bf419c38-ec36-4fdc-a7f5-32bb47500c4b</UUID>
+          </Child>
+        </ParentComponent>
+        <Criticality>
+          <CriticalityScaleType>
+            <UUID>f3e8b55b-b7c8-42d5-a43c-54f5c9149a47</UUID>
+            <ShortName>Infor Criticality</ShortName>
+          </CriticalityScaleType>
+          <Value>5</Value>
+        </Criticality>
+        <!--Comission Date-->
+        <LifecycleStatusType>
+          <UUID>5958BFED-2179-4B29-A2CD-6E7A9E067197</UUID>
+          <ShortName>LifecycleStatusType shortname</ShortName>
+          <IDInInfoSource>3545</IDInInfoSource>
+          <InfoSource>
+            <UUID>B184187c-59a2-44d7-9302-14b31ae6a10e</UUID>
+          </InfoSource>
+          <EffectiveStatus>
+            <UUID>7835250d-14dc-4ed6-adc0-4166aa2b53a7</UUID>
+            <Type>
+              <UUID>db4bf287-2374-4e9c-bd4b-fadaada24b99</UUID>
+              <ShortName>Active</ShortName>
+            </Type>
+            <EffectiveDate>2015-06-05T13:21:00Z</EffectiveDate>
+          </EffectiveStatus>
+        </LifecycleStatusType>
+        <!--Department-->
+        <AgentRoleWithSegment>
+          <UUID>50e33a0e-52fd-4f56-bfce-cd42f9884608</UUID>
+          <AgentRole>
+            <UUID>0235905b-ded5-4ecc-8834-f67d6ee3726e</UUID>
+            <ShortName>Department</ShortName>
+            <Type>
+              <UUID>91eab0b3-f009-4e73-a261-aca0def70d85</UUID>
+              <ShortName>Department</ShortName>
+            </Type>
+            <Agent>
+              <UUID>2b0f978d-cf6d-4184-92c8-eb0265c8cf3e</UUID>
+              <ShortName>Department 1</ShortName>
+              <FullName>Agent FullName</FullName>
+              <IDInInfoSource>3320</IDInInfoSource>
+              <InfoSource>
+                <UUID>B784187c-59a2-44d7-9302-14b31ae6a10e</UUID>
+              </InfoSource>
+            </Agent>
+          </AgentRole>
+          <Segment>
+            <UUID>bf419c38-ec36-4fdc-a7f5-32bb47500c4b</UUID>
+          </Segment>
+        </AgentRoleWithSegment>
+      </Segment>
+    </Segments>
+  </DataArea>
+</SyncSegments>

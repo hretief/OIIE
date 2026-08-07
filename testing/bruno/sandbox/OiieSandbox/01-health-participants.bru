@@ -1,0 +1,17 @@
+meta {
+  name: Health - participants
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/health/participants
+  body: none
+  auth: none
+}
+
+docs {
+  Confirms personalities loaded, schemas resolved, and whether storage and ISBM
+  are wired. Expect eight participants once the remaining personality files exist;
+  currently only ENG is present.
+}

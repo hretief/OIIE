@@ -1,0 +1,123 @@
+@startuml uc05-asset-install
+title Scenario uc05 — asset install\nCONSTRUCT → REG-ASSET request/response, with human acceptance
+
+skinparam responseMessageBelowArrow true
+skinparam sequenceMessageAlign left
+skinparam maxMessageSize 220
+skinparam ParticipantPadding 12
+skinparam BoxPadding 12
+
+actor "Field supervisor" as SupervisorUser
+actor "Asset data steward" as StewardUser
+actor "Maintenance planner" as PlannerUser
+
+box "SimHost — simulated participants"
+  participant "CONSTRUCT" as CON
+  participant "REG-ASSET" as ASSET
+  participant "MMS" as MMS
+end box
+
+participant "ws-ISBM provider" as ISBM
+participant "ws-CIR provider" as CIR
+
+== Capture (no messages yet) ==
+
+SupervisorUser -> CON : capture serials against\nwork package WP-114
+activate CON
+CON -> CON : persist InstalledItem rows\npunch items remain open
+CON --> SupervisorUser : package incomplete
+deactivate CON
+
+== Release event: mechanical completion sign-off ==
+
+SupervisorUser -> CON : sign off WP-114\nas mechanically complete
+activate CON
+CON -> CON : commit Signoff + Outbox rows\n(single transaction, 12 assets)
+note right of CON
+  Field verification of installed
+  equipment is a signed human event.
+  One signature, twelve assets,
+  one BOD.
+end note
+CON --> SupervisorUser : package signed
+deactivate CON
+
+== Request ==
+
+CON -> ISBM : OpenConsumerRequestSession(/Enterprise/Site/Assets)
+activate ISBM
+ISBM --> CON : sessionId
+CON -> ISBM : PostRequest(ProcessAssetSegmentEvent)
+ISBM --> CON : requestMessageId
+deactivate ISBM
+
+ISBM -> ASSET : ReadRequest → ProcessAssetSegmentEvent
+activate ASSET
+ASSET -> ASSET : bind class chain\ningest properties
+ASSET -> ASSET : create PendingWork item\nstate = Queued
+note right of ASSET
+  Arrival is not acceptance.
+  The steward's decision is what
+  emits the acknowledgement.
+end note
+deactivate ASSET
+
+== Human acceptance ==
+
+StewardUser -> ASSET : open review queue
+activate ASSET
+ASSET --> StewardUser : 12 proposed install events
+
+alt steward rejects
+  StewardUser -> ASSET : reject with reason
+  ASSET -> ISBM : PostResponse(sessionId, requestMessageId,\nAcknowledgeAssetSegmentEvent + error)
+  ISBM -> CON : ReadResponse
+  activate CON
+  CON --> SupervisorUser : outbox shows red badge\nwith reject reason
+  deactivate CON
+else steward accepts
+  StewardUser -> ASSET : accept
+  ASSET -> ASSET : commit Asset + AssetSegmentEvent rows\n+ Outbox rows
+  ASSET -> ISBM : PostResponse(sessionId, requestMessageId,\nAcknowledgeAssetSegmentEvent)
+  note right of ASSET
+    Posted to
+    sessions/{id}/requests/{requestMessageId}/response
+    — not sessions/{id}/response.
+  end note
+  ISBM -> CON : ReadResponse → acknowledgement
+end
+deactivate ASSET
+
+== Registration and downstream publication ==
+
+ASSET -> ISBM : PostRequest(ProcessRegistry)
+activate ISBM
+ISBM -> CIR : deliver
+activate CIR
+CIR -> CIR : register SourceID=REG-ASSET\nmatch on serial + model + location
+CIR -> ISBM : AcknowledgeRegistry
+deactivate CIR
+ISBM --> ASSET : AcknowledgeRegistry
+deactivate ISBM
+
+ASSET -> ISBM : PostPublication(SyncAssetSegmentEvent)\non /Enterprise/Site/OandM
+
+ISBM -> MMS : ReadPublication
+activate MMS
+MMS -> ISBM : PostRequest(GetEquivalentEntries)
+activate ISBM
+ISBM -> CIR : deliver
+activate CIR
+CIR -> ISBM : ShowEquivalentEntries
+deactivate CIR
+ISBM --> MMS : ShowEquivalentEntries
+deactivate ISBM
+MMS -> MMS : bind to existing EquipmentRecord\nvia shared CIRID
+deactivate MMS
+
+PlannerUser -> MMS : open asset
+activate MMS
+MMS --> PlannerUser : install history now populated\nno duplicate record created
+deactivate MMS
+
+@enduml

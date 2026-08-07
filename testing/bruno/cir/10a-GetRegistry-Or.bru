@@ -1,0 +1,40 @@
+meta {
+  name: 10a GetRegistry - same type ORs
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/queries/registry
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "filter": [
+      {
+        "registryFilter": { "id": "{{registryId}}" },
+        "entryFilter": { "name": "Loop 106" }
+      },
+      {
+        "registryFilter": { "id": "{{registryId}}" },
+        "entryFilter": { "name": "Top Temp Control" }
+      }
+    ]
+  }
+}
+
+tests {
+  test("returns 200", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("two EntryFilters OR together", function () {
+    const names = (res.getBody().registry || [])
+      .flatMap(r => r.categories || [])
+      .flatMap(c => c.entries || [])
+      .map(e => e.name).sort();
+    expect(names).to.deep.equal(["Loop 106", "Top Temp Control"]);
+  });
+}

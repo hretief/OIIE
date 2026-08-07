@@ -1,0 +1,166 @@
+# Sandbox naming conventions
+
+Single source of truth for names. `provision.ps1` derives everything below from
+`environment` and `alias`, so nothing should be typed by hand twice.
+
+## Environments
+
+| Environment | Value of `-Environment` | Database |
+|---|---|---|
+| Per-developer | `dev` | `oiie-sandbox-dev-{alias}` |
+| CI | `ci` | `oiie-sandbox-ci` |
+| Demo | `demo` | `oiie-sandbox-demo` |
+
+Existing shared resources, referenced rather than created:
+
+| Resource | Name |
+|---|---|
+| Resource group | `HilmarRetiefRG` |
+| SQL server | `acme-sql-server.database.windows.net` |
+| Key Vault | `mndot` |
+| Storage account | (set `-StorageAccount`; blob container created per environment) |
+
+One server, one database per environment. All three databases coexist on
+`acme-sql-server` and are isolated from each other by being separate databases, and
+internally by the schema and grant model below.
+
+## Participants, schemas, logins
+
+Participant ids use hyphens (route segments); schemas and logins use underscores.
+
+| Participant | Schema | Contained database user |
+|---|---|---|
+| `eng` | `eng` | `sb_eng` |
+| `construct` | `construct` | `sb_construct` |
+| `reg-location` | `reg_location` | `sb_reg_location` |
+| `reg-asset` | `reg_asset` | `sb_reg_asset` |
+| `reg-product` | `reg_product` | `sb_reg_product` |
+| `reg-material` | `reg_material` | `sb_reg_material` |
+| `mms` | `mms` | `sb_mms` |
+| `rdl` | `rdl` | `sb_rdl` |
+
+Two non-participant schemas:
+
+| Schema | Purpose | Access |
+|---|---|---|
+| `sandbox` | Scenario runs and assertions | `sb_orchestrator` — read/write |
+| `tower` | Read-only cross-schema views for the control tower | `sb_tower` — SELECT only |
+
+**Users are contained database users, not server logins.** A server-level login is
+shared by every database on the server, so `sb_eng` would be one principal across
+dev, CI and demo — and since provisioning skips an existing login, the second
+environment's Key Vault secret would silently disagree with the real password.
+Contained users are scoped to their database, so each environment is independent.
+Connection strings must therefore always name the database explicitly.
+
+`sb_tower` is the single sanctioned cross-schema principal. No participant login
+may read another participant's schema; that constraint is the whole point of the
+per-login model, because without it a cross-schema join will eventually be used to
+resolve a foreign identifier instead of a CIR call — it will work, nobody will
+notice, and the demonstration will stop proving anything.
+
+## Key Vault secrets
+
+| Secret | Contents |
+|---|---|
+| `sandbox-sql-{env}-{participant}` | Password for contained user `sb_{schema}` in that environment's database |
+| `sandbox-sql-{env}-orchestrator` | Password for `sb_orchestrator` |
+| `sandbox-sql-{env}-tower` | Password for `sb_tower` |
+| `sandbox-isbm-token-{participant}` | ISBM security token for that participant |
+
+`{participant}` uses the hyphenated form, matching `personality.yaml`.
+
+## Blob storage
+
+| Item | Name |
+|---|---|
+| Container | `sandbox-payloads` |
+| Path | `{prefix}/{participantId}/{correlationId}/{messageId}.xml` |
+| Prefix — dev | `dev-{alias}` |
+| Prefix — CI | `ci-{runId}` |
+| Prefix — demo | `demo` |
+
+Lifecycle rule deletes blobs after 7 days.
+
+## ISBM channels
+
+```
+/OIIE-SANDBOX/{runId}/Enterprise/{site}/{purpose}      CI, run-scoped
+/OIIE-SANDBOX/Enterprise/{site}/{purpose}              dev and demo
+```
+
+The `{runId}` segment is what stops parallel CI runs colliding on shared channels —
+a failure mode that is intermittent, confusing, and expensive to diagnose.
+
+## CIR registry
+
+| Environment | `Registry.ID` |
+|---|---|
+| dev | `OIIE-SANDBOX-DEV-{ALIAS}` |
+| CI | `OIIE-SANDBOX-CI-{RUNID}` |
+| demo | `OIIE-SANDBOX` |
+
+
+## Running provisioning
+
+```powershell
+Install-Module SqlServer -Scope CurrentUser   # once
+az login
+
+./deploy/provision.ps1 -Environment dev -Alias hretief -AddFirewallRule -SkipStorage
+```
+
+The signed-in identity must be **Entra admin on the SQL server**, because contained
+users and grants are applied over an Entra access token.
+
+T-SQL runs through `Invoke-Sqlcmd`. Azure CLI has no T-SQL execution command —
+`az sql db query` does not exist, and an earlier version of this script called it,
+reporting success for ten users that were never created. Every Azure call is now
+checked, and the run ends by verifying schemas, users, and the absence of
+cross-schema grants.
+
+
+## Deployed application
+
+| Environment | App Service | URL |
+|---|---|---|
+| dev | `oiie-sandbox-dev` | `https://oiie-sandbox-dev.azurewebsites.net` |
+| CI | `oiie-sandbox-ci` | `https://oiie-sandbox-ci.azurewebsites.net` |
+| demo | `oiie-sandbox-demo` | `https://oiie-sandbox-demo.azurewebsites.net` |
+
+Plan `plan-oiie-sandbox-{env}`, Application Insights `appi-oiie-sandbox-{env}`,
+workspace `log-oiie-sandbox-{env}`.
+
+`Always On` is required, not optional: the inbox pump and outbox dispatcher are
+hosted services, and an unloaded app stops consuming in a way that looks exactly
+like a provider that has stopped delivering. That rules out the Free and Shared
+tiers.
+
+## Deployment order
+
+```powershell
+./deploy/provision.ps1 -Environment demo -StorageAccount <account>   # data
+./deploy/deploy.ps1    -Environment demo -StorageAccount <account>   # hosting
+```
+
+Provisioning creates the database, schemas, contained users and secrets.
+Deployment adds the App Service and grants its managed identity **Key Vault
+Secrets User** and **Storage Blob Data Contributor** — data-plane roles that
+subscription Owner does not confer, and whose absence surfaces as a 403 that reads
+like an application bug.
+
+Role assignments take a few minutes to propagate. A Key Vault 403 immediately after
+a first deployment is usually that.
+
+## Identity model
+
+| Resource | How the app authenticates |
+|---|---|
+| Key Vault | Managed identity |
+| Blob Storage | Managed identity |
+| Application Insights | Connection string |
+| Azure SQL | Per-participant **contained users**, passwords from Key Vault |
+
+SQL deliberately does not use the managed identity. One identity would collapse
+eight participants into a single principal and take the schema grants out of force,
+and those grants are what stop a cross-schema join quietly replacing a CIR call.

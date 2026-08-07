@@ -1,0 +1,17 @@
+meta {
+  name: Schema - init
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/admin/schema/init
+  body: none
+  auth: none
+}
+
+docs {
+  Creates each participant's tables from the EF model. Safe to repeat: run it twice
+  and every "created" should be false the second time, which is what proves the
+  sentinel check works and startup is idempotent.
+}

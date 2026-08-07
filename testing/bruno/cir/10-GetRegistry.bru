@@ -1,0 +1,53 @@
+meta {
+  name: 10 GetRegistry
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/queries/registry
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "filter": [
+      {
+        "registryFilter": { "id": "{{registryId}}" },
+        "entryFilter": { "name": ".*Loop.*" }
+      }
+    ]
+  }
+}
+
+tests {
+  const flat = (b) => (b.registry || [])
+    .flatMap(r => r.categories || [])
+    .flatMap(c => c.entries || []);
+
+  test("returns 200", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("wildcard narrows to the two Loop entries", function () {
+    const names = flat(res.getBody()).map(e => e.name).sort();
+    expect(names).to.deep.equal(["Cmn Loop 106", "Loop 106"]);
+  });
+}
+
+docs {
+  §3.2.1. Filter semantics, easy to get backwards:
+
+  - The four filter types AND together.
+  - Multiple filters OF THE SAME TYPE OR together, regardless of which Filter
+    element they arrived in.
+  - An absent filter type is logical TRUE, not an empty result.
+
+  Wildcards apply to every string field and are anchored at both ends, so
+  ".*Loop.*" is needed here — a bare "Loop" matches nothing.
+
+  Every filter is scoped by registryFilter. A CIR is a shared registry server,
+  so assertions that assume an otherwise-empty database will break as soon as
+  anyone else stores anything.
+}

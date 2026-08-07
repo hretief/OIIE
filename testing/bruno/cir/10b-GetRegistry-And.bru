@@ -1,0 +1,42 @@
+meta {
+  name: 10b GetRegistry - types AND
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/queries/registry
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "filter": [
+      {
+        "registryFilter": { "id": "{{registryId}}" },
+        "categoryFilter": { "id": "{{categoryId}}" },
+        "propertyFilter": { "id": "ParentEntityID" }
+      }
+    ]
+  }
+}
+
+tests {
+  test("returns 200", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("only the entry carrying that property survives the AND", function () {
+    const entries = (res.getBody().registry || [])
+      .flatMap(r => r.categories || [])
+      .flatMap(c => c.entries || []);
+    expect(entries).to.have.lengthOf(1);
+    expect(entries[0].idInSource).to.equal("TIC-8106");
+  });
+}
+
+docs {
+  Mirrors the §3.2.1 worked example: Registry "Test" AND Category "Asset" AND
+  Property "Length" returns only entries satisfying all three.
+}

@@ -1,0 +1,23 @@
+meta {
+  name: 14 DeleteRegistry - teardown
+  type: http
+  seq: 17
+}
+
+delete {
+  url: {{baseUrl}}/registries/{{registryId}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("returns 204", function () {
+    expect(res.getStatus()).to.equal(204);
+  });
+}
+
+docs {
+  §3.1.5 must cascade to Categories, Entries and Properties. That is enforced by
+  ON DELETE CASCADE on the foreign keys rather than in application code, so the
+  cascade is atomic by construction.
+}
