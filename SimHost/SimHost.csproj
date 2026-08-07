@@ -29,4 +29,12 @@
     <Content Include="PersonalityPacks\**\*.yaml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!--
+    Scenario files are deployed content for the same reason: ScenarioCatalog reads
+    them from ContentRootPath/Scenarios unless Sandbox:ScenariosPath overrides it.
+  -->
+  <ItemGroup>
+    <Content Include="Scenarios\**\*.yaml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

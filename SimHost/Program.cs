@@ -7,6 +7,7 @@ using SimHost.Application.Cir;
 using SimHost.Application.Classification;
 using SimHost.Application.Inbox;
 using SimHost.Application.Outbox;
+using SimHost.Application.Scenarios;
 using SimHost.Personalities.Eng;
 using SimHost.Personalities.Mms;
 using SimHost.Personalities.RegLocation;
@@ -15,6 +16,7 @@ using SimHost.Components;
 using SimHost.Infrastructure.Blob;
 using Oiie.Isbm.Client;
 using SimHost.Domain.Common;
+using SimHost.Domain.Sandbox;
 using SimHost.Infrastructure.Isbm;
 using SimHost.Infrastructure.Sql;
 
@@ -44,6 +46,11 @@ builder.Services.AddSingleton<IParticipantConnectionStringProvider,
     KeyVaultConnectionStringProvider>();
 builder.Services.AddSingleton<IParticipantDbContextFactory, ParticipantDbContextFactory>();
 builder.Services.AddSingleton<IParticipantSchemaInitializer, ParticipantSchemaInitializer>();
+
+// Scenario orchestration state, in the shared sandbox schema rather than any one
+// participant's.
+builder.Services.AddSingleton<ISandboxDbContextFactory, SandboxDbContextFactory>();
+builder.Services.AddSingleton<ISandboxSchemaInitializer, SandboxSchemaInitializer>();
 
 // Storage and ISBM are optional at startup so the database work can proceed before
 // either is wired. Each is registered only when configured, and the outbox — which
@@ -89,6 +96,38 @@ builder.Services.AddSingleton(_ =>
 
 // --- Application services --------------------------------------------------
 builder.Services.AddSingleton<DispatcherControl>();
+
+// Registered unconditionally: the inbox pump reads the current run from it, and a
+// null run id is the correct answer outside a scenario.
+builder.Services.AddSingleton<SimHost.Application.Scenarios.ScenarioRunContext>();
+
+// The action vocabulary. Each action wraps a service the admin endpoints already
+// call, so a scenario drives the participants the way an operator would.
+builder.Services.AddSingleton<IScenarioAction, CreateTagAction>();
+builder.Services.AddSingleton<IScenarioAction, PromoteNamedVersionAction>();
+builder.Services.AddSingleton<IScenarioAction, ApproveStewardshipAction>();
+builder.Services.AddSingleton<IScenarioAction, RegisterCirAction>();
+builder.Services.AddSingleton<IScenarioAction, ResolveIdentityAction>();
+builder.Services.AddSingleton<ScenarioActionRegistry>();
+
+// The assertion vocabulary (spec §11.2). Phase 1 covers what uc01 needs; the
+// remaining names in the table are added as the scenarios that use them arrive.
+builder.Services.AddSingleton<IScenarioAssertion, MessageReceivedAssertion>();
+builder.Services.AddSingleton<IScenarioAssertion, MessageNotReceivedAssertion>();
+builder.Services.AddSingleton<IScenarioAssertion, BodValidAssertion>();
+builder.Services.AddSingleton<IScenarioAssertion, StoreContainsAssertion>();
+builder.Services.AddSingleton<IScenarioAssertion, StoreNotContainsAssertion>();
+builder.Services.AddSingleton<IScenarioAssertion, CirEquivalentAssertion>();
+builder.Services.AddSingleton<IScenarioAssertion, CirRegisteredAssertion>();
+builder.Services.AddSingleton<IScenarioAssertion, IdentityResolvedAssertion>();
+builder.Services.AddSingleton<IScenarioAssertion, OutboxStateAssertion>();
+builder.Services.AddSingleton<IScenarioAssertion, PendingWorkAssertion>();
+builder.Services.AddSingleton<ScenarioAssertionRegistry>();
+
+builder.Services.AddSingleton<ScenarioLoader>();
+builder.Services.AddSingleton<ScenarioCatalog>();
+builder.Services.AddSingleton<ScenarioRunner>();
+
 builder.Services.AddSingleton<CcomAttributeMapperFactory>();
 builder.Services.AddSingleton<CirTelemetry>();
 builder.Services.AddSingleton<CirClient>();
@@ -181,6 +220,7 @@ app.MapPost("/admin/schema/init", async (
 app.MapPost("/admin/reset", async (
     ParticipantRegistry registry,
     IParticipantSchemaInitializer initializer,
+    ISandboxSchemaInitializer sandboxInitializer,
     IIsbmClientAccessor clients,
     IIsbmSessionStoreAccessor stores,
     ClassFixtureLoader loader,
@@ -315,6 +355,26 @@ app.MapPost("/admin/reset", async (
 
     await refresher.RefreshAllAsync(ct);
 
+    // 5. Run history last.
+    //
+    // A run's findings reference message and outbox rows in the participant schemas
+    // just dropped, so history that survives a reset points at evidence that no
+    // longer exists — and reads as a passing run whose proof cannot be produced.
+    var runsPurged = 0;
+
+    try
+    {
+        await sandboxInitializer.EnsureTablesAsync(ct);
+        runsPurged = await sandboxInitializer.PurgeRunsAsync(ct);
+    }
+    catch (Exception ex)
+    {
+        // Warned rather than thrown: the participants are reset and usable, and
+        // failing the whole call over orchestration history would be a worse outcome
+        // than stale history.
+        log.LogWarning(ex, "Could not clear scenario run history.");
+    }
+
     log.LogInformation(
         "Reset complete: {Sessions} session(s) closed, {Channels} channel(s) purged, {Count} participant(s)",
         closed, purged.Count, registry.All.Count);
@@ -324,7 +384,8 @@ app.MapPost("/admin/reset", async (
         sessionsClosed = closed,
         channelsPurged = purged,
         channelsEnsuredNotPurged = ensured,
-        participants = steps
+        participants = steps,
+        scenarioRunsPurged = runsPurged
     });
 });
 
@@ -1438,6 +1499,249 @@ app.MapGet("/admin/{participantId}/classes", (
     }));
 });
 
+// --- Scenarios (spec §11) --------------------------------------------------
+
+// Lists what is on disk, with each file's validation errors rather than only the
+// ones that load. A scenario that fails to parse is exactly the one an author wants
+// to see, and omitting it would make a typo look like a missing file.
+app.MapGet("/admin/scenarios", (ScenarioCatalog catalog) =>
+{
+    var results = new List<object>();
+
+    foreach (var path in Directory.Exists(catalog.Root)
+        ? Directory.EnumerateFiles(catalog.Root, "*.yaml", SearchOption.AllDirectories)
+                   .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+        : Enumerable.Empty<string>())
+    {
+        var id = Path.GetFileNameWithoutExtension(path);
+
+        try
+        {
+            var definition = catalog.Require(id);
+
+            results.Add(new
+            {
+                definition.Id,
+                definition.Name,
+                definition.Participants,
+                steps = definition.Items.Count(i => !i.IsAssertion),
+                assertions = definition.Items.Count(i => i.IsAssertion),
+                runnable = true,
+                errors = Array.Empty<string>()
+            });
+        }
+        catch (ScenarioLoadException ex)
+        {
+            results.Add(new { Id = id, runnable = false, errors = ex.Errors });
+        }
+        catch (Exception ex)
+        {
+            results.Add(new { Id = id, runnable = false, errors = new[] { ex.Message } });
+        }
+    }
+
+    return Results.Ok(new { root = catalog.Root, scenarios = results });
+});
+
+// Parses and validates without running. Cheap to call, and the only way to check a
+// scenario file that would otherwise reset the database to find out.
+app.MapPost("/admin/scenarios/{scenarioId}/validate", (
+    string scenarioId, ScenarioCatalog catalog) =>
+{
+    try
+    {
+        var definition = catalog.Require(scenarioId);
+
+        return Results.Ok(new
+        {
+            definition.Id,
+            valid = true,
+            steps = definition.Items.Select(i => new
+            {
+                i.Ordinal,
+                i.Line,
+                description = i.Describe()
+            })
+        });
+    }
+    catch (ScenarioLoadException ex)
+    {
+        return Results.UnprocessableEntity(new { scenarioId, valid = false, ex.Errors });
+    }
+    catch (FileNotFoundException ex)
+    {
+        return Results.NotFound(new { scenarioId, error = ex.Message });
+    }
+});
+
+// Runs to completion and returns the findings.
+//
+// Synchronous, and deliberately so. A scenario is a handful of steps against a bus
+// with timed assertions — tens of seconds — and a fire-and-forget endpoint would
+// oblige every caller, including CI, to poll for a result they always want. The run
+// id is in the response either way, so the history view can be opened afterwards.
+app.MapPost("/admin/scenarios/{scenarioId}/run", async (
+    string scenarioId,
+    ScenarioCatalog catalog,
+    ScenarioRunner runner,
+    string? mode,
+    int? seed,
+    CancellationToken ct) =>
+{
+    ScenarioDefinition definition;
+
+    try
+    {
+        definition = catalog.Require(scenarioId);
+    }
+    catch (ScenarioLoadException ex)
+    {
+        return Results.UnprocessableEntity(new { scenarioId, valid = false, ex.Errors });
+    }
+    catch (FileNotFoundException ex)
+    {
+        return Results.NotFound(new { scenarioId, error = ex.Message });
+    }
+
+    if (!Enum.TryParse<ScenarioRunMode>(mode ?? nameof(ScenarioRunMode.Ci), true, out var runMode))
+    {
+        return Results.BadRequest(new
+        {
+            error = $"'{mode}' is not a run mode.",
+            expected = Enum.GetNames<ScenarioRunMode>()
+        });
+    }
+
+    var summary = await runner.RunAsync(definition, runMode, seed ?? 0, ct);
+
+    var body = new
+    {
+        summary.RunId,
+        summary.ScenarioId,
+        state = summary.State.ToString(),
+        summary.Passed,
+        summary.Concerns,
+        summary.Failed,
+        summary.AbortReason,
+
+        // Grouped by owner, because that is who acts on them. "The registration timed
+        // out" is true of the Sandbox, ISBM and CIR at once and tells none of their
+        // owners anything.
+        findings = summary.Findings
+            .Where(f => f.Severity != FindingSeverity.Pass)
+            .GroupBy(f => f.Owner)
+            .Select(g => new
+            {
+                owner = g.Key.ToString(),
+                items = g.Select(f => new
+                {
+                    f.Assertion,
+                    f.ParticipantId,
+                    severity = f.Severity.ToString(),
+                    f.Observed,
+                    f.Suggests,
+                    f.WaitedSeconds
+                })
+            })
+    };
+
+    // A failed run is a successful report of a failure, so 200 describes the request
+    // rather than the verdict. CI reads the state field, which is unambiguous, instead
+    // of inferring intent from a status code that would have to mean two things.
+    return Results.Ok(body);
+});
+
+// Run history. Findings are returned with the run because a run without its evidence
+// is a colour, and the colour was already known when the run finished.
+app.MapGet("/admin/scenarios/runs", async (
+    ISandboxDbContextFactory factory, int? take, CancellationToken ct) =>
+{
+    await using var db = factory.Create();
+
+    var runs = await db.ScenarioRuns
+        .OrderByDescending(r => r.StartedUtc)
+        .Take(Math.Clamp(take ?? 20, 1, 200))
+        .ToListAsync(ct);
+
+    return Results.Ok(runs.Select(r => new
+    {
+        r.Id,
+        r.ScenarioId,
+        r.Title,
+        mode = r.Mode.ToString(),
+        state = r.State.ToString(),
+        r.Passed,
+        r.Concerns,
+        r.Failed,
+        r.AbortReason,
+        r.StartedUtc,
+        r.FinishedUtc,
+        durationSeconds = r.FinishedUtc is null
+            ? (int?)null
+            : (int)(r.FinishedUtc.Value - r.StartedUtc).TotalSeconds
+    }));
+});
+
+app.MapGet("/admin/scenarios/runs/{runId:guid}", async (
+    Guid runId, ISandboxDbContextFactory factory, CancellationToken ct) =>
+{
+    await using var db = factory.Create();
+
+    var run = await db.ScenarioRuns.FirstOrDefaultAsync(r => r.Id == runId, ct);
+
+    if (run is null)
+    {
+        return Results.NotFound(new { runId });
+    }
+
+    var steps = await db.ScenarioSteps
+        .Where(s => s.ScenarioRunId == runId)
+        .OrderBy(s => s.Ordinal)
+        .ToListAsync(ct);
+
+    var findings = await db.Assertions
+        .Where(a => a.ScenarioRunId == runId)
+        .OrderBy(a => a.Ordinal).ThenBy(a => a.Id)
+        .ToListAsync(ct);
+
+    return Results.Ok(new
+    {
+        run.Id,
+        run.ScenarioId,
+        run.Title,
+        mode = run.Mode.ToString(),
+        state = run.State.ToString(),
+        run.Seed,
+        run.Passed,
+        run.Concerns,
+        run.Failed,
+        run.AbortReason,
+        run.StartedUtc,
+        run.FinishedUtc,
+        steps = steps.Select(s => new
+        {
+            s.Ordinal,
+            s.StepId,
+            s.ParticipantId,
+            s.Action,
+            outcome = s.Outcome.ToString(),
+            s.ResultJson,
+            s.Error
+        }),
+        assertions = findings.Select(a => new
+        {
+            a.Ordinal,
+            a.Assertion,
+            a.ParticipantId,
+            severity = a.Severity.ToString(),
+            owner = a.Owner.ToString(),
+            a.Observed,
+            a.Suggests,
+            a.WaitedSeconds
+        })
+    });
+});
+
 app.MapPost("/admin/eng/tags", async (
     EngService eng, AddTagRequest request, CancellationToken ct) =>
 {
@@ -1664,6 +1968,21 @@ if (isbmConfigured)
 
 using (var scope = app.Services.CreateScope())
 {
+    // The orchestration tables are not created by any participant's reset, so without
+    // this the first scenario run fails on an invalid object name rather than on
+    // anything to do with the scenario.
+    try
+    {
+        await scope.ServiceProvider
+            .GetRequiredService<ISandboxSchemaInitializer>().EnsureTablesAsync();
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex,
+            "Could not ensure the scenario orchestration tables; scenario runs will fail " +
+            "until the sandbox schema is reachable.");
+    }
+
     // Without this, a restart leaves every participant with an empty snapshot and
     // classification silently stops working until something reseeds.
     try

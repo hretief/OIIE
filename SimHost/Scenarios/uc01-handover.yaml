@@ -1,0 +1,158 @@
+# uc01 - engineering handover to operations.
+#
+# The declarative form of the flow testing/test-sandbox.ps1 walks imperatively:
+# ENG authors and releases a tag, REG-LOCATION receives it as a stewardship
+# proposal and republishes what a steward approves, MMS consumes the
+# republication as a functional location it knows nothing about, and the CIR is
+# what finally links the three identifiers.
+#
+# Identifiers only appear here where the scenario itself chooses them. TIC-106 is
+# authored by this file, but LOC-nnnnnn and the MMS equipment number are assigned
+# by their own participants, so assertions select on provenance columns rather
+# than on values that cannot be known before the run.
+id: uc01-handover
+name: Engineering handover to operations
+
+participants:
+  - eng
+  - reg-location
+  - mms
+
+setup:
+  # Reset first: a stewardship queue left over from a previous run would let the
+  # approval step publish something this run never authored.
+  reset: true
+  channels:
+    - uri: /OIIE-SANDBOX/Enterprise/Site/Eng
+      type: Publication
+      subscribers:
+        - reg-location
+    - uri: /OIIE-SANDBOX/Enterprise/Site/OandM
+      type: Publication
+      subscribers:
+        - mms
+
+steps:
+  # -- ENG authors and releases -----------------------------------------------
+  - id: author-tag
+    at: eng
+    action: create_tag
+    args:
+      tagNumber: TIC-106
+      serviceDescription: Top temperature control
+      unitNumber: "101"
+      classKey: rdl:TemperatureIndicatingController
+      rangeMinimum: 0
+      rangeMaximum: 250
+      controlAction: Reverse
+
+  - at: eng
+    assert: store_contains
+    entity: Tag
+    where: "TagNumber = 'TIC-106'"
+
+  - id: release
+    at: eng
+    action: promote_named_version
+    args:
+      name: uc01 handover
+
+  # Posted, not merely queued. The two are indistinguishable from the receiver's
+  # side and have entirely different owners.
+  - at: eng
+    assert: outbox_state
+    state: Posted
+    verb: Sync
+    noun: Segments
+    within: 60s
+
+  # -- REG-LOCATION receives and governs ---------------------------------------
+  - at: reg-location
+    assert: message_received
+    channel: /OIIE-SANDBOX/Enterprise/Site/Eng
+    verb: Sync
+    noun: Segments
+    within: 60s
+
+  - at: reg-location
+    assert: bod_valid
+
+  # Arrival is not acceptance. If this passed without a queued item, the registry
+  # would be a relay rather than a governance gate.
+  - at: reg-location
+    assert: pending_work
+    count: 1
+    within: 30s
+
+  - at: reg-location
+    assert: store_contains
+    entity: StewardshipItem
+    where: "SourceIdentifier = 'TIC-106'"
+
+  - id: approve
+    at: reg-location
+    action: approve_stewardship
+    args:
+      decidedBy: uc01
+
+  # The registry assigns its own key and keeps the origin. Selecting on
+  # SourceIdentifier rather than LocationCode is what makes that testable without
+  # knowing the surrogate in advance.
+  - at: reg-location
+    assert: store_contains
+    entity: Location
+    where: "SourceIdentifier = 'TIC-106' AND LocationCode <> 'TIC-106'"
+
+  - at: reg-location
+    assert: outbox_state
+    state: Posted
+    verb: Sync
+    noun: Segments
+    within: 60s
+
+  # -- MMS consumes -------------------------------------------------------------
+  - at: mms
+    assert: message_received
+    channel: /OIIE-SANDBOX/Enterprise/Site/OandM
+    verb: Sync
+    noun: Segments
+    within: 60s
+
+  - at: mms
+    assert: bod_valid
+
+  # MMS holds a third identifier and, at this point, no idea that it names the
+  # same thing as the other two.
+  - at: mms
+    assert: store_contains
+    entity: FunctionalLocationRecord
+    where: "ForeignSourceId = 'REG-LOCATION' AND Cirid IS NULL"
+
+  # -- CIR registration and resolution ------------------------------------------
+  - id: register-eng
+    at: eng
+    action: register_cir
+
+  - id: register-reg-location
+    at: reg-location
+    action: register_cir
+
+  - id: register-mms
+    at: mms
+    action: register_cir
+
+  # Written under args because a bare 'id' at item level names the step, not the
+  # identifier being looked up.
+  - at: eng
+    assert: cir_registered
+    within: 60s
+    args:
+      id: TIC-106
+
+  # The handover has only succeeded once MMS can turn the identifier it received
+  # into the shared identity, which is what the whole chain above exists for.
+  - at: mms
+    assert: store_contains
+    entity: FunctionalLocationRecord
+    where: "ForeignSourceId = 'REG-LOCATION' AND Cirid IS NOT NULL"
+    within: 60s

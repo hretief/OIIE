@@ -3,6 +3,7 @@ using Oiie.Ccom.Oagis;
 using Oiie.Isbm.Client;
 using SimHost.Application.Bods;
 using SimHost.Application.Participants;
+using SimHost.Application.Scenarios;
 using SimHost.Domain.Common;
 using SimHost.Infrastructure.Blob;
 using SimHost.Infrastructure.Isbm;
@@ -71,6 +72,7 @@ public sealed class InboxPump(
     IPayloadStore payloads,
     BodValidator validator,
     IEnumerable<IBodHandler> handlers,
+    ScenarioRunContext runContext,
     ILogger<InboxPump> logger) : BackgroundService
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
@@ -193,6 +195,19 @@ public sealed class InboxPump(
             IsbmSessionId = sessionId,
             Topic = message.Topics.FirstOrDefault(),
             ContentBytes = System.Text.Encoding.UTF8.GetByteCount(message.RawContent),
+
+            // Attributed to whichever run is in flight when the message is archived.
+            //
+            // The run id is not on the wire, so this is the receiving end guessing from
+            // local state rather than reading an identifier the sender set. It holds
+            // because only one scenario runs at a time, and a scenario's own traffic is
+            // what arrives while it runs. It does not hold for a message that crosses a
+            // run boundary — a delayed or replayed publication is attributed to whatever
+            // is running when it lands, or to nothing. Scenarios that deliberately
+            // exercise expiry, duplicate delivery or abandoned sessions will need the run
+            // id carried on the envelope instead.
+            ScenarioRunId = runContext.CurrentRunId,
+
             OccurredAt = DateTimeOffset.UtcNow
         };
 

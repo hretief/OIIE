@@ -6,6 +6,9 @@ namespace SimHost.Infrastructure.Sql;
 public interface IParticipantConnectionStringProvider
 {
     string For(string participantId);
+
+    /// <summary>Orchestrator and tower are not participants but need connections.</summary>
+    string ForService(string serviceName, string defaultSchema);
 }
 
 /// <summary>
