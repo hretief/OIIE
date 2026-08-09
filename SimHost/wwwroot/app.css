@@ -3,6 +3,10 @@
     --muted: #6b7280;
     --rule: #e5e7eb;
     --warn: #b45309;
+    --pass: #15803d;
+    --fail: #b91c1c;
+    --accent: #1d4ed8;
+    --surface: #f9fafb;
 }
 
 body {
@@ -36,3 +40,99 @@ main { padding: 20px; }
 table { border-collapse: collapse; }
 th, td { text-align: left; padding: 6px 14px 6px 0; border-bottom: 1px solid var(--rule); }
 th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+
+nav { display: flex; gap: 16px; margin-left: auto; }
+nav a { color: var(--muted); text-decoration: none; font-size: 14px; }
+nav a:hover, nav a.active { color: var(--ink); }
+
+a { color: var(--accent); }
+
+/* Severity is carried by a text label as well as colour everywhere it appears, so
+   the view does not depend on colour vision to distinguish a pass from a failure. */
+.sev { font-size: 12px; font-weight: 600; }
+.sev-pass { color: var(--pass); }
+.sev-fail { color: var(--fail); }
+.sev-concern { color: var(--warn); }
+
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.dot-pass { background: var(--pass); }
+.dot-fail { background: var(--fail); }
+.dot-concern { background: var(--warn); }
+
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--rule); margin: 16px 0; }
+.tabs button {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    padding: 8px 14px; cursor: pointer; font-size: 14px; color: var(--muted);
+}
+.tabs button.active { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+
+.toolbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.toolbar label { font-size: 13px; color: var(--muted); }
+
+button.primary {
+    background: var(--accent); color: white; border: none;
+    padding: 7px 14px; border-radius: 4px; cursor: pointer; font-size: 14px;
+}
+button.primary:disabled { background: var(--muted); cursor: default; }
+
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+
+.card { border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; margin-bottom: 10px; }
+.card-fail { border-left: 3px solid var(--fail); }
+.card-pass { border-left: 3px solid var(--pass); }
+.card-concern { border-left: 3px solid var(--warn); }
+
+.detail { background: var(--surface); padding: 8px 10px; border-radius: 4px; margin-top: 8px; }
+.detail pre { margin: 0; white-space: pre-wrap; word-break: break-all; }
+
+/* Lineage: the identity is the row, each participant's code is a cell. Codes are
+   shown as equals because none of them is more correct than the others. */
+.lineage-chain { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.chip {
+    border: 1px solid var(--rule); border-radius: 4px; padding: 3px 8px;
+    font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; background: var(--surface);
+}
+.chip-minted { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.arrow { color: var(--muted); }
+
+.flow-row { display: grid; grid-template-columns: 120px 1fr 120px; align-items: center; gap: 10px; padding: 6px 0; }
+.flow-line { border-top: 1px solid var(--rule); position: relative; text-align: center; }
+.flow-label { font-size: 11px; color: var(--muted); background: white; padding: 0 8px; position: relative; top: -8px; }
+.flow-party { font-size: 13px; font-weight: 600; }
+.flow-undelivered { color: var(--fail); }
+
+/* The message label is the way into the transformation view, so it has to read as a
+   link rather than as the caption it previously was. */
+.flow-link { text-decoration: none; cursor: pointer; }
+.flow-link:hover { color: var(--accent); text-decoration: underline; }
+
+.btn {
+    background: white; color: var(--ink); border: 1px solid var(--rule);
+    padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 13px;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn:disabled { color: var(--muted); border-color: var(--rule); cursor: default; }
+
+/* Destructive actions are red only once confirmation is being asked for, so the
+   resting state of the page is not shouting. */
+.btn-danger { border-color: var(--fail); color: var(--fail); }
+.btn-danger:hover { background: var(--fail); color: white; border-color: var(--fail); }
+
+.toolbar-gap { flex: 1; }
+
+.section { margin: 24px 0 4px; font-size: 15px; }
+
+/* The payload is evidence, so it is shown verbatim and allowed to scroll rather than
+   being wrapped or truncated into something that no longer matches the wire. */
+pre.xml {
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 4px;
+    padding: 12px; overflow-x: auto; max-height: 420px; overflow-y: auto;
+    font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; line-height: 1.45;
+}
+
+table.record { width: 100%; margin-top: 8px; border-collapse: collapse; }
+table.record td { padding: 3px 0; vertical-align: top; font-size: 13px; }
+.record-label { color: var(--muted); width: 180px; }
+.record-value { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }

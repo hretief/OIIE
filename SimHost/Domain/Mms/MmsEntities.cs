@@ -11,7 +11,17 @@ public class FunctionalLocationRecord
 {
     public long Id { get; set; }
 
-    /// <summary>Legacy numeric key, e.g. 234443.</summary>
+    /// <summary>
+    /// The identity as adopted from the inbound message. MMS never mints: it is not a
+    /// master of identity, it is a legacy system holding its own codes for things
+    /// other people originated. Empty means nothing has told it what this is yet.
+    /// </summary>
+    public Guid FederationId { get; set; }
+
+    /// <summary>
+    /// MMS's legacy code, e.g. 234443. Registered against the FederationId rather
+    /// than standing in for it — this is exactly the legacy-code case CIR resolves.
+    /// </summary>
     public string EquipmentNumber { get; set; } = string.Empty;
 
     public string? Designation { get; set; }

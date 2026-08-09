@@ -53,7 +53,8 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$repoRoot = Split-Path $PSScriptRoot -Parent
+# $PSScriptRoot is deploy/sandbox, so the repository root is two levels up.
+$repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 
 function Invoke-Az {
     param([string[]]$Arguments, [string]$Because = 'Azure CLI call', [switch]$AsJson)
@@ -201,17 +202,20 @@ if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed.' }
 # Personalities and Schemas are read at runtime and are not compiled in, so the
 # build does not carry them. Without this the app starts and reports zero
 # participants, which looks like a configuration error rather than a missing folder.
-foreach ($folder in @('Personalities', 'Schemas')) {
-    $source = Join-Path $repoRoot $folder
+foreach ($folder in @(
+    @{ Name = 'Personalities'; Source = 'SimHost/Personalities' },
+    @{ Name = 'Schemas'; Source = 'schemas' }
+)) {
+    $source = Join-Path $repoRoot $folder.Source
 
     if (-not (Test-Path $source)) {
-        Write-Warning "$folder not found at $source"
+        Write-Warning "$($folder.Name) not found at $source"
         continue
     }
 
-    Copy-Item $source -Destination (Join-Path $publishDir $folder) -Recurse -Force
-    $count = @(Get-ChildItem (Join-Path $publishDir $folder) -Recurse -File).Count
-    Write-Host "  $folder : $count file(s)"
+    Copy-Item $source -Destination (Join-Path $publishDir $folder.Name) -Recurse -Force
+    $count = @(Get-ChildItem (Join-Path $publishDir $folder.Name) -Recurse -File).Count
+    Write-Host "  $($folder.Name) : $count file(s)"
 }
 
 # Developer settings must not ship: they name one developer's database and alias.

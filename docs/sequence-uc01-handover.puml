@@ -24,7 +24,8 @@ participant "ws-CIR provider" as CIR
 
 EngUser -> ENG : edit tags in Unit 101
 activate ENG
-ENG -> ENG : persist Tag rows\nchangeset accrues automatically
+ENG -> ENG : classify against\nrdl:TemperatureIndicatingController
+ENG -> ENG : persist Tag rows + property values\nchangeset accrues automatically
 note right of ENG
   Changesets are **not** the release trigger.
   Nobody decides to make one.
@@ -86,8 +87,15 @@ end note
 
 ISBM -> LOC : ReadPublication → SyncSegments
 activate LOC
-LOC -> LOC : bind class chain\ningest properties (mapped / unmapped)
-LOC -> LOC : create StewardshipItem rows
+LOC -> LOC : bind class chain\nleaf class unknown → bind at rdl:Instrument
+note right of LOC
+  Classification is **degraded**, not failed.
+  REG-LOCATION still holds the rdl:ControlAction
+  definition, so the value is stored **mapped** —
+  understood, filed under a coarser class.
+end note
+LOC -> LOC : ingest properties (mapped / unmapped)
+LOC -> LOC : create StewardshipItem rows\nwith the incoming property values
 deactivate LOC
 
 StewardUser -> LOC : open review queue
@@ -99,11 +107,15 @@ alt steward rejects
   LOC -> ISBM : ConfirmBOD (error)
 else steward approves
   StewardUser -> LOC : approve into authoritative model
-  LOC -> LOC : commit Location rows + Outbox rows
+  LOC -> LOC : commit Location rows + Outbox rows\ncarry property values onto the Location
   note right of LOC
     REG-LOCATION is a governance gate,
     not a relay. This approval is its
     release event.
+
+    Values carry forward to the authoritative
+    row — a gate that dropped them would make
+    approval lossy.
   end note
 end
 deactivate LOC
@@ -118,7 +130,13 @@ deactivate CIR
 ISBM --> LOC : AcknowledgeRegistry
 deactivate ISBM
 
-LOC -> ISBM : PostPublication(SyncSegments)\non /Enterprise/Site/OandM
+LOC -> ISBM : PostPublication(SyncSegments)\non /Enterprise/Site/OandM\nre-emitting mapped and unmapped values alike
+
+note over LOC
+  Forwarding only what it understood would
+  make the registry a filter. A downstream
+  system may hold a definition it lacks.
+end note
 
 == Consumption and identity resolution ==
 
@@ -141,6 +159,14 @@ else miss, stale, or invalidated
 end
 
 MMS -> MMS : bind or create\nFunctionalLocationRecord
+MMS -> MMS : ingest attributes into MMS SQL\nall values retained **unmapped**
+note right of MMS
+  MMS holds no reference data, so it cannot
+  classify anything it receives. It stores the
+  values anyway, flagged — including Control action.
+  Discarding them would make federation
+  all-or-nothing, and it is not.
+end note
 deactivate MMS
 
 PlannerUser -> MMS : open equipment register
@@ -152,6 +178,10 @@ note over PlannerUser
   No BOD is visible here. The location
   simply appeared in the maintenance
   system — which is the actual claim.
+
+  The Persisted data tab in the run view
+  reads these rows straight out of SQL, so
+  the claim is checked rather than asserted.
 end note
 
 @enduml

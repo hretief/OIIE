@@ -8,6 +8,12 @@
 # every participant held completely would make graceful degradation untestable,
 # and it is the behaviour that argues for governed reference data in the first
 # place.
+#
+# Note what the registry does hold: the property definitions themselves. Missing
+# a class is not the same as missing everything the class refers to, so an
+# incoming control action is understood and stored as mapped data even though
+# the class requiring it could not be resolved. MMS, holding no fixtures at all,
+# retains the same value unmapped -- which is the contrast the demo turns on.
 
 propertyDefinitions:
   - key: rdl:RangeMinimum
@@ -18,6 +24,21 @@ propertyDefinitions:
     name: Range maximum
     dataType: Numeric
     unitOfMeasure: degC
+  # Held even though the leaf class that requires it is not.
+  #
+  # Holding a definition and holding the class that sanctions it are separate
+  # questions, and conflating them is what makes federation look all-or-nothing.
+  # The registry cannot resolve rdl:TemperatureIndicatingController, so it binds
+  # a temperature controller at rdl:Instrument and records the result degraded --
+  # but it still understands what a control action is, so the value arrives
+  # mapped rather than merely retained.
+  #
+  # MMS holds no reference data at all, so the same value lands there unmapped.
+  # One value, three participants, three different degrees of understanding: that
+  # is the asymmetry these fixtures exist to produce.
+  - key: rdl:ControlAction
+    name: Control action
+    dataType: Character
 
 classes:
   - key: rdl:Equipment
@@ -42,3 +63,10 @@ classes:
         requirement: Recommended
         minValue: -273
         maxValue: 2000
+      # Attached at Instrument rather than at the leaf, because that is the most
+      # specific class the registry actually holds. ENG requires it only of a
+      # temperature controller; the registry cannot express that distinction and
+      # asks for it more broadly instead -- a coarser but honest reading of the
+      # same reference data, which is what binding to an ancestor means.
+      - definition: rdl:ControlAction
+        requirement: Recommended

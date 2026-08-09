@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using SimHost.Application.Identity;
 using SimHost.Domain.Common;
 using SimHost.Domain.Eng;
 using SimHost.Domain.Mms;
@@ -27,6 +28,7 @@ public class ParticipantDbContext : DbContext
     public string Schema => _schema;
 
     public DbSet<MessageRecord> Messages => Set<MessageRecord>();
+    public DbSet<CodeAssignment> Codes => Set<CodeAssignment>();
     public DbSet<ProvenanceEntry> Provenance => Set<ProvenanceEntry>();
     public DbSet<OutboxItem> Outbox => Set<OutboxItem>();
     public DbSet<IdentityMapEntry> IdentityMap => Set<IdentityMapEntry>();
@@ -102,6 +104,27 @@ public class ParticipantDbContext : DbContext
             entity.Property(e => e.Actor).HasMaxLength(128).IsRequired();
             entity.HasIndex(e => new { e.EntityType, e.EntityKey, e.At });
             entity.HasIndex(e => e.MessageId);
+        });
+
+        // Every participant holds codes, because every participant labels the things
+        // it knows about, whether or not it originated them.
+        modelBuilder.Entity<CodeAssignment>(entity =>
+        {
+            entity.ToTable("CodeAssignment");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.ParticipantId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.Code).HasMaxLength(200).IsRequired();
+            entity.HasIndex(e => e.FederationId);
+
+            // One current code per participant per identity. Historic rows are
+            // excluded from the constraint so re-coding can retain the old value.
+            entity.HasIndex(e => new { e.FederationId, e.ParticipantId })
+                .IsUnique()
+                .HasFilter("[IsCurrent] = 1");
+
+            // The reverse lookup that matters operationally: someone types a legacy
+            // code and needs the identity behind it.
+            entity.HasIndex(e => new { e.ParticipantId, e.Code });
         });
 
         modelBuilder.Entity<OutboxItem>(entity =>
@@ -272,6 +295,14 @@ public class ParticipantDbContext : DbContext
             entity.HasIndex(e => e.EquipmentNumber).IsUnique();
             entity.HasIndex(e => new { e.ForeignSourceId, e.ForeignIdInSource });
             entity.HasIndex(e => e.Cirid);
+
+            // Filtered: a record MMS has not yet been told the identity of holds
+            // Guid.Empty, and there can be many of those legitimately. Only real
+            // identities must be unique — two rows under one FederationId would claim
+            // MMS holds the same thing twice.
+            entity.HasIndex(e => e.FederationId)
+                .IsUnique()
+                .HasFilter("[FederationId] <> '00000000-0000-0000-0000-000000000000'");
         });
 
         modelBuilder.Entity<EquipmentRecord>(entity =>
@@ -302,6 +333,7 @@ public class ParticipantDbContext : DbContext
             entity.Property(e => e.SourceIdentifier).HasMaxLength(200).IsRequired();
             entity.HasIndex(e => e.LocationCode).IsUnique();
             entity.HasIndex(e => new { e.SourceParticipant, e.SourceIdentifier });
+            entity.HasIndex(e => e.FederationId).IsUnique();
         });
 
         modelBuilder.Entity<LocationParent>(entity =>
@@ -328,6 +360,7 @@ public class ParticipantDbContext : DbContext
             entity.Property(e => e.RejectReason).HasMaxLength(1000);
             entity.Property(e => e.LocationCode).HasMaxLength(64);
             entity.HasIndex(e => e.State);
+            entity.HasIndex(e => e.FederationId);
         });
     }
 
@@ -350,6 +383,7 @@ public class ParticipantDbContext : DbContext
             entity.Property(e => e.Maturity).HasConversion<string>().HasMaxLength(24);
             entity.HasIndex(e => e.TagNumber).IsUnique();
             entity.HasIndex(e => e.Maturity);
+            entity.HasIndex(e => e.FederationId).IsUnique();
         });
 
         modelBuilder.Entity<NamedVersion>(entity =>

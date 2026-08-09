@@ -1,0 +1,45 @@
+@using SimHost.Application.Scenarios
+
+@*
+    One participant's row, or a statement that it holds none.
+
+    The absent case is rendered rather than skipped: a receiver that took the message and
+    created nothing is a real finding, and an omitted card would read as "nothing to see"
+    instead of "nothing was written".
+*@
+
+@if (Record.Absent)
+{
+    <div class="card card-concern">
+        <div>
+            <strong>@Record.ParticipantId</strong>
+            <span class="small muted">holds no record for this identity</span>
+        </div>
+    </div>
+}
+else
+{
+    <div class="card">
+        <div>
+            <strong>@Record.ParticipantId</strong>
+            <span class="small muted">@Record.EntityType · @Record.Key</span>
+        </div>
+
+        <div class="small muted mono">@Record.FederationId</div>
+
+        <table class="record">
+            @foreach (var field in Record.Fields.Where(f => !string.IsNullOrWhiteSpace(f.Value)))
+            {
+                <tr>
+                    <td class="record-label">@field.Label</td>
+                    <td class="record-value">@field.Value</td>
+                </tr>
+            }
+        </table>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public RecordView Record { get; set; } = default!;
+}

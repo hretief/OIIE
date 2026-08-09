@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Oiie.Isbm.Client;
 using SimHost.Domain.Sandbox;
 using SimHost.Infrastructure.Isbm;
@@ -50,24 +51,35 @@ public sealed class ScenarioRunner(
 
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
 
+    /// <param name="existingRunId">
+    /// An already-persisted run to execute into, used when the caller needed the id
+    /// before the run started — the UI navigates to the detail page immediately and
+    /// watches rows appear. Null creates the row here, which is the ordinary path.
+    /// </param>
     public async Task<ScenarioRunSummary> RunAsync(
         ScenarioDefinition scenario,
         ScenarioRunMode mode = ScenarioRunMode.Ci,
         int seed = 0,
+        Guid? existingRunId = null,
         CancellationToken ct = default)
     {
-        var run = new ScenarioRun
-        {
-            ScenarioId = scenario.Id,
-            Title = scenario.Name,
-            Mode = mode,
-            Seed = seed
-        };
-
         await using var db = sandbox.Create();
 
-        db.ScenarioRuns.Add(run);
-        await db.SaveChangesAsync(ct);
+        var run = existingRunId is { } id
+            ? await EntityFrameworkQueryableExtensions.FirstAsync(db.ScenarioRuns, r => r.Id == id, ct)
+            : new ScenarioRun
+            {
+                ScenarioId = scenario.Id,
+                Title = scenario.Name,
+                Mode = mode,
+                Seed = seed
+            };
+
+        if (existingRunId is null)
+        {
+            db.ScenarioRuns.Add(run);
+            await db.SaveChangesAsync(ct);
+        }
 
         await using var scope = await runContext.BeginAsync(run.Id, scenario.Id, ClaimTimeout, ct);
 

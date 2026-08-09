@@ -26,6 +26,7 @@ OIIE/
   CirProvider/                ── deliverable 2
   SimHost/                    ── deliverable 3
     PersonalityPacks/         participant config and fixtures, copied to output
+    Components/               Blazor UI for running and inspecting scenarios
 
   schemas/{ccom,cir,oagis}    single source of truth for XSDs
   infra/{isbm,cir,sandbox}    Bicep, per deliverable
@@ -37,6 +38,39 @@ OIIE/
 
 Flat, with no `src/` level — the convention the source repositories used.
 Grouping is handled by solution folders.
+
+## What the sandbox shows
+
+SimHost runs a scenario and then lets you check the claim. `/runs/{id}` opens
+four tabs: identity lineage, assertion results, message flow, and the rows each
+participant actually persisted. Every message in the flow links to a page
+showing the source record, the BOD XML, the resulting records and the provenance
+trail side by side.
+
+The behaviour worth watching is what happens to a property value across three
+systems holding different reference data. ENG classifies a tag against
+`rdl:TemperatureIndicatingController` and authors a control action.
+REG-LOCATION lacks that leaf class, binds at `rdl:Instrument`, and records the
+classification as degraded — but it holds the property *definition*, so the value
+arrives mapped. MMS holds no reference data at all, so the same value is retained
+unmapped: stored, flagged, not discarded.
+
+That last part is the claim. A receiver that drops what it cannot classify makes
+federation all-or-nothing, and it is not: MMS keeps the value against the day
+someone gives it a definition. Holding a definition and holding the class that
+sanctions it are separate questions.
+
+## Documentation
+
+| Where | What |
+|---|---|
+| `SimHost/README.md` | running the sandbox, the UI, reset semantics, scenarios |
+| `SimHost/PersonalityPacks/README.md` | how to add a new personality |
+| `docs/sequence-end-to-end.puml` | the whole path, current state |
+| `docs/sequence-uc01-handover.puml` | ENG → REG-LOCATION → MMS handover |
+| `docs/sequence-uc02-greenfield.puml` | allocator behaviour on an empty store |
+| `docs/decision-records/` | why things are the way they are |
+| `schemas/README.md` | the XSD packages and their provenance |
 
 ## Why one repo
 
@@ -67,6 +101,9 @@ step:
 cd SimHost;  dotnet run --launch-profile SimHost   # leave running
 cd testing;  pwsh -NoProfile -File .\test-sandbox.ps1
 ```
+
+Scenarios can also be started and inspected from the browser at `/runs`, which
+is usually the faster way to see *why* a step failed.
 
 The launch profile is `SimHost`. There is no `https` profile, and passing a name
 that does not exist silently skips `ASPNETCORE_ENVIRONMENT=Development`, so

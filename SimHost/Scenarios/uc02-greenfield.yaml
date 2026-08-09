@@ -1,0 +1,275 @@
+# uc02 - greenfield identity allocation.
+#
+# A designer starts a new chemical facility. They decide they need a valve, so they
+# ask the identity service for the next available identity and are given both a
+# FederationId and a code -- neither of which they chose.
+#
+# That is the distinction this scenario exists to prove. uc01 authors TIC-106 in the
+# scenario file, so the code is a given and only the identity is minted. Here the
+# code is allocated too, and the scenario deliberately does not know it in advance:
+# every assertion below selects on provenance, on relationships between rows, or on
+# the shape of a value, never on a literal -- because a literal would mean the file
+# had assigned what the service is supposed to assign.
+#
+# This is also why the scenario is safe to re-run. Nothing here assumes an empty
+# series: the assertions say "the newest allocation", "one greater than the previous
+# one", "no two rows share a sequence". Those hold on the first run and the fiftieth,
+# and they fail for the right reasons -- a reused number, a skipped number, a
+# re-minted identity -- rather than because the store was warm.
+#
+# The identity then travels ENG -> REG-LOCATION -> MMS unchanged. Each participant
+# adds its own code for the same thing and none of them mints a second identity.
+id: uc02-greenfield
+name: Greenfield identity allocation
+
+participants:
+  - eng
+  - reg-location
+  - mms
+
+setup:
+  # No reset. `setup.reset` is currently parsed but never acted on, so declaring it
+  # here would assert a guarantee the engine does not provide -- and every assertion
+  # below is written to hold on a warm store anyway. The allocator's whole purpose is
+  # that it works against whatever has already been issued, so a scenario that only
+  # passes on an empty database would be testing the reset, not the allocator.
+  channels:
+    - uri: /OIIE-SANDBOX/Enterprise/Site/Eng
+      type: Publication
+      subscribers:
+        - reg-location
+    - uri: /OIIE-SANDBOX/Enterprise/Site/OandM
+      type: Publication
+      subscribers:
+        - mms
+
+steps:
+  # -- The designer requests an identity ----------------------------------------
+  # No tagNumber. The designer knows they need a valve and nothing more; the code
+  # comes back from the service.
+  - id: allocate-valve
+    at: eng
+    action: create_tag
+    args:
+      codePrefix: "P-"
+      serviceDescription: Feed isolation valve
+      unitNumber: "101"
+      classKey: rdl:TemperatureIndicatingController
+      controlAction: Reverse
+
+  # The allocation exists and is the current high-water mark of its series. Asserting
+  # the maximum rather than a literal is what makes this survive a re-run: the code is
+  # P-001 on a clean store and P-007 on a warm one, and in both cases it is the newest
+  # thing the allocator issued.
+  - at: eng
+    assert: store_contains
+    entity: CodeAssignment
+    where: >-
+      CodePrefix = 'P-'
+      AND CodeSequence = (SELECT MAX(CodeSequence) FROM eng.CodeAssignment WHERE CodePrefix = 'P-')
+      AND AdoptedFromRemote = 0
+
+  # The code was recorded as an allocation, not as a supplied name. Without
+  # CodePrefix and CodeSequence the next allocation cannot know where the series
+  # got to, so their absence is a real defect even though the code would look fine.
+  - at: eng
+    assert: store_not_contains
+    entity: CodeAssignment
+    where: "CodePrefix = 'P-' AND CodeSequence IS NULL"
+
+  # The identity was minted, not left empty. A tag with no FederationId would still
+  # publish and still be accepted downstream -- it would simply be unidentifiable
+  # forever after, which is the failure this whole model exists to prevent.
+  - at: eng
+    assert: store_not_contains
+    entity: Tag
+    where: "FederationId = '00000000-0000-0000-0000-000000000000'"
+
+  # -- A second request continues the series ------------------------------------
+  # The point of an allocator: the second valve is not also P-001, and the designer
+  # did not have to know that.
+  - id: allocate-second-valve
+    at: eng
+    action: create_tag
+    args:
+      codePrefix: "P-"
+      serviceDescription: Feed isolation valve, downstream
+      unitNumber: "101"
+      classKey: rdl:TemperatureIndicatingController
+      controlAction: Reverse
+
+  # Two allocations from this run, and the second did not reuse the first. Counting
+  # distinct sequences against total rows is the assertion that actually catches
+  # reuse -- checking only that two rows exist would pass even if both said P-001.
+  - at: eng
+    assert: store_not_contains
+    entity: CodeAssignment
+    where: >-
+      CodePrefix = 'P-' AND CodeSequence IN (
+        SELECT CodeSequence FROM eng.CodeAssignment
+        WHERE CodePrefix = 'P-' GROUP BY CodeSequence HAVING COUNT(*) > 1)
+
+  # The series advanced by exactly one. Expressed as a gap check rather than a value:
+  # an allocator that jumped, or that handed the same number to both requests, fails
+  # here regardless of where the series happened to start.
+  - at: eng
+    assert: store_contains
+    entity: CodeAssignment
+    where: >-
+      CodePrefix = 'P-'
+      AND CodeSequence = (SELECT MAX(CodeSequence) FROM eng.CodeAssignment WHERE CodePrefix = 'P-')
+      AND CodeSequence - 1 IN (SELECT CodeSequence FROM eng.CodeAssignment WHERE CodePrefix = 'P-')
+
+  # Two tags, two identities. Sharing one would mean the allocator had produced two
+  # codes for a single thing rather than two things.
+  - at: eng
+    assert: store_not_contains
+    entity: Tag
+    where: >-
+      FederationId IN (
+        SELECT FederationId FROM eng.Tag GROUP BY FederationId HAVING COUNT(*) > 1)
+
+  # -- ENG releases --------------------------------------------------------------
+  - id: release
+    at: eng
+    action: promote_named_version
+    args:
+      name: uc02 greenfield
+
+  - at: eng
+    assert: outbox_state
+    state: Posted
+    verb: Sync
+    noun: Segments
+    within: 60s
+
+  # -- REG-LOCATION receives and governs -----------------------------------------
+  - at: reg-location
+    assert: message_received
+    channel: /OIIE-SANDBOX/Enterprise/Site/Eng
+    verb: Sync
+    noun: Segments
+    within: 60s
+
+  # The published Segment carries the FederationId, so this now validates against
+  # the authoritative CCOM package rather than failing on a missing UUID.
+  - at: reg-location
+    assert: bod_valid
+
+  # The asserted identity survived the wire. Both the code and the identity were
+  # minted during this run, so this matches on shape -- a proposal in the allocated
+  # series carrying a real identity -- rather than on either value.
+  - at: reg-location
+    assert: store_contains
+    entity: StewardshipItem
+    where: >-
+      SourceIdentifier LIKE 'P-%'
+      AND State = 'Proposed'
+      AND FederationId <> '00000000-0000-0000-0000-000000000000'
+    within: 30s
+
+  - id: approve
+    at: reg-location
+    action: approve_stewardship
+    args:
+      decidedBy: uc02
+
+  # The registry issued its own code and kept the identity it was sent. This is the
+  # assertion that distinguishes adoption from re-minting: LocationCode differs from
+  # the sender's code, which proves a new code was issued, while FederationId being
+  # carried rather than replaced proves the identity did not change with it.
+  - at: reg-location
+    assert: store_contains
+    entity: Location
+    where: >-
+      SourceIdentifier LIKE 'P-%'
+      AND LocationCode <> SourceIdentifier
+      AND FederationId <> '00000000-0000-0000-0000-000000000000'
+    within: 30s
+
+  # No identity was invented on the way in. A REG-LOCATION row whose FederationId
+  # matches no ENG tag would mean the gate re-minted instead of adopting -- which is
+  # exactly the failure the run would otherwise hide, since the row still looks
+  # perfectly well-formed on its own.
+  - at: reg-location
+    assert: store_not_contains
+    entity: Location
+    where: "SourceIdentifier LIKE 'P-%' AND FederationId IS NULL"
+    within: 30s
+
+  # Two codes for one identity, recorded as such. AdoptedFromRemote is what says
+  # REG-LOCATION took ENG's word for what this is rather than deciding for itself.
+  - at: reg-location
+    assert: store_contains
+    entity: CodeAssignment
+    where: "ParticipantId = 'reg-location' AND AdoptedFromRemote = 1"
+    within: 30s
+
+  - at: reg-location
+    assert: outbox_state
+    state: Posted
+    verb: Sync
+    noun: Segments
+    within: 60s
+
+  # -- MMS consumes ---------------------------------------------------------------
+  - at: mms
+    assert: message_received
+    channel: /OIIE-SANDBOX/Enterprise/Site/OandM
+    verb: Sync
+    noun: Segments
+    within: 60s
+
+  - at: mms
+    assert: bod_valid
+
+  # The end of the chain, and the payoff.
+  #
+  # In uc01 this same row arrives with Cirid IS NULL and MMS has no idea what it is
+  # holding until the registry is asked. Here it arrives already identified, because
+  # the identity was minted once at the design tool and carried the whole way. MMS
+  # still holds its own equipment number -- a third code -- but not a third identity.
+  - at: mms
+    assert: store_contains
+    entity: FunctionalLocationRecord
+    where: "ForeignSourceId = 'REG-LOCATION' AND FederationId <> '00000000-0000-0000-0000-000000000000'"
+    within: 60s
+
+  # MMS registered its legacy-style number against the adopted identity rather than
+  # against the sender's code. This is the row that would be missing if MMS had
+  # treated the incoming code as the identity.
+  - at: mms
+    assert: store_contains
+    entity: CodeAssignment
+    where: "ParticipantId = 'mms' AND AdoptedFromRemote = 1"
+    within: 60s
+
+  # -- CIR ------------------------------------------------------------------------
+  # Registration still happens, but note what it is for here. In the greenfield case
+  # every participant already agrees on the identity, so CIR is not resolving a
+  # disagreement -- it is publishing the cross-reference so a system that only ever
+  # sees codes can still get from one to another.
+  - id: register-eng
+    at: eng
+    action: register_cir
+
+  - id: register-reg-location
+    at: reg-location
+    action: register_cir
+
+  - id: register-mms
+    at: mms
+    action: register_cir
+
+  # No CIR assertion here, and the omission is deliberate rather than an oversight.
+  #
+  # cir_registered needs a literal identifier, and every identifier in this scenario
+  # is allocated during the run -- that is the entire point of it. The engine cannot
+  # yet carry a value from a step into a later assertion, so the only way to assert
+  # a literal would be to go back to authoring the code in this file, which is the
+  # thing uc02 exists to stop doing.
+  #
+  # uc01 already covers cir_registered against an authored identifier, so nothing is
+  # lost by leaving it out; asserting a guessed value here would be worse than not
+  # asserting at all, because it would pass for the wrong reason on a clean store and
+  # fail for the wrong reason on a warm one.

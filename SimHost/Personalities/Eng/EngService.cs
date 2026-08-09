@@ -5,6 +5,7 @@ using Oiie.Ccom.Bods;
 using Oiie.Ccom.Oagis;
 using Oiie.Ccom.Types;
 using SimHost.Application.Bods;
+using SimHost.Application.Identity;
 using SimHost.Application.Participants;
 using SimHost.Application.Scenarios;
 using SimHost.Domain.Common;
@@ -29,40 +30,111 @@ public sealed record PromotionResult(
 /// </summary>
 public sealed class EngService(
     IParticipantDbContextFactory factory,
+    ITagIdentityService identities,
     ScenarioRunContext runContext,
     ILogger<EngService> logger)
 {
     public const string ParticipantId = "eng";
 
+    /// <summary>
+    /// Adds or edits a tag.
+    ///
+    /// Either <paramref name="tagNumber"/> or <paramref name="codePrefix"/> must be
+    /// given. Supplying the number is the ordinary editing path; supplying only a
+    /// prefix is the greenfield one — the designer knows they need a valve and asks
+    /// the identity service what the next one is called.
+    /// </summary>
     public async Task<Tag> AddTagAsync(
-        string tagNumber,
+        string? tagNumber,
         string? serviceDescription,
         string? unitNumber,
         string? classKey,
         decimal? rangeMinimum = null,
         decimal? rangeMaximum = null,
         string? controlAction = null,
+        string? codePrefix = null,
         CancellationToken ct = default)
     {
+        if (string.IsNullOrWhiteSpace(tagNumber) && string.IsNullOrWhiteSpace(codePrefix))
+        {
+            throw new ArgumentException(
+                "Supply a tagNumber to add or edit a specific tag, or a codePrefix to " +
+                "allocate the next one in a series.", nameof(tagNumber));
+        }
+
         await using var db = factory.Create(ParticipantId);
+
+        // Greenfield: nothing exists yet, so the identity service allocates both the
+        // identity and the code. This is the one path where ENG does not know what the
+        // tag is called until it has asked.
+        if (string.IsNullOrWhiteSpace(tagNumber))
+        {
+            var allocated = await identities.AllocateAsync(db, ParticipantId, codePrefix!, ct);
+
+            var minted = new Tag
+            {
+                TagNumber = allocated.Code,
+                FederationId = allocated.FederationId
+            };
+
+            db.Codes.Add(allocated.Assignment);
+            db.Set<Tag>().Add(minted);
+
+            Apply(minted, serviceDescription, unitNumber, classKey,
+                rangeMinimum, rangeMaximum, controlAction);
+
+            db.Provenance.Add(new ProvenanceEntry
+            {
+                EntityType = nameof(Tag),
+                EntityKey = allocated.Code,
+                Action = ProvenanceAction.Created,
+                Actor = "operator",
+                ChangeSummary = JsonSerializer.Serialize(new
+                {
+                    tagNumber = allocated.Code,
+                    federationId = allocated.FederationId,
+                    allocatedFrom = codePrefix,
+                    serviceDescription,
+                    classKey
+                })
+            });
+
+            await db.SaveChangesAsync(ct);
+
+            logger.LogInformation(
+                "Allocated {TagNumber} ({FederationId}) from series {Prefix}",
+                minted.TagNumber, minted.FederationId, codePrefix);
+
+            return minted;
+        }
 
         // Upsert. Editing a tag — correcting a class, adding a range — is ordinary
         // engineering work, and insert-only would make the second edit of any tag an
         // error. It also means a tag already Published returns to WorkInProgress,
         // which is correct: a changed tag has not been released in its new form.
         var existing = await db.Set<Tag>().FirstOrDefaultAsync(t => t.TagNumber == tagNumber, ct);
-        var tag = existing ?? new Tag { TagNumber = tagNumber };
 
-        tag.ServiceDescription = serviceDescription;
-        tag.UnitNumber = unitNumber;
-        tag.ClassKey = classKey;
-        tag.RangeMinimum = rangeMinimum;
-        tag.RangeMaximum = rangeMaximum;
-        tag.ControlAction = controlAction;
-        tag.PidReference = unitNumber is null ? null : $"PID-{unitNumber}-001";
-        tag.Maturity = TagMaturity.WorkInProgress;
-        tag.PublishedInVersionId = null;
-        tag.UpdatedAt = DateTimeOffset.UtcNow;
+        // ENG is the design tool, so a tag it has not seen before is a tag coming into
+        // existence, and this is the one place in the sandbox entitled to mint. The
+        // identity is minted once and never revisited on update: correcting a class or
+        // adding a range is an edit to the same entity, not a new one.
+        var tag = existing ?? new Tag
+        {
+            TagNumber = tagNumber,
+            FederationId = identities.Mint()
+        };
+
+        if (existing is null)
+        {
+            // The tag number is registered as ENG's code for the new identity rather
+            // than being assumed to be it. Downstream systems will hold other codes
+            // for the same thing, and none of them is more the identity than this one.
+            db.Codes.Add(identities.RegisterCode(
+                tag.FederationId, ParticipantId, tagNumber));
+        }
+
+        Apply(tag, serviceDescription, unitNumber, classKey,
+            rangeMinimum, rangeMaximum, controlAction);
 
         if (existing is null)
         {
@@ -81,6 +153,32 @@ public sealed class EngService(
 
         await db.SaveChangesAsync(ct);
         return tag;
+    }
+
+    /// <summary>
+    /// The editable fields, applied identically whether the tag was allocated or
+    /// named. Shared so the two paths cannot drift into treating maturity or the
+    /// derived P&amp;ID reference differently.
+    /// </summary>
+    private static void Apply(
+        Tag tag,
+        string? serviceDescription,
+        string? unitNumber,
+        string? classKey,
+        decimal? rangeMinimum,
+        decimal? rangeMaximum,
+        string? controlAction)
+    {
+        tag.ServiceDescription = serviceDescription;
+        tag.UnitNumber = unitNumber;
+        tag.ClassKey = classKey;
+        tag.RangeMinimum = rangeMinimum;
+        tag.RangeMaximum = rangeMaximum;
+        tag.ControlAction = controlAction;
+        tag.PidReference = unitNumber is null ? null : $"PID-{unitNumber}-001";
+        tag.Maturity = TagMaturity.WorkInProgress;
+        tag.PublishedInVersionId = null;
+        tag.UpdatedAt = DateTimeOffset.UtcNow;
     }
 
     /// <summary>
@@ -236,13 +334,23 @@ public sealed class SyncSegmentsBuilder : IBodBuilder
             ReferenceID = item.ContainerKey
         };
 
-        var infoSource = new InfoSource { ShortName = participant.Config.SourceId };
+        var infoSource = new InfoSource
+        {
+            UUID = CcomUuid.ForInfoSource(participant.Config.SourceId),
+            ShortName = participant.Config.SourceId
+        };
 
         foreach (var tag in tags)
         {
             var segment = new Segment
             {
-                IDInInfoSource = tag.TagNumber,
+                UUID = tag.FederationId,
+                // The code where there is one, the identity where there is not. A tag
+                // needs no human-facing code to be publishable, but a receiver still
+                // has to be able to address it, and the identity always can.
+                IDInInfoSource = tag.TagNumber is { Length: > 0 }
+                    ? tag.TagNumber
+                    : tag.FederationId.ToString(),
                 InfoSource = infoSource,
                 ShortName = tag.TagNumber,
                 FullName = tag.ServiceDescription,
@@ -253,8 +361,13 @@ public sealed class SyncSegmentsBuilder : IBodBuilder
             {
                 segment.Type = new SegmentType
                 {
+                    UUID = CcomUuid.ForReferenceData("MIMOSA-RDL", tag.ClassKey),
                     IDInInfoSource = tag.ClassKey,
-                    InfoSource = new InfoSource { ShortName = "MIMOSA-RDL" },
+                    InfoSource = new InfoSource
+                    {
+                        UUID = CcomUuid.ForInfoSource("MIMOSA-RDL"),
+                        ShortName = "MIMOSA-RDL"
+                    },
                     ShortName = tag.ClassKey.Split(':').Last()
                 };
 
@@ -321,8 +434,14 @@ public sealed class SyncSegmentsBuilder : IBodBuilder
 
         segment.Attribute.Add(new Oiie.Ccom.Types.Attribute
         {
+            UUID = CcomUuid.ForValue(segment.UUID, key),
             ShortName = name,
-            Type = new AttributeType { IDInInfoSource = key, ShortName = name },
+            Type = new AttributeType
+            {
+                UUID = CcomUuid.ForReferenceData(null, key),
+                IDInInfoSource = key,
+                ShortName = name
+            },
             ValueContent = new MeasureContent { Value = number, UnitOfMeasure = unit }
         });
     }
@@ -333,8 +452,14 @@ public sealed class SyncSegmentsBuilder : IBodBuilder
 
         segment.Attribute.Add(new Oiie.Ccom.Types.Attribute
         {
+            UUID = CcomUuid.ForValue(segment.UUID, key),
             ShortName = name,
-            Type = new AttributeType { IDInInfoSource = key, ShortName = name },
+            Type = new AttributeType
+            {
+                UUID = CcomUuid.ForReferenceData(null, key),
+                IDInInfoSource = key,
+                ShortName = name
+            },
             ValueContent = new TextContent { Text = value }
         });
     }

@@ -15,7 +15,18 @@ public class Tag
 {
     public long Id { get; set; }
 
-    /// <summary>ISA-5.1 instrument or equipment tag, e.g. TIC-106.</summary>
+    /// <summary>
+    /// The identity, minted here because ENG is the design tool and the entity comes
+    /// into existence at its drawing board. Immutable for the whole lifecycle —
+    /// conceptual through operations — and unrelated to TagNumber, which is only what
+    /// this participant currently calls it.
+    /// </summary>
+    public Guid FederationId { get; set; }
+
+    /// <summary>
+    /// ENG's code for the tag, e.g. TIC-106. A label, not the identity: it may be
+    /// changed, and downstream systems will know the same entity by other codes.
+    /// </summary>
     public string TagNumber { get; set; } = string.Empty;
 
     public string? ServiceDescription { get; set; }

@@ -26,35 +26,57 @@ public class CcomBodTests
 
         bod.With(new Segment
         {
+            UUID = CcomUuid.FromKey("Test", "TIC-106"),
             IDInInfoSource = "TIC-106",
-            InfoSource = new InfoSource { ShortName = "ENG" },
+            InfoSource = new InfoSource
+            {
+                UUID = CcomUuid.ForInfoSource("ENG"),
+                ShortName = "ENG"
+            },
             ShortName = "TIC-106",
             FullName = "Top temperature control",
             Type = new SegmentType
             {
+                UUID = CcomUuid.ForReferenceData("MIMOSA-RDL", "rdl:TemperatureIndicatingController"),
                 IDInInfoSource = "rdl:TemperatureIndicatingController",
-                InfoSource = new InfoSource { ShortName = "MIMOSA-RDL" },
+                InfoSource = new InfoSource
+                {
+                    UUID = CcomUuid.ForInfoSource("MIMOSA-RDL"),
+                    ShortName = "MIMOSA-RDL"
+                },
                 ShortName = "Temperature indicating controller"
             },
             AttributeSetForEntity =
             [
                 new AttributeSetForEntity
                 {
+                    UUID = CcomUuid.FromKey("Test", "set-for-entity"),
                     AttributeSet = new AttributeSet
                     {
+                        UUID = CcomUuid.FromKey("Test", "set"),
                         ShortName = "Instrument",
                         Type = new AttributeSetType
                         {
+                            UUID = CcomUuid.ForReferenceData("MIMOSA-RDL", "rdl:Instrument"),
                             IDInInfoSource = "rdl:Instrument",
-                            InfoSource = new InfoSource { ShortName = "MIMOSA-RDL" },
+                            InfoSource = new InfoSource
+                            {
+                                UUID = CcomUuid.ForInfoSource("MIMOSA-RDL"),
+                                ShortName = "MIMOSA-RDL"
+                            },
                             ShortName = "Instrument"
                         },
                         SetAttribute =
                         [
                             new CcomAttribute
                             {
+                                UUID = CcomUuid.FromKey("Test", "range-max"),
                                 ShortName = "Range maximum",
-                                Type = new AttributeType { IDInInfoSource = "rdl:RangeMaximum" },
+                                Type = new AttributeType
+                                {
+                                    UUID = CcomUuid.ForReferenceData(null, "rdl:RangeMaximum"),
+                                    IDInInfoSource = "rdl:RangeMaximum"
+                                },
                                 ValueContent = new MeasureContent { Value = 250m, UnitOfMeasure = "degC" }
                             }
                         ]
@@ -216,5 +238,45 @@ public class CcomBodTests
         var result = validator.Validate(BuildSyncSegments().CreateDocument());
 
         Assert.Equal(BodValidationStatus.NotValidated, result.Status);
+    }
+
+    /// <summary>
+    /// CCOM declares UUID with minOccurs="1" on Entity and on the nested
+    /// reference-data types, so omitting it is a schema violation. The failure
+    /// surfaces as "invalid child element 'ShortName' ... expected 'UUID'", which
+    /// reads like an ordering fault and is easy to misdiagnose. This asserts the
+    /// document a builder actually produces, against the real schema package.
+    /// </summary>
+    [Fact]
+    public void Built_bod_satisfies_the_ccom_schema()
+    {
+        var schemaDirectory = FindSchemaDirectory();
+        Assert.True(schemaDirectory is not null, "schemas/ccom was not found from the test output directory.");
+
+        var validator = new BodValidator();
+        validator.LoadDirectory(schemaDirectory!);
+
+        var result = validator.Validate(BuildSyncSegments().CreateDocument());
+
+        Assert.Null(result.Detail);
+        Assert.Equal(BodValidationStatus.Valid, result.Status);
+    }
+
+    private static string? FindSchemaDirectory()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(directory.FullName, "schemas", "ccom");
+            if (Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        return null;
     }
 }

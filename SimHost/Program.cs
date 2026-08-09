@@ -5,6 +5,7 @@ using Oiie.Ccom;
 using SimHost.Application.Bods;
 using SimHost.Application.Cir;
 using SimHost.Application.Classification;
+using SimHost.Application.Identity;
 using SimHost.Application.Inbox;
 using SimHost.Application.Outbox;
 using SimHost.Application.Scenarios;
@@ -76,9 +77,12 @@ else
 // wired whenever a participant declares a base URL.
 var isbmConfigured = personalities.Any(p => !string.IsNullOrWhiteSpace(p.Isbm.BaseUrl));
 
+// Registered unconditionally: the UI's reset control calls the admin endpoints over
+// HTTP, so a factory has to exist even when no participant declares an ISBM base URL.
+builder.Services.AddHttpClient();
+
 if (isbmConfigured)
 {
-    builder.Services.AddHttpClient();
     builder.Services.AddSingleton<IsbmClientAccessor>();
     builder.Services.AddSingleton<IIsbmClientAccessor>(sp => sp.GetRequiredService<IsbmClientAccessor>());
     builder.Services.AddSingleton<IIsbmSessionStoreAccessor>(sp => sp.GetRequiredService<IsbmClientAccessor>());
@@ -96,6 +100,13 @@ builder.Services.AddSingleton(_ =>
 
 // --- Application services --------------------------------------------------
 builder.Services.AddSingleton<DispatcherControl>();
+
+// Stands in for the tag identity service that CIR will eventually provide. Identity
+// is a FederationId, minted once by a master — the design tool or REG-LOCATION — and
+// carried unchanged for the entity's whole lifecycle. Codes are separate, optional
+// and plural. Swapping this registration for the real client is the only change the
+// participants should need.
+builder.Services.AddSingleton<ITagIdentityService, EmulatedTagIdentityService>();
 
 // Registered unconditionally: the inbox pump reads the current run from it, and a
 // null run id is the correct answer outside a scenario.
@@ -127,6 +138,16 @@ builder.Services.AddSingleton<ScenarioAssertionRegistry>();
 builder.Services.AddSingleton<ScenarioLoader>();
 builder.Services.AddSingleton<ScenarioCatalog>();
 builder.Services.AddSingleton<ScenarioRunner>();
+
+// Read-side services for the run-detail UI. Singletons like the rest of this group:
+// both create their own short-lived DbContexts per call rather than holding one, so
+// there is no scoped state to respect.
+builder.Services.AddSingleton<IdentityLineageService>();
+builder.Services.AddSingleton<RunTimelineService>();
+builder.Services.AddSingleton<MessageTransformService>();
+builder.Services.AddSingleton<RunDataService>();
+builder.Services.AddSingleton<SandboxResetService>();
+builder.Services.AddSingleton<ScenarioLauncher>();
 
 builder.Services.AddSingleton<CcomAttributeMapperFactory>();
 builder.Services.AddSingleton<CirTelemetry>();
@@ -1612,7 +1633,7 @@ app.MapPost("/admin/scenarios/{scenarioId}/run", async (
         });
     }
 
-    var summary = await runner.RunAsync(definition, runMode, seed ?? 0, ct);
+    var summary = await runner.RunAsync(definition, runMode, seed ?? 0, ct: ct);
 
     var body = new
     {
@@ -1747,9 +1768,17 @@ app.MapPost("/admin/eng/tags", async (
 {
     var tag = await eng.AddTagAsync(
         request.TagNumber, request.ServiceDescription, request.UnitNumber, request.ClassKey,
-        request.RangeMinimum, request.RangeMaximum, request.ControlAction, ct);
+        request.RangeMinimum, request.RangeMaximum, request.ControlAction, request.CodePrefix, ct);
 
-    return Results.Ok(new { tag.Id, tag.TagNumber, maturity = tag.Maturity.ToString() });
+    // The identity is returned because in the allocation case the caller did not
+    // choose either value and has no other way to learn what it was given.
+    return Results.Ok(new
+    {
+        tag.Id,
+        tag.TagNumber,
+        federationId = tag.FederationId,
+        maturity = tag.Maturity.ToString()
+    });
 });
 
 // The release event. Only a passing validation gate writes outbox rows.
@@ -1779,12 +1808,16 @@ app.MapGet("/admin/{participantId}/messages", async (
         .Take(50)
         .Select(m => new
         {
+            // Without the id there is no way to address a message from this list, which
+            // makes the transformation view unreachable except by clicking through the UI.
+            m.MessageId,
             m.Direction,
             m.Pattern,
             m.Verb,
             m.Noun,
             m.ChannelUri,
             m.Topic,
+            m.BodId,
             m.CorrelationId,
             m.IsbmMessageId,
             m.ValidationStatus,
@@ -2007,14 +2040,19 @@ using (var scope = app.Services.CreateScope())
 app.Run();
 
 
+/// <summary>
+/// Supply <see cref="TagNumber"/> to author a specific tag, or <see cref="CodePrefix"/>
+/// to have the identity service allocate the next one in that series.
+/// </summary>
 internal sealed record AddTagRequest(
-    string TagNumber,
+    string? TagNumber,
     string? ServiceDescription,
     string? UnitNumber,
     string? ClassKey,
     decimal? RangeMinimum = null,
     decimal? RangeMaximum = null,
-    string? ControlAction = null);
+    string? ControlAction = null,
+    string? CodePrefix = null);
 
 internal sealed record PromoteRequest(string Name);
 

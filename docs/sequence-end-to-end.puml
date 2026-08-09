@@ -1,0 +1,197 @@
+@startuml end-to-end
+title OIIE end to end — current state\nAuthoring → dispatch → governance → consumption → inspection
+
+skinparam responseMessageBelowArrow true
+skinparam sequenceMessageAlign left
+skinparam maxMessageSize 240
+skinparam ParticipantPadding 12
+skinparam BoxPadding 12
+
+actor "Engineer" as EngUser
+actor "Location steward" as StewardUser
+actor "Maintenance planner" as PlannerUser
+actor "Demonstrator" as Demo
+
+box "SimHost — simulated participants"
+  participant "ENG" as ENG
+  participant "REG-LOCATION" as LOC
+  participant "MMS" as MMS
+end box
+
+box "SimHost — run visualisation"
+  participant "Blazor UI" as UI
+end box
+
+participant "ws-ISBM provider" as ISBM
+participant "ws-CIR provider" as CIR
+
+== 0. Reset ==
+
+Demo -> UI : Reset  /  Day zero
+activate UI
+UI -> ISBM : close sessions, purge sandbox channels
+note right of UI
+  /OIIE/CIR/Request is **never** deleted. It belongs
+  to the CIR provider and holds its long-lived
+  provider-request session; deleting it would break
+  the provider for every participant.
+end note
+UI -> ENG : truncate + reload class fixtures
+UI -> LOC : truncate + reload class fixtures
+UI -> MMS : truncate — **no fixtures to load**
+UI --> Demo : counts per participant\nENG 4 classes / REG-LOCATION 2 / MMS 0
+deactivate UI
+
+note over ENG, MMS
+  The asymmetry is the product, not an oversight.
+  Equal counts here would mean a fixture leaked and
+  the demonstration is no longer showing anything.
+end note
+
+== 1. Authoring ==
+
+EngUser -> ENG : edit tags in Unit 101
+activate ENG
+ENG -> ENG : classify against\nrdl:TemperatureIndicatingController
+ENG -> ENG : persist Tag rows + property values\n(Control action = Reverse)
+ENG --> EngUser : work in progress
+deactivate ENG
+
+EngUser -> ENG : promote named version "Rev C"
+activate ENG
+ENG -> ENG : validation gate against\nthe effective property set
+alt findings present
+  ENG --> EngUser : promotion blocked\nValidationFinding list
+else gate passes
+  ENG -> ENG : commit NamedVersion + Outbox rows\n(single transaction)
+  note right of ENG
+    The BOD is derived from committed rows.
+    A form never authors a BOD directly.
+  end note
+end
+deactivate ENG
+
+== 2. Registration and dispatch ==
+
+ENG -> ISBM : PostRequest(ProcessRegistry)
+activate ISBM
+ISBM -> CIR : deliver
+activate CIR
+CIR -> CIR : SourceID=ENG, assign CIRIDs
+CIR -> ISBM : AcknowledgeRegistry
+deactivate CIR
+ISBM --> ENG : AcknowledgeRegistry
+deactivate ISBM
+
+note over ISBM, CIR
+  The CIR is itself an ISBM participant.
+  Registration and resolution traverse the bus —
+  there is no direct registry call.
+end note
+
+ENG -> ISBM : PostPublication(SyncSegments)\non /Enterprise/Site/Eng
+
+== 3. Governance gate ==
+
+ISBM -> LOC : ReadPublication → SyncSegments
+activate LOC
+LOC -> LOC : leaf class unknown\nbind at rdl:Instrument — **degraded**
+LOC -> LOC : ingest properties\nControl action arrives **mapped**
+
+note right of LOC
+  Degraded is not failed. REG-LOCATION holds the
+  rdl:ControlAction *definition* but not the class
+  that sanctions it. Holding a definition and holding
+  the class are separate questions.
+end note
+
+LOC -> LOC : create StewardshipItem rows\ncarrying the incoming values
+deactivate LOC
+
+StewardUser -> LOC : open review queue
+activate LOC
+alt steward rejects
+  StewardUser -> LOC : reject with reason
+  LOC -> ISBM : ConfirmBOD (error)
+else steward approves
+  StewardUser -> LOC : approve into authoritative model
+  LOC -> LOC : commit Location rows\n**carry property values forward**
+  note right of LOC
+    A gate that dropped the values would make
+    approval lossy — the registry would publish
+    less than it received.
+  end note
+end
+deactivate LOC
+
+LOC -> ISBM : PostRequest(ProcessRegistry)\nreuse CIRIDs from ENG entries
+LOC -> ISBM : PostPublication(SyncSegments)\non /Enterprise/Site/OandM\nre-emitting mapped **and** unmapped values
+
+== 4. Consumption ==
+
+ISBM -> MMS : ReadPublication → SyncSegments
+activate MMS
+alt IdentityMap hit and still live
+  MMS -> MMS : use cached CIRID
+else miss, stale, or invalidated
+  MMS -> ISBM : PostRequest(GetRegistry)
+  activate ISBM
+  ISBM -> CIR : deliver
+  activate CIR
+  CIR -> ISBM : ShowRegistry (CIRID cluster)
+  deactivate CIR
+  ISBM --> MMS : ShowRegistry
+  deactivate ISBM
+  MMS -> MMS : cache with StaleAfter
+end
+
+MMS -> MMS : bind or create FunctionalLocationRecord
+MMS -> MMS : ingest attributes into MMS SQL\nall values retained **unmapped**
+
+note right of MMS
+  MMS holds no reference data, so it classifies
+  nothing. It stores the values anyway, flagged —
+  Control action included. A receiver that discarded
+  what it could not classify would make federation
+  all-or-nothing, and it is not.
+end note
+deactivate MMS
+
+PlannerUser -> MMS : open equipment register
+activate MMS
+MMS --> PlannerUser : record shown with "3 identities" chip
+deactivate MMS
+
+note over PlannerUser
+  No BOD is visible here. The location simply
+  appeared in the maintenance system — which is
+  the actual claim.
+end note
+
+== 5. Inspection ==
+
+Demo -> UI : open /runs/{id}
+activate UI
+
+UI -> UI : **Identity** — one FederationId,\nthree codes, one minter
+UI -> UI : **Results** — steps and assertions,\nconcerns separated from failures
+UI -> UI : **Message flow** — every BOD,\neach row linking to its detail
+
+Demo -> UI : open a message
+UI --> Demo : source record → BOD XML →\nresulting records → provenance
+
+Demo -> UI : Persisted data tab
+UI -> ENG : read rows for the run's identities
+UI -> LOC : read rows
+UI -> MMS : read rows
+UI --> Demo : per-participant cards\nmapped at ENG and REG-LOCATION,\nunmapped at MMS
+deactivate UI
+
+note over UI
+  Read straight out of each participant's SQL schema,
+  so "the data arrived" is checked rather than
+  asserted. "No rows" and "store unreadable" are
+  reported differently — they are different problems.
+end note
+
+@enduml

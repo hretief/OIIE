@@ -1,0 +1,112 @@
+@using SimHost.Application.Scenarios
+@using SimHost.Domain.Sandbox
+
+@*
+    Steps with their assertions nested underneath.
+
+    Observed and Suggests are shown for failures even with detail off, because they are
+    the whole reason an assertion is not a boolean: a failure is meant to be handed to
+    whoever owns the component as a description of what was seen from outside.
+*@
+
+@foreach (var step in Steps)
+{
+    <div class="card card-@(step.Severity.ToString().ToLowerInvariant())">
+        <div class="toolbar">
+            <span class="dot dot-@(step.Severity.ToString().ToLowerInvariant())"></span>
+            <strong>@step.Action</strong>
+
+            @if (!string.IsNullOrEmpty(step.ParticipantId))
+            {
+                <span class="small muted">at @step.ParticipantId</span>
+            }
+
+            @if (step.StepId is { } id)
+            {
+                <span class="small muted">(@id)</span>
+            }
+        </div>
+
+        @if (step.Error is { } error)
+        {
+            <div class="sev sev-fail" style="margin-top:6px;">@error</div>
+        }
+
+        @if (Detail && step.ArgsJson is { } args && args != "null")
+        {
+            <div class="detail"><pre class="mono">@args</pre></div>
+        }
+
+        @if (Detail && step.ResultJson is { } result && result != "null")
+        {
+            <div class="detail"><pre class="mono">@result</pre></div>
+        }
+
+        @foreach (var assertion in step.Assertions)
+        {
+            var severity = assertion.Severity.ToString().ToLowerInvariant();
+
+            @* Passing assertions collapse to a single line. In demo mode a wall of green
+               detail buries the two findings that matter; the count in the header already
+               says how many passed. *@
+            @if (assertion.Severity == FindingSeverity.Pass && !Detail)
+            {
+                <div class="small" style="margin-left:16px;">
+                    <span class="dot dot-pass"></span>
+                    <span class="muted">@assertion.Assertion</span>
+                    @if (!string.IsNullOrEmpty(assertion.ParticipantId))
+                    {
+                        <span class="muted">— @assertion.ParticipantId</span>
+                    }
+                </div>
+            }
+            else
+            {
+                <div style="margin-left:16px; margin-top:8px;">
+                    <div>
+                        <span class="dot dot-@severity"></span>
+                        <span class="sev sev-@severity">@assertion.Assertion</span>
+
+                        @if (!string.IsNullOrEmpty(assertion.ParticipantId))
+                        {
+                            <span class="small muted">at @assertion.ParticipantId</span>
+                        }
+
+                        @if (assertion.Severity != FindingSeverity.Pass)
+                        {
+                            <span class="small muted">— owned by @assertion.Owner</span>
+                        }
+                    </div>
+
+                    @if (assertion.Observed is { } observed)
+                    {
+                        <div class="small" style="margin-top:2px;">@observed</div>
+                    }
+
+                    @if (assertion.Suggests is { } suggests)
+                    {
+                        <div class="small muted" style="margin-top:2px;">@suggests</div>
+                    }
+
+                    @if (Detail && assertion.ArgsJson is { } assertionArgs && assertionArgs != "null")
+                    {
+                        <div class="detail"><pre class="mono">@assertionArgs</pre></div>
+                    }
+                </div>
+            }
+        }
+    </div>
+}
+
+@if (Steps.Count == 0)
+{
+    <p class="muted">No steps recorded yet.</p>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public IReadOnlyList<TimelineStep> Steps { get; set; } = [];
+
+    [Parameter]
+    public bool Detail { get; set; }
+}

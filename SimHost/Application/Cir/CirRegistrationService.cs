@@ -59,8 +59,9 @@ public sealed class CirRegistrationService(
     }
 
     /// <summary>
-    /// ENG registers what it originated. Nothing here asserts equivalence: ENG has
-    /// only ever seen its own identifiers, so it has nothing to compare them to.
+    /// ENG registers what it originated, including the FederationId it minted.
+    /// Nothing here asserts equivalence: ENG has only ever seen its own codes, so it
+    /// has nothing to compare them to.
     /// </summary>
     private async Task<CirSyncResult> SyncEngAsync(ParticipantContext participant, CancellationToken ct)
     {
@@ -85,6 +86,14 @@ public sealed class CirRegistrationService(
                 SourceOwnerID = participant.Config.SourceOwnerId,
                 Name = tag.ServiceDescription ?? tag.TagNumber
             };
+
+            // The identity ENG minted, stated alongside the code it uses. A registry
+            // entry that carries the FederationId needs no equivalence reasoning to be
+            // linked — it has already said what it is.
+            if (tag.FederationId != Guid.Empty)
+            {
+                entry.Property.Add(Property.Simple("FederationId", tag.FederationId.ToString()));
+            }
 
             // Discriminating values only — enough for a steward to judge whether two
             // entries are the same thing, not a copy of the tag.
@@ -111,12 +120,13 @@ public sealed class CirRegistrationService(
     }
 
     /// <summary>
-    /// REG-LOCATION is the only participant that can link the chain.
+    /// REG-LOCATION relates its own code to the one it received.
     ///
-    /// It received ENG:TIC-106 and issued LOC-000001, so it alone knows they denote
-    /// the same pump. Registering LOC-000001 on its own would create a second
-    /// identity — precisely the duplicate the registry exists to prevent — so it
-    /// asserts equivalence instead.
+    /// It adopted ENG's FederationId and issued LOC-000001 as a second code for the
+    /// same entity, so the two codes already converge on one identity. The
+    /// equivalence assertion remains because a legacy consumer may only ever see
+    /// codes, and it must still be able to get from ENG:TIC-106 to LOC-000001 without
+    /// understanding federation at all.
     /// </summary>
     private async Task<CirSyncResult> SyncRegLocationAsync(
         ParticipantContext participant, CancellationToken ct)
@@ -151,6 +161,12 @@ public sealed class CirRegistrationService(
             if (location.ClassKey is { Length: > 0 })
             {
                 entry.Property.Add(Property.Simple("ClassKey", location.ClassKey));
+            }
+
+            if (location.FederationId != Guid.Empty)
+            {
+                entry.Property.Add(
+                    Property.Simple("FederationId", location.FederationId.ToString()));
             }
 
             if (location.SourceParticipant is { Length: > 0 } && location.SourceIdentifier is { Length: > 0 })
@@ -191,8 +207,8 @@ public sealed class CirRegistrationService(
     }
 
     /// <summary>
-    /// MMS registers its own keys and asserts equivalence to whatever it received,
-    /// which is how its numeric key joins the identity rather than starting a third.
+    /// MMS registers its legacy keys against the identity it adopted. Its numeric key
+    /// joins the identity as one more code rather than starting a third.
     /// </summary>
     private async Task<CirSyncResult> SyncMmsAsync(ParticipantContext participant, CancellationToken ct)
     {
@@ -215,13 +231,7 @@ public sealed class CirRegistrationService(
                 RegistryID = participant.Config.Cir.RegistryId,
                 CategoryID = SegmentCategory,
                 CategorySourceID = "OIIE-SANDBOX",
-                Entry = new Entry
-                {
-                    IDInSource = r.EquipmentNumber,
-                    SourceID = participant.Config.SourceId,
-                    SourceOwnerID = participant.Config.SourceOwnerId,
-                    Name = r.Designation ?? r.EquipmentNumber
-                }
+                Entry = BuildMmsEntry(participant, r)
             })
             .ToList();
 
@@ -242,5 +252,28 @@ public sealed class CirRegistrationService(
             0,
             result.Succeeded ? equivalences.Count : 0,
             result.Faults.Select(f => $"{f.Kind}: {f.Detail}").ToList());
+    }
+
+    /// <summary>
+    /// An MMS entry, carrying the adopted FederationId where one is known. Records
+    /// with an empty identity still register: MMS holding something nobody has
+    /// identified is a real state, and hiding it would hide the problem CIR solves.
+    /// </summary>
+    private static Entry BuildMmsEntry(ParticipantContext participant, FunctionalLocationRecord record)
+    {
+        var entry = new Entry
+        {
+            IDInSource = record.EquipmentNumber,
+            SourceID = participant.Config.SourceId,
+            SourceOwnerID = participant.Config.SourceOwnerId,
+            Name = record.Designation ?? record.EquipmentNumber
+        };
+
+        if (record.FederationId != Guid.Empty)
+        {
+            entry.Property.Add(Property.Simple("FederationId", record.FederationId.ToString()));
+        }
+
+        return entry;
     }
 }

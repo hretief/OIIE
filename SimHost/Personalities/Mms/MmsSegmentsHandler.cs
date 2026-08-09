@@ -3,6 +3,8 @@ using Microsoft.EntityFrameworkCore;
 using Oiie.Ccom.Oagis;
 using Oiie.Ccom.Types;
 using SimHost.Application.Bods;
+using SimHost.Application.Classification;
+using SimHost.Application.Identity;
 using SimHost.Application.Participants;
 using SimHost.Domain.Common;
 using SimHost.Domain.Mms;
@@ -24,7 +26,10 @@ namespace SimHost.Personalities.Mms;
 /// this before the CIR exists is deliberate: the resolution only means something
 /// once the problem it solves has been seen.
 /// </summary>
-public sealed class MmsSegmentsHandler(ILogger<MmsSegmentsHandler> logger) : IBodHandler
+public sealed class MmsSegmentsHandler(
+    ITagIdentityService identities,
+    CcomAttributeMapperFactory mappers,
+    ILogger<MmsSegmentsHandler> logger) : IBodHandler
 {
     public (string Verb, string Noun) Handles => ("Sync", "Segments");
 
@@ -45,6 +50,9 @@ public sealed class MmsSegmentsHandler(ILogger<MmsSegmentsHandler> logger) : IBo
 
         var nextNumber = await NextEquipmentNumberAsync(db, ct);
         var created = 0;
+        var mapper = mappers.For(participant);
+        var mapped = 0;
+        var unmapped = 0;
 
         foreach (var segment in segments)
         {
@@ -67,12 +75,27 @@ public sealed class MmsSegmentsHandler(ILogger<MmsSegmentsHandler> logger) : IBo
             {
                 existing.Designation = segment.FullName ?? segment.ShortName;
                 existing.UpdatedAt = DateTimeOffset.UtcNow;
+
+                var updated = Ingest(
+                    participant, db, mapper, segment, existing.EquipmentNumber,
+                    foreignSourceId, messageId);
+
+                mapped += updated.MappedCount;
+                unmapped += updated.UnmappedCount;
                 continue;
             }
 
+            var equipmentNumber = nextNumber.ToString();
+
             var record = new FunctionalLocationRecord
             {
-                EquipmentNumber = nextNumber.ToString(),
+                // Adopted, never minted. MMS is a legacy consumer, not a master of
+                // identity: the sender has already said what this thing is, and
+                // issuing a competing identity would be the third identity for one
+                // pump. Empty when the sender asserted none, which leaves the record
+                // visibly unidentified rather than falsely identified.
+                FederationId = segment.UUID,
+                EquipmentNumber = equipmentNumber,
                 Designation = segment.FullName ?? segment.ShortName,
                 PlannerGroup = "MP1",
                 CostCentre = "CC-4400",
@@ -85,6 +108,33 @@ public sealed class MmsSegmentsHandler(ILogger<MmsSegmentsHandler> logger) : IBo
             created++;
 
             db.Set<FunctionalLocationRecord>().Add(record);
+
+            // MMS keeps what it was sent, understood or not.
+            //
+            // It has no RDL of its own to speak of, so almost everything arrives
+            // unmapped — and that is the honest result rather than a reason to discard.
+            // A maintenance system that silently drops the control action because it has
+            // no column for it is the failure this whole model argues against; retaining
+            // it flagged means the value is still there when someone teaches MMS what it
+            // means.
+            var ingestion = Ingest(
+                participant, db, mapper, segment, record.EquipmentNumber,
+                foreignSourceId, messageId);
+
+            mapped += ingestion.MappedCount;
+            unmapped += ingestion.UnmappedCount;
+
+            // The legacy equipment number is registered against the adopted identity.
+            // This is the case the whole model is for: a system with its own numbering
+            // that predates any federation, joined to the identity rather than
+            // renumbered to match it.
+            if (record.FederationId != Guid.Empty)
+            {
+                var assignment = identities.RegisterCode(
+                    record.FederationId, MmsService.ParticipantId, equipmentNumber);
+                assignment.AdoptedFromRemote = true;
+                db.Codes.Add(assignment);
+            }
 
             db.Provenance.Add(new ProvenanceEntry
             {
@@ -105,10 +155,66 @@ public sealed class MmsSegmentsHandler(ILogger<MmsSegmentsHandler> logger) : IBo
         await db.SaveChangesAsync(ct);
 
         logger.LogInformation(
-            "MMS created {Created} record(s) from {Count} segment(s), none resolved [{CorrelationId}]",
-            created, segments.Count, envelope.BodId);
+            "MMS created {Created} record(s) from {Count} segment(s), {Mapped} mapped and " +
+            "{Unmapped} retained unmapped, none resolved [{CorrelationId}]",
+            created, segments.Count, mapped, unmapped, envelope.BodId);
 
-        return BodHandlingResult.Applied(segments.Count, 0, 0);
+        return BodHandlingResult.Applied(segments.Count, mapped, unmapped);
+    }
+
+    /// <summary>
+    /// Retains a segment's attributes against the record MMS created for it.
+    ///
+    /// The effective set is empty because MMS classifies nothing: it has no taxonomy to
+    /// sanction a property against, so every incoming value is retained unmapped. That is
+    /// the accurate description of a legacy consumer, and passing a fabricated set here
+    /// would report understanding the system does not have.
+    ///
+    /// Transport metadata is excluded for the same reason REG-LOCATION excludes it: the
+    /// class chain and the unmapped marker describe how to read the segment, not the
+    /// equipment, and retaining them would misreport them as maintenance data.
+    /// </summary>
+    private static PropertyIngestionResult Ingest(
+        ParticipantContext participant,
+        ParticipantDbContext db,
+        CcomAttributeMapper mapper,
+        Segment segment,
+        string equipmentNumber,
+        string fromParticipant,
+        Guid messageId)
+    {
+        var (incoming, _) = mapper.Extract(segment);
+
+        var ingestible = incoming
+            .Where(p => !p.DefinitionKey.StartsWith("sandbox:", StringComparison.Ordinal))
+            .ToList();
+
+        var ingestion = participant.Ingestor.Ingest(
+            nameof(FunctionalLocationRecord),
+            equipmentNumber,
+            ingestible,
+            EffectivePropertySet.Empty,
+            fromParticipant,
+            messageId,
+            DateTimeOffset.UtcNow);
+
+        // Definitions inferred from the wire are stored so the value has a name to
+        // display, rather than surfacing as a bare GUID nobody can interpret.
+        foreach (var definition in ingestion.InferredDefinitions)
+        {
+            if (!db.PropertyDefinitions.Local.Any(d => d.Id == definition.Id)
+                && !db.PropertyDefinitions.Any(d => d.Id == definition.Id))
+            {
+                db.PropertyDefinitions.Add(definition);
+            }
+        }
+
+        foreach (var value in ingestion.Values)
+        {
+            db.PropertyValues.Add(value);
+        }
+
+        return ingestion;
     }
 
     /// <summary>

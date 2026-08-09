@@ -1,0 +1,175 @@
+@page "/runs/{RunId:guid}"
+@rendermode InteractiveServer
+@using SimHost.Application.Scenarios
+@using SimHost.Domain.Sandbox
+@implements IDisposable
+@inject RunTimelineService Timeline
+@inject IdentityLineageService Lineage
+@inject RunDataService Data
+
+<PageTitle>Run - OIIE Sandbox</PageTitle>
+
+@if (_timeline is null)
+{
+    <p class="muted">Loading…</p>
+}
+else
+{
+    var run = _timeline.Run;
+
+    <h1>@run.ScenarioId</h1>
+    <p class="muted">@run.Title</p>
+
+    <div class="toolbar">
+        <span>
+            <span class="dot @DotClass(run.State)"></span>
+            <span class="sev @SevClass(run.State)">@run.State</span>
+        </span>
+
+        <span class="small muted">@run.Passed passed, @run.Failed failed</span>
+
+        @if (IsRunning)
+        {
+            <span class="small muted">running… @_elapsed s</span>
+        }
+
+        <label style="margin-left:auto;">
+            <input type="checkbox" @bind="_detail" />
+            Show detail
+        </label>
+    </div>
+
+    @if (run.AbortReason is { } reason)
+    {
+        <div class="card card-fail">
+            <div class="sev sev-fail">Aborted</div>
+            <div>@reason</div>
+        </div>
+    }
+
+    <div class="tabs">
+        <button class="@Active(Tab.Lineage)" @onclick="() => _tab = Tab.Lineage">Identity</button>
+        <button class="@Active(Tab.Results)" @onclick="() => _tab = Tab.Results">Results</button>
+        <button class="@Active(Tab.Flow)" @onclick="() => _tab = Tab.Flow">Message flow</button>
+        <button class="@Active(Tab.Data)" @onclick="() => _tab = Tab.Data">Persisted data</button>
+    </div>
+
+    @switch (_tab)
+    {
+        case Tab.Lineage:
+            <RunLineageTab Lineages="_lineages" Detail="_detail" />
+            break;
+
+        case Tab.Results:
+            <RunResultsTab Steps="_timeline.Steps" Detail="_detail" />
+            break;
+
+        case Tab.Flow:
+            <RunFlowTab Messages="_timeline.Messages" RunId="RunId" Detail="_detail" />
+            break;
+
+        case Tab.Data:
+            <RunDataTab Data="_data" />
+            break;
+    }
+}
+
+@code {
+    private enum Tab { Lineage, Results, Flow, Data }
+
+    [Parameter]
+    public Guid RunId { get; set; }
+
+    private RunTimeline? _timeline;
+    private IReadOnlyList<IdentityLineage> _lineages = [];
+    private IReadOnlyList<ParticipantData> _data = [];
+    private Tab _tab = Tab.Lineage;
+    private bool _detail;
+    private int _elapsed;
+
+    private PeriodicTimer? _timer;
+    private CancellationTokenSource? _cts;
+
+    private bool IsRunning => _timeline?.Run.State == ScenarioRunState.Running;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+
+        if (IsRunning)
+        {
+            StartPolling();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _timeline = await Timeline.GetAsync(RunId);
+        _lineages = await Lineage.GetAsync();
+
+        // Identities come from the lineage rather than from a message, so a participant
+        // that received nothing still gets a card showing it holds no row.
+        _data = await Data.GetAsync([.. _lineages.Select(l => l.FederationId)]);
+    }
+
+    /// <summary>
+    /// Polls rather than pushes. The runner saves after every step and assertion, so the
+    /// rows are already there to be read — adding an event bus would mean the engine had
+    /// to know a UI existed, and a run started by CI would then push to nobody.
+    ///
+    /// Two seconds because assertions routinely wait up to 60s for a message: polling
+    /// faster would mostly re-read unchanged rows across several schemas.
+    /// </summary>
+    private void StartPolling()
+    {
+        _cts = new CancellationTokenSource();
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (await _timer.WaitForNextTickAsync(_cts.Token))
+                {
+                    await LoadAsync();
+                    _elapsed += 2;
+
+                    await InvokeAsync(StateHasChanged);
+
+                    if (!IsRunning)
+                    {
+                        break;
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // The user navigated away mid-run. Expected, and not a failure: the run
+                // itself continues on the host regardless of who is watching.
+            }
+        });
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _timer?.Dispose();
+    }
+
+    private string Active(Tab tab) => _tab == tab ? "active" : string.Empty;
+
+    private static string DotClass(ScenarioRunState state) => state switch
+    {
+        ScenarioRunState.Passed => "dot-pass",
+        ScenarioRunState.Failed or ScenarioRunState.Aborted => "dot-fail",
+        _ => "dot-concern"
+    };
+
+    private static string SevClass(ScenarioRunState state) => state switch
+    {
+        ScenarioRunState.Passed => "sev-pass",
+        ScenarioRunState.Failed or ScenarioRunState.Aborted => "sev-fail",
+        _ => "sev-concern"
+    };
+}

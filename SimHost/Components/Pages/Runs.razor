@@ -1,0 +1,204 @@
+@page "/runs"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using SimHost.Application.Scenarios
+@using SimHost.Domain.Sandbox
+@using SimHost.Infrastructure.Sql
+@inject ISandboxDbContextFactory Sandbox
+@inject ScenarioCatalog Catalog
+@inject ScenarioLauncher Launcher
+@inject SandboxResetService Resets
+@inject NavigationManager Nav
+
+<PageTitle>Runs - OIIE Sandbox</PageTitle>
+
+<h1>Scenario runs</h1>
+
+@if (_runs is null)
+{
+    <p class="muted">Loading…</p>
+}
+else
+{
+    <div class="toolbar">
+        <select @bind="_scenarioId">
+            @foreach (var scenario in _scenarios)
+            {
+                <option value="@scenario.Id">@scenario.Id</option>
+            }
+        </select>
+
+        <button class="primary" @onclick="StartAsync" disabled="@(_starting || _resetting)">
+            @(_starting ? "Starting…" : "Run scenario")
+        </button>
+
+        <span class="toolbar-gap"></span>
+
+        @if (!_confirmingReset)
+        {
+            <button class="btn" @onclick="@(() => _confirmingReset = true)" disabled="@(_starting || _resetting)">
+                @(_resetting ? "Resetting…" : "Reset environment")
+            </button>
+        }
+        else
+        {
+            <span class="small sev-fail">Destroys all participant data and run history.</span>
+            <button class="btn btn-danger" @onclick="@(() => ResetAsync(dayZero: false))">Reset</button>
+            <button class="btn btn-danger" @onclick="@(() => ResetAsync(dayZero: true))">Day zero</button>
+            <button class="btn" @onclick="@(() => _confirmingReset = false)">Cancel</button>
+        }
+    </div>
+
+    @if (_confirmingReset)
+    {
+        <p class="small muted">
+            <strong>Reset</strong> rebuilds this deployment's tables, reference data and
+            run history, and recreates its own ISBM channels.
+            <strong>Day zero</strong> additionally deletes channels belonging to other
+            systems — that destroys their sessions, and they will keep polling dead
+            session ids until they are restarted.
+        </p>
+    }
+
+    @if (_resetMessage is not null)
+    {
+        <p class="sev @(_resetOk ? "sev-pass" : "sev-fail")">@_resetMessage</p>
+    }
+
+    @if (_error is not null)
+    {
+        <p class="sev sev-fail">@_error</p>
+    }
+
+    <table style="margin-top: 16px; width: 100%;">
+        <thead>
+            <tr>
+                <th>Scenario</th>
+                <th>State</th>
+                <th>Passed</th>
+                <th>Failed</th>
+                <th>Started</th>
+                <th>Duration</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var run in _runs)
+            {
+                <tr>
+                    <td>
+                        <a href="/runs/@run.Id">@run.ScenarioId</a>
+                        <div class="small muted">@run.Title</div>
+                    </td>
+                    <td>
+                        <span class="dot @DotClass(run)"></span>
+                        <span class="sev @SevClass(run)">@run.State</span>
+                    </td>
+                    <td>@run.Passed</td>
+                    <td>@run.Failed</td>
+                    <td class="small muted">@run.StartedUtc.LocalDateTime.ToString("g")</td>
+                    <td class="small muted">@Duration(run)</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    @if (_runs.Count == 0)
+    {
+        <p class="muted">No runs yet. Start one above.</p>
+    }
+}
+
+@code {
+    private List<ScenarioRun>? _runs;
+    private IReadOnlyList<ScenarioDefinition> _scenarios = [];
+    private string _scenarioId = string.Empty;
+    private bool _starting;
+    private string? _error;
+
+    private bool _confirmingReset;
+    private bool _resetting;
+    private bool _resetOk;
+    private string? _resetMessage;
+
+    private async Task ResetAsync(bool dayZero)
+    {
+        _confirmingReset = false;
+        _resetting = true;
+        _resetMessage = null;
+        StateHasChanged();
+
+        var baseUrl = Nav.BaseUri;
+
+        var outcome = dayZero
+            ? await Resets.DayZeroAsync(baseUrl)
+            : await Resets.ResetAsync(baseUrl);
+
+        _resetOk = outcome.Succeeded;
+        _resetMessage = outcome.Succeeded
+            ? outcome.Summary
+            : $"{outcome.Summary} {outcome.Detail}";
+
+        _resetting = false;
+
+        // The run list is one of the things a reset clears, so it is reloaded rather
+        // than left showing history that no longer exists.
+        await LoadAsync();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _scenarios = Catalog.LoadAll();
+        _scenarioId = _scenarios.FirstOrDefault()?.Id ?? string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = Sandbox.Create();
+
+        _runs = await db.ScenarioRuns
+            .AsNoTracking()
+            .OrderByDescending(r => r.StartedUtc)
+            .Take(25)
+            .ToListAsync();
+    }
+
+    // Navigates as soon as the run row exists rather than awaiting the result. A run
+    // takes a minute or more, and the detail page is where progress is visible — waiting
+    // here would show a dead button for the entire run and then jump to a finished view.
+    private async Task StartAsync()
+    {
+        _starting = true;
+        _error = null;
+
+        try
+        {
+            var runId = await Launcher.StartAsync(_scenarioId);
+            Nav.NavigateTo($"/runs/{runId}");
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _starting = false;
+        }
+    }
+
+    private static string Duration(ScenarioRun run) =>
+        run.FinishedUtc is { } finished
+            ? $"{(finished - run.StartedUtc).TotalSeconds:F0}s"
+            : "running";
+
+    private static string DotClass(ScenarioRun run) => run.State switch
+    {
+        ScenarioRunState.Passed => "dot-pass",
+        ScenarioRunState.Failed or ScenarioRunState.Aborted => "dot-fail",
+        _ => "dot-concern"
+    };
+
+    private static string SevClass(ScenarioRun run) => run.State switch
+    {
+        ScenarioRunState.Passed => "sev-pass",
+        ScenarioRunState.Failed or ScenarioRunState.Aborted => "sev-fail",
+        _ => "sev-concern"
+    };
+}

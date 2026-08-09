@@ -13,7 +13,18 @@ public class Location
 {
     public long Id { get; set; }
 
-    /// <summary>Registry surrogate, e.g. LOC-000412.</summary>
+    /// <summary>
+    /// The identity, normally adopted from the FederationId the originator sent.
+    /// REG-LOCATION mints one only for a location it originates itself. Issuing a new
+    /// identity for something it merely received would create a second identity for
+    /// one real thing, which is the duplication the federation model exists to stop.
+    /// </summary>
+    public Guid FederationId { get; set; }
+
+    /// <summary>
+    /// The registry's own code, e.g. LOC-000412. A second label for the same entity,
+    /// not a second identity — the sender's code remains equally valid.
+    /// </summary>
     public string LocationCode { get; set; } = string.Empty;
 
     public string? Name { get; set; }
@@ -59,6 +70,16 @@ public class StewardshipItem
     public long Id { get; set; }
 
     public Guid SourceMessageId { get; set; }
+
+    /// <summary>
+    /// The identity the sender asserted, carried through the gate unchanged.
+    ///
+    /// Held on the proposal rather than assigned at approval because the steward is
+    /// deciding whether to accept the entity, not what it is. Empty means the sender
+    /// supplied no identity, which the steward should see rather than have silently
+    /// repaired on their behalf.
+    /// </summary>
+    public Guid FederationId { get; set; }
 
     public string SourceParticipant { get; set; } = string.Empty;
 

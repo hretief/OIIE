@@ -200,7 +200,20 @@ public class MeasureContent : ValueContent
     public string? UnitOfMeasure
     {
         get => Measure?.UnitOfMeasure?.ShortName;
-        set => ((Measure ??= new Measure()).UnitOfMeasure ??= new UnitOfMeasure()).ShortName = value;
+        set
+        {
+            var unit = (Measure ??= new Measure()).UnitOfMeasure ??= new UnitOfMeasure();
+            unit.ShortName = value;
+
+            // CCOM's UnitOfMeasure extends Entity, so UUID is mandatory rather than
+            // decorative. A unit code denotes the same unit for every participant, so
+            // the id is derived from the code: "degC" resolves to one identity across
+            // senders and runs instead of a fresh one per message.
+            if (unit.UUID == Guid.Empty && value is { Length: > 0 })
+            {
+                unit.UUID = CcomUuid.FromKey("UnitOfMeasure", value);
+            }
+        }
     }
 
     public override string? AsDisplayText() => UnitOfMeasure is null

@@ -64,42 +64,56 @@ public sealed class CcomAttributeMapper
 
             entity.AttributeSetForEntity.Add(new AttributeSetForEntity
             {
+                UUID = CcomUuid.ForValue(entity.UUID, classDefinition.ClassKey),
                 AttributeSet = new AttributeSet
                 {
+                    UUID = CcomUuid.ForValue(entity.UUID, $"set\u001f{classDefinition.ClassKey}"),
                     ShortName = classDefinition.Name,
                     Type = new AttributeSetType
                     {
+                        UUID = CcomUuid.ForReferenceData(
+                            classDefinition.RdlSourceId ?? rdlSourceName, classDefinition.ClassKey),
                         IDInInfoSource = classDefinition.ClassKey,
-                        InfoSource = new InfoSource { ShortName = classDefinition.RdlSourceId ?? rdlSourceName },
+                        InfoSource = new InfoSource
+                        {
+                            UUID = CcomUuid.ForInfoSource(classDefinition.RdlSourceId ?? rdlSourceName),
+                            ShortName = classDefinition.RdlSourceId ?? rdlSourceName
+                        },
                         ShortName = classDefinition.Name,
                         Description = classDefinition.Description
                     },
-                    SetAttribute = group.Select(v => ToAttribute(v, effectiveSet, rdlSourceName)).ToList()
+                    SetAttribute = group
+                        .Select(v => ToAttribute(entity.UUID, v, effectiveSet, rdlSourceName))
+                        .ToList()
                 }
             });
         }
 
         foreach (var value in values.Where(v => v.ViaClassId is null))
         {
-            entity.Attribute.Add(ToAttribute(value, effectiveSet, rdlSourceName));
+            entity.Attribute.Add(ToAttribute(entity.UUID, value, effectiveSet, rdlSourceName));
         }
     }
 
     private CcomAttribute ToAttribute(
-        EntityPropertyValue value, EffectivePropertySet effectiveSet, string rdlSourceName)
+        Guid owner, EntityPropertyValue value, EffectivePropertySet effectiveSet, string rdlSourceName)
     {
         var definition = _source.GetPropertyDefinition(value.DefinitionId);
         var effective = effectiveSet.Find(value.DefinitionId);
+        var sourceId = definition?.RdlSourceId ?? rdlSourceName;
 
         return new CcomAttribute
         {
+            UUID = CcomUuid.ForValue(owner, definition?.DefinitionKey ?? value.DefinitionId.ToString()),
             ShortName = definition?.Name,
             Type = new AttributeType
             {
+                UUID = CcomUuid.ForReferenceData(sourceId, definition?.DefinitionKey),
                 IDInInfoSource = definition?.DefinitionKey,
                 InfoSource = new InfoSource
                 {
-                    ShortName = definition?.RdlSourceId ?? rdlSourceName
+                    UUID = CcomUuid.ForInfoSource(sourceId),
+                    ShortName = sourceId
                 },
                 ShortName = definition?.Name,
                 Description = definition?.Description

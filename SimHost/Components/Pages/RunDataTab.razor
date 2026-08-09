@@ -1,0 +1,58 @@
+@using SimHost.Application.Scenarios
+
+@*
+    What each participant actually persisted, read from its own SQL schema.
+
+    Ordered ENG to MMS so the page reads as the data travelled. The final MMS card is the
+    point of the tab: it is the tag, under a different number, in a different database,
+    carrying the identity it was minted with.
+*@
+
+@if (Data.Count == 0)
+{
+    <p class="muted">No identities were allocated in this run, so there are no rows to show.</p>
+}
+else
+{
+    @foreach (var participant in Data)
+    {
+        <div class="section">
+            <h3>@participant.ParticipantId</h3>
+
+            @if (participant.Error is { } error)
+            {
+                <div class="card card-fail">
+                    <div class="sev sev-fail">Store unreadable</div>
+                    <div class="small">@error</div>
+                </div>
+            }
+            else if (participant.Records.Count == 0)
+            {
+                <div class="card card-concern">
+                    <div>
+                        <strong>no rows</strong>
+                        <span class="small muted">
+                            this participant holds nothing for the identities in this run
+                        </span>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <p class="small muted">
+                    @participant.Records.Count row(s) persisted
+                </p>
+
+                @foreach (var record in participant.Records)
+                {
+                    <RecordCard Record="record" />
+                }
+            }
+        </div>
+    }
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public IReadOnlyList<ParticipantData> Data { get; set; } = [];
+}

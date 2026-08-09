@@ -99,7 +99,13 @@ public sealed class ScenarioActionRegistry
         : throw new ScenarioActionException($"Unknown action '{name}'.");
 }
 
-/// <summary>Adds or edits an ENG tag. Upsert semantics come from <see cref="EngService"/>.</summary>
+/// <summary>
+/// Adds or edits an ENG tag. Upsert semantics come from <see cref="EngService"/>.
+///
+/// Give <c>tagNumber</c> to author a specific tag, or <c>codePrefix</c> to let the
+/// identity service allocate the next one in a series — the greenfield case, where
+/// the scenario cannot know the code in advance because nothing has issued it yet.
+/// </summary>
 public sealed class CreateTagAction(EngService eng) : IScenarioAction
 {
     public string Name => "create_tag";
@@ -107,18 +113,25 @@ public sealed class CreateTagAction(EngService eng) : IScenarioAction
     public async Task<ScenarioActionResult> ExecuteAsync(ScenarioActionContext context, CancellationToken ct)
     {
         var tag = await eng.AddTagAsync(
-            context.RequireString("tagNumber"),
+            context.GetString("tagNumber"),
             context.GetString("serviceDescription"),
             context.GetString("unitNumber"),
             context.GetString("classKey"),
             context.GetDecimal("rangeMinimum"),
             context.GetDecimal("rangeMaximum"),
             context.GetString("controlAction"),
+            context.GetString("codePrefix"),
             ct);
 
         return new ScenarioActionResult(
             $"Tag {tag.TagNumber} is {tag.Maturity}.",
-            new { tag.Id, tag.TagNumber, Maturity = tag.Maturity.ToString() });
+            new
+            {
+                tag.Id,
+                tag.TagNumber,
+                FederationId = tag.FederationId.ToString(),
+                Maturity = tag.Maturity.ToString()
+            });
     }
 }
 

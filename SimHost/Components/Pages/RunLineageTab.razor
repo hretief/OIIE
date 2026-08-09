@@ -1,0 +1,86 @@
+@using SimHost.Application.Scenarios
+
+@*
+    One row per real-world thing. The identity is the row; each participant's code is a
+    chip along it. Reading left to right follows the thing as it actually travelled.
+
+    The codes are rendered as equals joined by arrows rather than as a table of columns,
+    because a column headed "the code" would imply one of them is the real name. None of
+    them is: they are three systems' labels for one thing, and the FederationId above
+    them is the only thing that is actually the thing.
+*@
+
+@if (Lineages.Count == 0)
+{
+    <p class="muted">
+        No identities yet. Run a scenario that allocates one.
+    </p>
+}
+else
+{
+    @foreach (var lineage in Lineages)
+    {
+        <div class="card @(lineage.HasCompetingMinters || lineage.HasNoMinter ? "card-fail" : "card-pass")">
+            <div class="lineage-chain">
+                @for (var i = 0; i < lineage.Codes.Count; i++)
+                {
+                    var held = lineage.Codes[i];
+
+                    if (i > 0)
+                    {
+                        <span class="arrow">→</span>
+                    }
+
+                    <span class="chip @(held.Minted ? "chip-minted" : string.Empty)"
+                          title="@(held.Minted ? "Minted the identity" : "Adopted the identity")">
+                        @held.Code
+                    </span>
+
+                    <span class="small muted">@held.ParticipantId</span>
+                }
+            </div>
+
+            @if (lineage.Codes.FirstOrDefault(c => c.Label is not null)?.Label is { } label)
+            {
+                <div class="small muted" style="margin-top:6px;">@label</div>
+            }
+
+            @* The warnings are the reason this view is worth having. A lineage that looks
+               tidy but has two minters means two systems each believe they originated the
+               same thing, which no single participant's own screens could ever reveal. *@
+            @if (lineage.HasCompetingMinters)
+            {
+                <div class="sev sev-fail" style="margin-top:6px;">
+                    More than one participant claims to have minted this identity.
+                </div>
+            }
+            else if (lineage.HasNoMinter)
+            {
+                <div class="sev sev-fail" style="margin-top:6px;">
+                    No participant claims to have minted this identity.
+                </div>
+            }
+            else if (lineage.Codes.Count == 1)
+            {
+                <div class="small muted" style="margin-top:6px;">
+                    Only @lineage.Codes[0].ParticipantId holds this. It has not travelled yet.
+                </div>
+            }
+
+            @if (Detail)
+            {
+                <div class="detail">
+                    <div class="mono">@lineage.FederationId</div>
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public IReadOnlyList<IdentityLineage> Lineages { get; set; } = [];
+
+    [Parameter]
+    public bool Detail { get; set; }
+}

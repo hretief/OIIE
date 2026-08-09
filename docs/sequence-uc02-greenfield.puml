@@ -1,0 +1,126 @@
+@startuml uc02-greenfield
+title Scenario uc02 — greenfield identity allocation\nA designer asks for a valve and is given both an identity and a code
+
+skinparam responseMessageBelowArrow true
+skinparam sequenceMessageAlign left
+skinparam maxMessageSize 220
+skinparam ParticipantPadding 12
+skinparam BoxPadding 12
+
+actor "Designer" as DesignerUser
+
+box "SimHost — simulated participants"
+  participant "ENG" as ENG
+  participant "REG-LOCATION" as LOC
+  participant "MMS" as MMS
+end box
+
+participant "Identity service" as IDS
+participant "ws-ISBM provider" as ISBM
+participant "ws-CIR provider" as CIR
+
+note over DesignerUser, IDS
+  uc01 authors TIC-106 in the scenario file, so only
+  the identity is minted. Here the **code is allocated
+  too**, and the scenario deliberately does not know
+  it in advance.
+end note
+
+== Allocation ==
+
+DesignerUser -> ENG : "I need a valve"\ncodePrefix P-, no number
+activate ENG
+
+ENG -> IDS : allocate(codePrefix = "P-")
+activate IDS
+IDS -> IDS : read high-water mark\nfor the P- series
+IDS -> IDS : mint FederationId\nassign CodeSequence = max + 1
+IDS --> ENG : FederationId + code
+deactivate IDS
+
+note right of IDS
+  Two separate things, and the distinction is
+  the point of the scenario. The code is a
+  **name** — local, sequential, reissuable in
+  principle. The FederationId is the **identity**
+  — minted once and never again.
+
+  A CodeAssignment without CodePrefix and
+  CodeSequence would still yield a valid-looking
+  code, but the next allocation could not know
+  where the series got to.
+end note
+
+ENG -> ENG : classify against\nrdl:TemperatureIndicatingController
+ENG -> ENG : persist Tag + CodeAssignment\n+ Control action = Reverse
+ENG --> DesignerUser : P-00n allocated
+deactivate ENG
+
+== A second request continues the series ==
+
+DesignerUser -> ENG : "another valve"
+activate ENG
+ENG -> IDS : allocate(codePrefix = "P-")
+activate IDS
+IDS --> ENG : new FederationId, CodeSequence + 1
+deactivate IDS
+ENG --> DesignerUser : P-00(n+1)
+deactivate ENG
+
+note over ENG
+  The assertions check relationships, never
+  literals: "the newest allocation", "one greater
+  than the previous", "no two rows share a
+  sequence". Those hold on the first run and the
+  fiftieth — so the scenario tests the allocator
+  rather than the reset.
+end note
+
+== Registration and dispatch ==
+
+ENG -> ISBM : PostRequest(ProcessRegistry)
+activate ISBM
+ISBM -> CIR : deliver
+activate CIR
+CIR -> CIR : register SourceID=ENG\nassign CIRIDs
+CIR -> ISBM : AcknowledgeRegistry
+deactivate CIR
+ISBM --> ENG : AcknowledgeRegistry
+deactivate ISBM
+
+ENG -> ISBM : PostPublication(SyncSegments)\non /Enterprise/Site/Eng
+
+== The identity travels unchanged ==
+
+ISBM -> LOC : ReadPublication → SyncSegments
+activate LOC
+LOC -> LOC : leaf class unknown\nbind at rdl:Instrument (degraded)
+LOC -> LOC : adopt FederationId\nassign its own location code
+LOC -> LOC : ingest Control action as **mapped**\n— the definition is held, the class is not
+deactivate LOC
+
+LOC -> ISBM : PostPublication(SyncSegments)\non /Enterprise/Site/OandM
+
+ISBM -> MMS : ReadPublication → SyncSegments
+activate MMS
+MMS -> ISBM : PostRequest(GetRegistry)
+activate ISBM
+ISBM -> CIR : deliver
+activate CIR
+CIR -> ISBM : ShowRegistry (CIRID cluster)
+deactivate CIR
+ISBM --> MMS : ShowRegistry
+deactivate ISBM
+MMS -> MMS : adopt FederationId\nassign EquipmentNumber
+MMS -> MMS : retain all values **unmapped**\n— no reference data at all
+deactivate MMS
+
+note over ENG, MMS
+  Three participants, three codes, **one identity
+  and one minter**. Adopting an identity is not
+  minting one, and a second mint here would be
+  the failure the model exists to prevent — the
+  assertions check for exactly that.
+end note
+
+@enduml

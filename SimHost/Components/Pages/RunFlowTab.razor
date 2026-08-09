@@ -1,0 +1,69 @@
+@using SimHost.Application.Scenarios
+
+@*
+    A sequence of BODs, sender on the left and receiver on the right.
+
+    Reconstructed from both ends rather than read from a central log, so an arrow with no
+    receiver is a real finding: it means something was published and nothing consumed it,
+    which looks identical to success from the sender's own records.
+*@
+
+@if (Messages.Count == 0)
+{
+    <p class="muted">No messages exchanged in this run.</p>
+}
+else
+{
+    @foreach (var message in Messages)
+    {
+        <div class="flow-row">
+            <div class="flow-party">@(message.From ?? "—")</div>
+
+            <div class="flow-line">
+                <a class="flow-label flow-link"
+                   href="/runs/@RunId/messages/@message.RecordedBy/@message.MessageId">
+                    @message.Verb @message.Noun
+
+                    @if (!message.IsValid)
+                    {
+                        <span class="sev sev-fail">· invalid</span>
+                    }
+                </a>
+            </div>
+
+            <div class="flow-party @(message.IsUndelivered ? "flow-undelivered" : string.Empty)">
+                @(message.To ?? "nobody")
+            </div>
+        </div>
+
+        @if (message.IsUndelivered)
+        {
+            <div class="small sev-fail" style="margin-left:130px;">
+                Published, but no participant recorded receiving it.
+            </div>
+        }
+
+        @if (Detail)
+        {
+            <div class="detail" style="margin-left:130px;">
+                <div class="small muted mono">@message.ChannelUri</div>
+                <div class="small muted mono">BOD @message.BodId</div>
+                <div class="small muted">
+                    @message.ValidationStatus · @message.ProcessingStatus ·
+                    @message.OccurredAt.LocalDateTime.ToString("HH:mm:ss")
+                </div>
+            </div>
+        }
+    }
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public IReadOnlyList<FlowMessage> Messages { get; set; } = [];
+
+    [Parameter, EditorRequired]
+    public Guid RunId { get; set; }
+
+    [Parameter]
+    public bool Detail { get; set; }
+}

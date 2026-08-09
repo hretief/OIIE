@@ -4,6 +4,7 @@ using Oiie.Ccom.Oagis;
 using Oiie.Ccom.Types;
 using SimHost.Application.Bods;
 using SimHost.Application.Classification;
+using SimHost.Application.Identity;
 using SimHost.Application.Participants;
 using SimHost.Application.Scenarios;
 using SimHost.Domain.Common;
@@ -83,6 +84,10 @@ public sealed class SyncSegmentsHandler(
             var sourceParticipant = segment.InfoSource?.ShortName ?? envelope.SenderLogicalId ?? "unknown";
             var sourceIdentifier = segment.IDInInfoSource;
 
+            // The identity the sender asserted. Carried through the gate untouched:
+            // the steward decides whether to accept the entity, not what it is.
+            var federationId = segment.UUID;
+
             if (string.IsNullOrWhiteSpace(sourceIdentifier))
             {
                 logger.LogWarning("Segment with no IDInInfoSource skipped [{CorrelationId}]", envelope.BodId);
@@ -142,6 +147,7 @@ public sealed class SyncSegmentsHandler(
                 // rather than queueing a second one.
                 existing.ProposedName = segment.ShortName ?? segment.FullName;
                 existing.ProposedDescription = segment.Description;
+                existing.FederationId = federationId;
                 existing.RequestedClassKey = requestedClassKey;
                 existing.BoundClassKey = binding?.BoundClass?.ClassKey;
                 existing.ClassDegraded = binding?.IsDegraded ?? false;
@@ -154,6 +160,7 @@ public sealed class SyncSegmentsHandler(
             db.Set<StewardshipItem>().Add(new StewardshipItem
             {
                 SourceMessageId = messageId,
+                FederationId = federationId,
                 SourceParticipant = sourceParticipant,
                 SourceIdentifier = sourceIdentifier,
                 ProposedName = segment.ShortName ?? segment.FullName,
@@ -251,6 +258,7 @@ public sealed record ApprovalResult(
 /// </summary>
 public sealed class RegLocationService(
     IParticipantDbContextFactory factory,
+    ITagIdentityService identities,
     ScenarioRunContext runContext,
     ILogger<RegLocationService> logger)
 {
@@ -295,8 +303,17 @@ public sealed class RegLocationService(
 
             if (existing is null)
             {
+                // Adopt what the sender asserted. Issuing a fresh identity here would
+                // make LOC-000412 a different thing from the tag it was proposed from,
+                // which is precisely the duplicate the federation model prevents. The
+                // registry mints only when nothing was asserted — a legacy sender —
+                // and then it is genuinely originating the identity.
+                var adopted = proposal.FederationId != Guid.Empty;
+                var federationId = adopted ? proposal.FederationId : identities.Mint();
+
                 db.Set<Location>().Add(new Location
                 {
+                    FederationId = federationId,
                     LocationCode = code,
                     Name = proposal.ProposedName,
                     Description = proposal.ProposedDescription,
@@ -313,6 +330,13 @@ public sealed class RegLocationService(
                     SourceParticipant = proposal.SourceParticipant,
                     SourceIdentifier = proposal.SourceIdentifier
                 });
+
+                // LOC-000412 becomes an additional code for the same identity. The
+                // sender's code remains equally valid — this is the "same tag, other
+                // code" case, and CIR is what lets either one resolve.
+                var assignment = identities.RegisterCode(federationId, ParticipantId, code);
+                assignment.AdoptedFromRemote = adopted;
+                db.Codes.Add(assignment);
             }
             else
             {
@@ -330,6 +354,16 @@ public sealed class RegLocationService(
             proposal.DecidedBy = decidedBy;
             proposal.DecidedAt = DateTimeOffset.UtcNow;
             proposal.LocationCode = code;
+
+            // Property values were ingested against the proposal, keyed by the sender's
+            // identifier. Approval is what turns a proposal into a Location, so the values
+            // have to follow it onto the entity that now represents the thing: leaving
+            // them behind means the registry holds them but neither shows nor republishes
+            // them, and everything ENG sent beyond the CCOM spine dies at the gate.
+            //
+            // Copied rather than moved, because the proposal is the record of what was
+            // received and rewriting its values would erase the evidence of what arrived.
+            await CarryPropertiesAsync(db, proposal.SourceIdentifier, code, ct);
 
             db.Provenance.Add(new ProvenanceEntry
             {
@@ -404,6 +438,60 @@ public sealed class RegLocationService(
 
         await db.SaveChangesAsync(ct);
         return new ApprovalResult(0, proposals.Count, [], null);
+    }
+
+    /// <summary>
+    /// Copies a proposal's ingested property values onto the approved Location.
+    ///
+    /// Mapped and Orphaned are preserved rather than recomputed: whether the registry
+    /// understood a value is a fact about ingestion, and re-deciding it here would let an
+    /// unmapped value quietly become mapped without any class having sanctioned it.
+    /// </summary>
+    private static async Task CarryPropertiesAsync(
+        ParticipantDbContext db, string sourceIdentifier, string locationCode, CancellationToken ct)
+    {
+        var values = await db.PropertyValues
+            .AsNoTracking()
+            .Where(v => v.EntityType == nameof(StewardshipItem)
+                && v.EntityKey == sourceIdentifier
+                && v.ValidTo == null)
+            .ToListAsync(ct);
+
+        if (values.Count == 0)
+        {
+            return;
+        }
+
+        // Re-approval must not double the rows, so anything already carried is skipped.
+        var already = await db.PropertyValues
+            .AsNoTracking()
+            .Where(v => v.EntityType == nameof(Location)
+                && v.EntityKey == locationCode
+                && v.ValidTo == null)
+            .Select(v => v.DefinitionId)
+            .ToListAsync(ct);
+
+        foreach (var value in values.Where(v => !already.Contains(v.DefinitionId)))
+        {
+            db.PropertyValues.Add(new EntityPropertyValue
+            {
+                EntityType = nameof(Location),
+                EntityKey = locationCode,
+                DefinitionId = value.DefinitionId,
+                ViaClassId = value.ViaClassId,
+                NumericValue = value.NumericValue,
+                CharacterValue = value.CharacterValue,
+                DateTimeValue = value.DateTimeValue,
+                BooleanValue = value.BooleanValue,
+                UnitOfMeasure = value.UnitOfMeasure,
+                CodeValue = value.CodeValue,
+                CodeListId = value.CodeListId,
+                Mapped = value.Mapped,
+                Orphaned = value.Orphaned,
+                SourceMessageId = value.SourceMessageId,
+                ValidFrom = DateTimeOffset.UtcNow
+            });
+        }
     }
 
     /// <summary>

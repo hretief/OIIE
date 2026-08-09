@@ -1,0 +1,172 @@
+@page "/runs/{RunId:guid}/messages/{ParticipantId}/{MessageId:guid}"
+@using SimHost.Application.Scenarios
+@using SimHost.Domain.Common
+@inject MessageTransformService Transforms
+@inject NavigationManager Nav
+
+@*
+    How one source record became a BOD, and what that BOD produced downstream.
+
+    Laid out source -> wire -> result in reading order, because the question this page
+    answers is a directional one: not "what does MMS hold" but "what did ENG send that
+    made MMS hold it". The three panels are correlated by FederationId read out of the
+    payload itself, which is how a real receiver would correlate them.
+*@
+
+<PageTitle>Message · OIIE Sandbox</PageTitle>
+
+<div class="toolbar">
+    <button class="btn" @onclick="@(() => Nav.NavigateTo($"/runs/{RunId}"))">&larr; Back to run</button>
+</div>
+
+@if (_loading)
+{
+    <p class="muted">Loading…</p>
+}
+else if (_transform is null)
+{
+    <div class="card card-fail">
+        <strong>Message not found.</strong>
+        <div class="small muted">
+            No record with this id in @ParticipantId. Each participant assigns its own id
+            to the same BOD, so a link built from one participant's record will not
+            resolve against another's.
+        </div>
+    </div>
+}
+else
+{
+    var m = _transform.Message;
+
+    <h2>@m.Verb @m.Noun</h2>
+
+    <div class="small muted mono">@m.ChannelUri</div>
+    <div class="small muted mono">BOD @m.BodId</div>
+    <div class="small muted">
+        @m.Direction · recorded by @_transform.RecordedBy ·
+        @m.OccurredAt.LocalDateTime.ToString("HH:mm:ss")
+        @if (!string.IsNullOrWhiteSpace(m.ValidationDetail))
+        {
+            <span class="sev sev-fail"> · @m.ValidationStatus</span>
+        }
+        else
+        {
+            <span> · @m.ValidationStatus</span>
+        }
+        · @m.ProcessingStatus
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(m.ValidationDetail))
+    {
+        <div class="card card-fail" style="margin-top:12px;">
+            <strong>Validation</strong>
+            <div class="small mono">@m.ValidationDetail</div>
+        </div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(m.ProcessingDetail))
+    {
+        <div class="card" style="margin-top:12px;">
+            <strong>Processing</strong>
+            <div class="small mono">@m.ProcessingDetail</div>
+        </div>
+    }
+
+    <h3 class="section">1 · Source record</h3>
+    <p class="small muted">
+        The originating system's own row, in its own vocabulary — no Segments, no
+        IDInSource. Turning this into the BOD below is the interoperability work.
+    </p>
+
+    @if (_transform.Sources.Count == 0)
+    {
+        <p class="muted small">
+            The publisher could not be identified, so no source row is shown. This happens
+            when the BOD came from outside the run, or when the payload was unavailable
+            and there were no identities to correlate on.
+        </p>
+    }
+    else
+    {
+        @foreach (var record in _transform.Sources)
+        {
+            <RecordCard Record="record" />
+        }
+    }
+
+    <h3 class="section">2 · The BOD on the wire</h3>
+
+    @if (_transform.Payload is not null)
+    {
+        <p class="small muted">
+            @_transform.Identities.Count identit@(_transform.Identities.Count == 1 ? "y" : "ies")
+            carried in this payload, used to correlate the panels above and below.
+        </p>
+        <pre class="xml">@_transform.Payload</pre>
+    }
+    else
+    {
+        <div class="card card-concern">
+            <strong>Payload not available.</strong>
+            <div class="small muted">@_transform.PayloadUnavailableReason</div>
+        </div>
+    }
+
+    <h3 class="section">3 · Resulting records</h3>
+    <p class="small muted">
+        What each receiving participant holds for the same identity. Different codes for
+        one physical thing is the expected outcome, not a defect.
+    </p>
+
+    @foreach (var record in _transform.Results)
+    {
+        <RecordCard Record="record" />
+    }
+
+    @if (_transform.Provenance.Count > 0)
+    {
+        <h3 class="section">Audit trail</h3>
+        <p class="small muted">
+            Recorded by the receivers as they processed this message, independently of the
+            rows above.
+        </p>
+
+        @foreach (var entry in _transform.Provenance)
+        {
+            <div class="card">
+                <div>
+                    <strong>@entry.ParticipantId</strong>
+                    <span class="small muted">
+                        @entry.Action @entry.EntityType @entry.EntityKey · by @entry.Actor ·
+                        @entry.At.LocalDateTime.ToString("HH:mm:ss")
+                    </span>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(entry.ChangeSummary))
+                {
+                    <div class="detail small mono">@entry.ChangeSummary</div>
+                }
+            </div>
+        }
+    }
+}
+
+@code {
+    [Parameter]
+    public Guid RunId { get; set; }
+
+    [Parameter]
+    public string ParticipantId { get; set; } = string.Empty;
+
+    [Parameter]
+    public Guid MessageId { get; set; }
+
+    private MessageTransform? _transform;
+    private bool _loading = true;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _transform = await Transforms.GetAsync(ParticipantId, MessageId);
+        _loading = false;
+    }
+}
