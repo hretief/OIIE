@@ -38,6 +38,7 @@ public sealed class BodValidator
     private readonly XmlSchemaSet _schemas = new();
     private readonly HashSet<string> _knownNamespaces = new(StringComparer.Ordinal);
     private readonly List<string> _loadDiagnostics = [];
+    private readonly HashSet<string> _declared = new(StringComparer.Ordinal);
     private bool _compiled;
 
     public IReadOnlyCollection<string> KnownNamespaces => _knownNamespaces;
@@ -56,6 +57,8 @@ public sealed class BodValidator
             return;
         }
 
+        var read = new List<(string File, XmlSchema Schema)>();
+
         foreach (var file in Directory.EnumerateFiles(schemaDirectory, "*.xsd", SearchOption.AllDirectories))
         {
             try
@@ -70,11 +73,7 @@ public sealed class BodValidator
                     continue;
                 }
 
-                _schemas.Add(schema);
-                if (!string.IsNullOrEmpty(schema.TargetNamespace))
-                {
-                    _knownNamespaces.Add(schema.TargetNamespace);
-                }
+                read.Add((file, schema));
             }
             catch (Exception ex) when (ex is XmlSchemaException or XmlException)
             {
@@ -84,8 +83,98 @@ public sealed class BodValidator
             }
         }
 
+        foreach (var (file, schema) in Ordered(read))
+        {
+            // A schema that redeclares a global its own include already provides
+            // cannot compile, and one such file invalidates the whole set — so a
+            // defect in an unrelated BOD silently disables validation everywhere.
+            // The ws-CIR package has two (GetEquivalentEntries, GetRegistry) where
+            // the request wrapper takes the same qualified name as the payload
+            // element it includes. Skipping the wrapper keeps the payload, which is
+            // what messages on the wire actually carry.
+            if (Collides(schema, out var collision))
+            {
+                _loadDiagnostics.Add(
+                    $"{Path.GetFileName(file)}: skipped — redeclares '{collision}', which its " +
+                    "own include already declares. Loading it would invalidate the whole set.");
+                continue;
+            }
+
+            _schemas.Add(schema);
+            if (!string.IsNullOrEmpty(schema.TargetNamespace))
+            {
+                _knownNamespaces.Add(schema.TargetNamespace);
+            }
+
+            foreach (var name in GlobalElementNames(schema))
+            {
+                _declared.Add(name);
+            }
+        }
+
         _compiled = false;
     }
+
+    /// <summary>
+    /// Schemas that others include are added first, so a redeclaration is detected
+    /// against the file that legitimately owns the name rather than by whichever
+    /// the directory walk happened to reach first.
+    /// </summary>
+    private static IEnumerable<(string File, XmlSchema Schema)> Ordered(
+        IReadOnlyCollection<(string File, XmlSchema Schema)> read)
+    {
+        var included = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (file, schema) in read)
+        {
+            foreach (var external in schema.Includes.OfType<XmlSchemaExternal>())
+            {
+                if (string.IsNullOrEmpty(external.SchemaLocation))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var directory = Path.GetDirectoryName(file);
+                    if (directory is not null)
+                    {
+                        included.Add(Path.GetFullPath(
+                            Path.Combine(directory, external.SchemaLocation)));
+                    }
+                }
+                catch (ArgumentException)
+                {
+                    // A location that is not a usable path tells us nothing about
+                    // ordering; compilation will report it if it matters.
+                }
+            }
+        }
+
+        return read
+            .OrderByDescending(entry => included.Contains(Path.GetFullPath(entry.File)))
+            .ToList();
+    }
+
+    private bool Collides(XmlSchema schema, out string? collision)
+    {
+        foreach (var name in GlobalElementNames(schema))
+        {
+            if (_declared.Contains(name))
+            {
+                collision = name;
+                return true;
+            }
+        }
+
+        collision = null;
+        return false;
+    }
+
+    private static IEnumerable<string> GlobalElementNames(XmlSchema schema) =>
+        schema.Items.OfType<XmlSchemaElement>()
+            .Where(element => !string.IsNullOrEmpty(element.Name))
+            .Select(element => $"{schema.TargetNamespace}:{element.Name}");
 
     /// <summary>
     /// Compiles at most once. A compilation fault is recorded and the namespaces are

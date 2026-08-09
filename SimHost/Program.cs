@@ -1788,6 +1788,10 @@ app.MapGet("/admin/{participantId}/messages", async (
             m.CorrelationId,
             m.IsbmMessageId,
             m.ValidationStatus,
+            // The status alone cannot distinguish "no schema held" from "schema
+            // did not compile" from "could not be matched at all", and those have
+            // different fixes. The reason is already stored; it was just not read.
+            m.ValidationDetail,
             m.ProcessingStatus,
             m.ProcessingDetail,
             m.ContentBytes,
@@ -1954,6 +1958,10 @@ app.MapGet("/health/participants", (ParticipantRegistry registry, BodValidator v
             channels = p.Config.Channels.Count
         }),
         schemaNamespaces = validator.KnownNamespaces,
+        // A namespace can be listed above and still be unusable, because a
+        // compilation fault drops the whole set. Without these the bod_valid
+        // concern says only "schemas were unavailable" and gives nothing to act on.
+        schemaDiagnostics = validator.LoadDiagnostics,
         storageConfigured,
         isbmConfigured,
         // Reported so an unprotected deployment is visible rather than assumed.
