@@ -170,7 +170,7 @@ public sealed class SandboxDbContextFactory : ISandboxDbContextFactory
     {
         var options = new DbContextOptionsBuilder<SandboxDbContext>()
             .UseSqlServer(
-                _connectionStrings.ForService("orchestrator", SandboxDbContext.SchemaName),
+                _connectionStrings.ForService("orchestrator"),
                 sql => sql.EnableRetryOnFailure(
                     maxRetryCount: 5,
                     maxRetryDelay: TimeSpan.FromSeconds(10),

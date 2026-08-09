@@ -6,6 +6,7 @@ using Oiie.Ccom.Oagis;
 using Oiie.Ccom.Types;
 using SimHost.Application.Bods;
 using SimHost.Application.Participants;
+using SimHost.Application.Scenarios;
 using SimHost.Domain.Common;
 using SimHost.Domain.Eng;
 using SimHost.Infrastructure.Sql;
@@ -28,6 +29,7 @@ public sealed record PromotionResult(
 /// </summary>
 public sealed class EngService(
     IParticipantDbContextFactory factory,
+    ScenarioRunContext runContext,
     ILogger<EngService> logger)
 {
     public const string ParticipantId = "eng";
@@ -145,7 +147,8 @@ public sealed class EngService(
             ChannelUri = channelUri,
             Topic = topic,
             CorrelationId = correlationId,
-            State = OutboxState.Pending
+            State = OutboxState.Pending,
+            ScenarioRunId = runContext.CurrentRunId
         });
 
         await db.SaveChangesAsync(ct);

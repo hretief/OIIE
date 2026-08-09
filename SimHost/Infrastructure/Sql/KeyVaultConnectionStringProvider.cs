@@ -8,7 +8,7 @@ public interface IParticipantConnectionStringProvider
     string For(string participantId);
 
     /// <summary>Orchestrator and tower are not participants but need connections.</summary>
-    string ForService(string serviceName, string defaultSchema);
+    string ForService(string serviceName);
 }
 
 /// <summary>
@@ -39,13 +39,21 @@ public sealed class KeyVaultConnectionStringProvider : IParticipantConnectionStr
         _logger = logger;
     }
 
-    public string For(string participantId) => Build(participantId, _registry.Get(participantId).Schema);
+    public string For(string participantId) =>
+        Build(participantId, $"sb_{_registry.Get(participantId).Schema}");
 
-    /// <summary>Orchestrator and tower are not participants but need connections.</summary>
-    public string ForService(string serviceName, string defaultSchema) =>
-        Build(serviceName, defaultSchema);
+    /// <summary>
+    /// Orchestrator and tower are not participants but need connections.
+    ///
+    /// Their login is named after the service rather than after a schema, because
+    /// neither is confined to one: sb_orchestrator is db_owner so that reset can
+    /// truncate every participant schema, and sb_tower reads across all of them.
+    /// Deriving the name from a default schema would ask for sb_sandbox, which
+    /// provisioning never creates.
+    /// </summary>
+    public string ForService(string serviceName) => Build(serviceName, $"sb_{serviceName}");
 
-    private string Build(string principalKey, string schema)
+    private string Build(string principalKey, string userName)
     {
         var environment = Required("Sandbox:Environment");
         var server = Required("Sandbox:SqlServer");
@@ -67,7 +75,7 @@ public sealed class KeyVaultConnectionStringProvider : IParticipantConnectionStr
         {
             DataSource = $"tcp:{server}.database.windows.net,1433",
             InitialCatalog = database,
-            UserID = $"sb_{schema}",
+            UserID = userName,
             Password = password,
             Encrypt = true,
             TrustServerCertificate = false,
@@ -77,8 +85,8 @@ public sealed class KeyVaultConnectionStringProvider : IParticipantConnectionStr
         };
 
         _logger.LogDebug(
-            "Connection for {Principal} as sb_{Schema} on {Database}",
-            principalKey, schema, database);
+            "Connection for {Principal} as {UserName} on {Database}",
+            principalKey, userName, database);
 
         return builder.ConnectionString;
     }

@@ -5,6 +5,7 @@ using Oiie.Ccom.Types;
 using SimHost.Application.Bods;
 using SimHost.Application.Classification;
 using SimHost.Application.Participants;
+using SimHost.Application.Scenarios;
 using SimHost.Domain.Common;
 using SimHost.Domain.RegLocation;
 using SimHost.Infrastructure.Sql;
@@ -250,6 +251,7 @@ public sealed record ApprovalResult(
 /// </summary>
 public sealed class RegLocationService(
     IParticipantDbContextFactory factory,
+    ScenarioRunContext runContext,
     ILogger<RegLocationService> logger)
 {
     public const string ParticipantId = "reg-location";
@@ -360,7 +362,8 @@ public sealed class RegLocationService(
             ChannelUri = channelUri,
             Topic = topic,
             CorrelationId = correlationId,
-            State = OutboxState.Pending
+            State = OutboxState.Pending,
+            ScenarioRunId = runContext.CurrentRunId
         });
 
         await db.SaveChangesAsync(ct);
