@@ -83,15 +83,27 @@ public sealed class BodValidator
             }
         }
 
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
         foreach (var (file, schema) in Ordered(read))
         {
+            // Packages vendor their own copies of shared dependencies — the CCOM
+            // BOD package carries the same OAGIS schemas as the standalone oagis
+            // folder. Both copies must stay on disk so each package's relative
+            // includes resolve, but adding the identical file twice looks exactly
+            // like a redeclaration. Identity is by content, so a genuine divergence
+            // between two copies is still reported rather than silently accepted.
+            if (!seen.Add(Fingerprint(file)))
+            {
+                continue;
+            }
+
             // A schema that redeclares a global its own include already provides
             // cannot compile, and one such file invalidates the whole set — so a
             // defect in an unrelated BOD silently disables validation everywhere.
-            // The ws-CIR package has two (GetEquivalentEntries, GetRegistry) where
-            // the request wrapper takes the same qualified name as the payload
-            // element it includes. Skipping the wrapper keeps the payload, which is
-            // what messages on the wire actually carry.
+            // The ws-CIR package has three where the request wrapper takes the same
+            // qualified name as the payload element it includes. Skipping the
+            // wrapper keeps the payload, which is what messages on the wire carry.
             if (Collides(schema, out var collision))
             {
                 _loadDiagnostics.Add(
@@ -175,6 +187,25 @@ public sealed class BodValidator
         schema.Items.OfType<XmlSchemaElement>()
             .Where(element => !string.IsNullOrEmpty(element.Name))
             .Select(element => $"{schema.TargetNamespace}:{element.Name}");
+
+    /// <summary>
+    /// Content hash, so two vendored copies of the same schema are recognised as one
+    /// file regardless of which package directory they were reached through.
+    /// </summary>
+    private static string Fingerprint(string file)
+    {
+        try
+        {
+            return Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(file)));
+        }
+        catch (IOException)
+        {
+            // Unreadable here means it was read a moment ago and cannot be now;
+            // treat it as distinct rather than silently collapsing two schemas.
+            return file;
+        }
+    }
 
     /// <summary>
     /// Compiles at most once.

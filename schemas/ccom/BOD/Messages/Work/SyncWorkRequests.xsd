@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+	xmlns:oa="http://www.openapplications.org/oagis/9"
+	xmlns="http://www.mimosa.org/ccom4"
+	targetNamespace="http://www.mimosa.org/ccom4"
+	elementFormDefault="qualified"
+	attributeFormDefault="unqualified">
+
+	<xs:import schemaLocation="../../OAGIS/Meta.xsd" namespace="http://www.openapplications.org/oagis/9"/>
+	<xs:include schemaLocation="../CCOMElements.xsd"/>
+
+	<xs:element name="SyncWorkRequests">
+		<xs:annotation>
+			<xs:documentation xml:lang="en">
+Synchronizes information about work requests and their context (optional).
+
+Additional contextual information may be included alongside the Work Requests, including:
+* the functional location (segment), asset, or list of resources on which the work is requested
+* the Agent(s) who are requested to perform the work and their role
+* the Work Order and/or Completed Work record that the WorkRequest generated and eventually resulted in, respectively
+* the SolutionPackage indicated for use with the WorkRequest (if any)
+* the EngineeringStudyEntrys related to the WorkRequest (if any)
+			</xs:documentation>
+		</xs:annotation>
+		<xs:complexType>
+			<xs:complexContent>
+				<xs:extension base="oa:BusinessObjectDocumentType">
+					<xs:sequence>
+						<xs:element name="DataArea">
+							<xs:complexType>
+								<xs:sequence>
+									<xs:element ref="oa:Sync"/>
+									<xs:element name="WorkRequests" minOccurs="0" maxOccurs="unbounded">
+										<xs:complexType>
+											<xs:sequence>
+												<xs:choice minOccurs="0" maxOccurs="unbounded">
+													<xs:element name="Segment" type="Segment" minOccurs="1" maxOccurs="1"/>
+													<xs:element name="Asset" type="Asset" minOccurs="1" maxOccurs="1"/>
+													<xs:element name="OrderedList" type="OrderedList" minOccurs="1" maxOccurs="1"/>
+												</xs:choice>
+												<xs:element name="Agent" type="Agent" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="AgentRole" type="AgentRole" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="WorkOrder" type="WorkOrder" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="CompletedWork" type="CompletedWork" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="SolutionPackage" type="SolutionPackage" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="EngineeringStudyEntry" type="EngineeringStudyEntry" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="WorkRequest" type="WorkRequest" minOccurs="1" maxOccurs="unbounded"/>
+											</xs:sequence>
+										</xs:complexType>
+									</xs:element>
+								</xs:sequence>
+							</xs:complexType>
+						</xs:element>
+					</xs:sequence>
+				</xs:extension>
+			</xs:complexContent>
+		</xs:complexType>
+	</xs:element>
+
+</xs:schema>

@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+	xmlns:oa="http://www.openapplications.org/oagis/9"
+	xmlns="http://www.mimosa.org/ccom4"
+	targetNamespace="http://www.mimosa.org/ccom4"
+	elementFormDefault="qualified"
+	attributeFormDefault="unqualified">
+
+	<xs:import schemaLocation="../../OAGIS/Meta.xsd" namespace="http://www.openapplications.org/oagis/9"/>
+	<xs:include schemaLocation="../CCOMQuery.xsd"/>
+
+	<xs:element name="GetMeasurements">
+		<xs:annotation>
+			<xs:documentation xml:lang="en">
+Returns 0 to N Measurements via a ShowMeasurements response.
+This is only relevant to querying for sets of Measurements, hence, the UUID of a specific Measurement cannot be specified.
+
+Note: UserArea in ApplicationData section?
+
+Allows optional criteria-based filtering, otherwise all measurements will be returned. Criteria in the same MeasurementsCriteria noun are combined with a logical AND while criteria across different MeasurementsCriteria are combined with a logical OR.
+
+Start/End/Recorded date-times can either be a specified value, unbounded range or bounded range.
+
+Confidence can either be a specified value, unbounded range or bounded range.
+
+If countOnly = true, then the response only contains the number of measurements, not the data. No value is interpreted as countOnly = false.
+
+If TriggeredRegionUUID is specified, the response only contains the measurements that are associated to the given MeasurementLocationTriggeredRegion.
+			</xs:documentation>
+		</xs:annotation>
+		<xs:complexType>
+			<xs:complexContent>
+				<xs:extension base="oa:BusinessObjectDocumentType">
+					<xs:sequence>
+						<xs:element name="DataArea">
+							<xs:complexType>
+								<xs:sequence>
+									<xs:element ref="oa:Get"/>
+									<xs:element name="MeasurementsCriteria" minOccurs="0" maxOccurs="unbounded">
+										<xs:complexType>
+											<xs:sequence>
+												<xs:element name="MeasurementLocationUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="Start" type="UTCDateTimeFilter" minOccurs="0" maxOccurs="2"/>
+												<xs:element name="End" type="UTCDateTimeFilter" minOccurs="0" maxOccurs="2"/>
+												<xs:element name="Recorded" type="UTCDateTimeFilter" minOccurs="0" maxOccurs="2"/>
+												<xs:element name="Confidence" type="NumericFilter" minOccurs="0" maxOccurs="2"/>
+												<xs:element name="AssetUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="SegmentUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="TransducerUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="MeasurementSourceUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="DataQualityTypeUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="TriggeredRegionUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+											</xs:sequence>
+										</xs:complexType>
+									</xs:element>
+								</xs:sequence>
+							</xs:complexType>
+						</xs:element>
+					</xs:sequence>
+				</xs:extension>
+			</xs:complexContent>
+		</xs:complexType>
+	</xs:element>
+
+</xs:schema>

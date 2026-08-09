@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+	xmlns:oa="http://www.openapplications.org/oagis/9"
+	xmlns="http://www.mimosa.org/ccom4"
+	targetNamespace="http://www.mimosa.org/ccom4"
+	elementFormDefault="qualified"
+	attributeFormDefault="unqualified">
+
+	<xs:import schemaLocation="../../OAGIS/Meta.xsd" namespace="http://www.openapplications.org/oagis/9"/>
+	<xs:include schemaLocation="../CCOMQuery.xsd"/>
+
+	<xs:element name="GetAssetDatasheets">
+		<xs:annotation>
+			<xs:documentation xml:lang="en">
+Returns 0 to N Datasheets/ISDDs via a ShowStandardDatasheets response.
+
+Allows optional criteria-based filtering, otherwise all datasheets will be returned. Criteria in the same AssetDatasheetsCriteria noun are combined with a logical AND while criteria across different Criteria are combined with a logical OR.
+
+If AllowChildDefinitions = true, then the response may include PropertySet (datasheets) that are instances of a child of the PropertySetDefinition with the specified DatasheetDefinitionUUID or children of PropertySet that are of the type identified by DatasheetTypeUUID, even if the PropertySet itself does not fullfil those criteria.
+If neither of those filters are specified, AllowChildDefinitions has no effect.
+
+If AllowExtensionProperties = true, then the response may include PropertySets (datasheets) that contain additional PropertyGroups and/or Properties to what is explicitly defined in the requested DatasheetDefinition (via the DatasheetDefinitionUUID or DatasheetTypeUUID).
+If neither of those filters are specified, AllowExtensionProperties has no effect.
+
+If countOnly = true, then the response only contains the number of datasheets, not the data. No value is interpreted as countOnly = false.
+			</xs:documentation>
+		</xs:annotation>
+		<xs:complexType>
+			<xs:complexContent>
+				<xs:extension base="oa:BusinessObjectDocumentType">
+					<xs:sequence>
+						<xs:element name="DataArea">
+							<xs:complexType>
+								<xs:sequence>
+									<xs:element ref="oa:Get"/>
+									<xs:element name="AssetDatasheetsCriteria" minOccurs="0" maxOccurs="unbounded">
+										<xs:complexType>
+											<xs:sequence>
+												<xs:element name="AssetUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="AssetShortName" type="TextFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="AssetTypeUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="AssetSerialNumber" type="TextFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="DatasheetUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="DatsheetShortName" type="TextFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="DatasheetTypeUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="DataSheetDefinitionUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="AllowChildDefinitions" type="BooleanFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="AllowExtensionProperties" type="BooleanFilter" minOccurs="0" maxOccurs="unbounded"/>
+											</xs:sequence>
+										</xs:complexType>
+									</xs:element>
+								</xs:sequence>
+							</xs:complexType>
+						</xs:element>
+					</xs:sequence>
+				</xs:extension>
+			</xs:complexContent>
+		</xs:complexType>
+	</xs:element>
+
+</xs:schema>

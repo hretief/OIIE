@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+	xmlns:oa="http://www.openapplications.org/oagis/9"
+	xmlns="http://www.mimosa.org/ccom4"
+	targetNamespace="http://www.mimosa.org/ccom4"
+	elementFormDefault="qualified"
+	attributeFormDefault="unqualified">
+
+	<xs:import schemaLocation="../../OAGIS/Meta.xsd" namespace="http://www.openapplications.org/oagis/9"/>
+	<xs:import namespace="urn:un:unece:uncefact:documentation:standard:CoreComponentType:2" schemaLocation="../../../XSD/CoreComponentType_2p0.xsd"/>
+	<xs:include schemaLocation="../CCOMQuery.xsd"/>
+
+	<xs:element name="ProcessRequestsForWork">
+		<xs:annotation>
+			<xs:documentation xml:lang="en">
+Instructs the receiving system to process the requests for work.
+
+Since the Acknowledgment containing the created work order(s) may come after some delay if the 
+requests are not automatically approved, it is recommended that ConfirmationCode="Always" is set
+in the BOD ApplicationArea. 
+
+Optionally, contextual information can be sent with the RequestForWork to ensure 
+the receiving system has all the information required to action the request.
+Such information may include:
+* the functional location (segment), asset, or list of resources on which the work was performed
+* the system Agent(s) who is requesting the work
+* the Agent who is requested to perform the work
+* the SolutionPackage (pre-planned work order) to be used (if any)
+* the Event, EngineeringStudyEntry, and/or Recommendation that is the reason for the Request for Work
+
+Some of this information may be very rarely sent as part of the request as it is already provisioned 
+or owned by the target system; for example, the solution package and requested agent are retrieved 
+from the target system in many cases.
+			</xs:documentation>
+		</xs:annotation>
+		<xs:complexType>
+			<xs:complexContent>
+				<xs:extension base="oa:BusinessObjectDocumentType">
+					<xs:sequence>
+						<xs:element name="DataArea">
+							<xs:complexType>
+								<xs:sequence>
+									<xs:element ref="oa:Process"/>
+									<xs:element name="RequestsForWork" minOccurs="0" maxOccurs="unbounded">
+										<xs:complexType>
+											<xs:sequence>
+												<xs:choice minOccurs="0" maxOccurs="unbounded">
+													<xs:element name="Segment" type="Segment" minOccurs="1" maxOccurs="1"/>
+													<xs:element name="Asset" type="Asset" minOccurs="1" maxOccurs="1"/>
+													<xs:element name="OrderedList" type="OrderedList" minOccurs="1" maxOccurs="1"/>
+												</xs:choice>
+												<xs:element name="Agent" type="Agent" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="SolutionPackage" type="SolutionPackage" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="TimestampedEvent" type="TimestampedEvent" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="EngineeringStudyEntry" type="EngineeringStudyEntry" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="Recommendation" type="Recommendation" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="RequestForWork" type="RequestForWork" minOccurs="1" maxOccurs="unbounded"/>
+											</xs:sequence>
+										</xs:complexType>
+									</xs:element>
+								</xs:sequence>
+							</xs:complexType>
+						</xs:element>
+					</xs:sequence>
+				</xs:extension>
+			</xs:complexContent>
+		</xs:complexType>
+	</xs:element>
+
+</xs:schema>

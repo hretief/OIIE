@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+	xmlns:oa="http://www.openapplications.org/oagis/9"
+	xmlns="http://www.mimosa.org/ccom4"
+	targetNamespace="http://www.mimosa.org/ccom4"
+	elementFormDefault="qualified"
+	attributeFormDefault="unqualified">
+
+	<xs:import schemaLocation="../../OAGIS/Meta.xsd" namespace="http://www.openapplications.org/oagis/9"/>
+	<xs:include schemaLocation="../CCOMQuery.xsd"/>
+
+	<xs:element name="GetWorkRequests">
+		<xs:annotation>
+			<xs:documentation xml:lang="en">
+Returns 0 to N work requests via a ShowWorkRequests response.
+
+Modified date-times can either be a specified value, unbounded range or bounded range.
+
+Actual Start/End date-times can either be a specified value, unbounded range or bounded range.
+
+Scheduling date-times (i.e., StartBefore, StartAfter, EndBefore, EndAfter) can either be a specified value, unbounded range or bounded range.
+
+Allows optional criteria-based filtering, otherwise all work orders will be returned. Criteria in the same WorkRequestsCriteria noun are combined with a logical AND while criteria across different WorkRequestsCriteria are combined with a logical OR.
+
+If countOnly = true, then the response only contains the number of work orders, not the data. No value is interpreted as countOnly = false.
+
+If AppliesTo/ResourcesContainsUUID is provided, the response only includes the work requests that are for an OrderedList of resources
+and that list contains the specified UUID(s).
+			</xs:documentation>
+		</xs:annotation>
+		<xs:complexType>
+			<xs:complexContent>
+				<xs:extension base="oa:BusinessObjectDocumentType">
+					<xs:sequence>
+						<xs:element name="DataArea">
+							<xs:complexType>
+								<xs:sequence>
+									<xs:element ref="oa:Get"/>
+									<xs:element name="WorkRequestsCriteria" minOccurs="0" maxOccurs="unbounded">
+										<xs:complexType>
+											<xs:sequence>
+												<xs:element name="UUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="LastEdited" type="UTCDateTimeFilter" minOccurs="0" maxOccurs="2"/>
+												<xs:element name="ShortName" type="TextFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="WorkOrderUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="RequestForWorkUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="RecommondationForWorkUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="WorkStatusTypeUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="WorkTaskTypeUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="WorkManagementTypeUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="PriorityLevelTypeUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="AgentUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="AgentRoleTypeUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="WorkStatusTypeUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="ActualStart" type="UTCDateTimeFilter" minOccurs="0" maxOccurs="2"/>
+												<xs:element name="ActualEnd" type="UTCDateTimeFilter" minOccurs="0" maxOccurs="2"/>
+												<xs:element name="StartBefore" type="UTCDateTimeFilter" minOccurs="0" maxOccurs="2"/>
+												<xs:element name="StartAfter" type="UTCDateTimeFilter" minOccurs="0" maxOccurs="2"/>
+												<xs:element name="EndBefore" type="UTCDateTimeFilter" minOccurs="0" maxOccurs="2"/>
+												<xs:element name="EndAfter" type="UTCDateTimeFilter" minOccurs="0" maxOccurs="2"/>
+												<xs:element name="AppliesTo" minOccurs="0" maxOccurs="1">
+													<xs:complexType>
+														<xs:choice minOccurs="1" maxOccurs="1">
+															<xs:element name="SegmentUUID" type="UUIDFilter" minOccurs="1" maxOccurs="1"/>
+															<xs:element name="AssetUUID" type="UUIDFilter" minOccurs="1" maxOccurs="1"/>
+															<xs:element name="ResourcesListUUID" type="UUIDFilter" minOccurs="1" maxOccurs="1"/>
+															<xs:element name="ResourcesContainsUUID" type="UUIDFilter" minOccurs="1" maxOccurs="unbounded"/>
+														</xs:choice>
+													</xs:complexType>
+												</xs:element>
+												<xs:element name="SolutionPackageUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="CauseEventUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="CausedEventUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+											</xs:sequence>
+										</xs:complexType>
+									</xs:element>
+								</xs:sequence>
+							</xs:complexType>
+						</xs:element>
+					</xs:sequence>
+				</xs:extension>
+			</xs:complexContent>
+		</xs:complexType>
+	</xs:element>
+
+</xs:schema>

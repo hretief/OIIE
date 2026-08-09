@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+	xmlns:oa="http://www.openapplications.org/oagis/9"
+	xmlns="http://www.mimosa.org/ccom4"
+	targetNamespace="http://www.mimosa.org/ccom4"
+	elementFormDefault="qualified"
+	attributeFormDefault="unqualified">
+
+	<xs:import schemaLocation="../../OAGIS/Meta.xsd" namespace="http://www.openapplications.org/oagis/9"/>
+	<xs:include schemaLocation="../CCOMQuery.xsd"/>
+
+	<xs:element name="GetActualEvents">
+		<xs:annotation>
+			<xs:documentation xml:lang="en">
+Returns 0 to N ActualEvents via a ShowActualEvents response.
+This is only relevant to ActualEvent itself and not its subtypes. There are BODs specific to AssetSegementEvents, AssetModelEvents, and AssetOwnerEvents in the 'Configuration' category.
+
+Allows optional criteria-based filtering, otherwise all actual events will be returned. Criteria in the same ActualEventsCriteria noun are combined with a logical AND while criteria across different ActualEventsCriteria are combined with a logical OR.
+
+Start/End date-times can either be a specified value, unbounded range or bounded range.
+
+If countOnly = true, then the response only contains the number of events, not the data. No value is interpreted as countOnly = false.
+
+If IsSubstantiated = true, the response only contains events that are substantiated by some measurement (without specifying the measurement itself);
+                   = false, the response only contains events that are NOT substantiated by a measurement.
+If SubstantiatingMeasurementLocation is provided, the response contains only events that are substantiated by some measurement from the specified MeasurementLocation(s).
+			</xs:documentation>
+		</xs:annotation>
+		<xs:complexType>
+			<xs:complexContent>
+				<xs:extension base="oa:BusinessObjectDocumentType">
+					<xs:sequence>
+						<xs:element name="DataArea">
+							<xs:complexType>
+								<xs:sequence>
+									<xs:element ref="oa:Get"/>
+									<xs:element name="ActualEventsCriteria" minOccurs="0" maxOccurs="unbounded">
+										<xs:complexType>
+											<xs:sequence>
+												<xs:element name="ActualEventUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="ShortName" type="TextFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="TypeUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="SourceUUID" type="UUIDFilter" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="CauseEventUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="CausedEventUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="AgentUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="AgentRoleTypeUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="CausedRecommendationUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="Start" type="UTCDateTimeFilter" minOccurs="0" maxOccurs="2"/>
+												<xs:element name="End" type="UTCDateTimeFilter" minOccurs="0" maxOccurs="2"/>
+												<xs:element name="CauseRequestUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="CausedRequestUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="CauseActiveWorkUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="CausedActiveWorkUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="CauseCompletedWorkUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="CausedCompletedWorkUUID" type="UUIDFilter" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:choice minOccurs="0" maxOccurs="1">
+													<xs:element name="IsSubstantiated" type="BooleanFilter" minOccurs="1" maxOccurs="1"/>
+													<xs:element name="SubstantiatingMeasurementLocation" type="UUIDFilter" minOccurs="1" maxOccurs="unbounded"/>
+												</xs:choice>
+											</xs:sequence>
+										</xs:complexType>
+									</xs:element>
+								</xs:sequence>
+							</xs:complexType>
+						</xs:element>
+					</xs:sequence>
+				</xs:extension>
+			</xs:complexContent>
+		</xs:complexType>
+	</xs:element>
+
+</xs:schema>

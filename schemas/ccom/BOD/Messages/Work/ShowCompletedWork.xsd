@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+	xmlns:oa="http://www.openapplications.org/oagis/9"
+	xmlns:cct="urn:un:unece:uncefact:documentation:standard:CoreComponentType:2"
+	xmlns="http://www.mimosa.org/ccom4"
+	targetNamespace="http://www.mimosa.org/ccom4"
+	elementFormDefault="qualified"
+	attributeFormDefault="unqualified">
+
+	<xs:import schemaLocation="../../OAGIS/Meta.xsd" namespace="http://www.openapplications.org/oagis/9"/>
+	<xs:import namespace="urn:un:unece:uncefact:documentation:standard:CoreComponentType:2" schemaLocation="../../../XSD/CoreComponentType_2p0.xsd"/>
+	<xs:include schemaLocation="../CCOMElements.xsd"/>
+
+	<xs:element name="ShowCompletedWork">
+		<xs:annotation>
+			<xs:documentation xml:lang="en">
+Response returning 0 to N completed work records or the number of completed work records resulting from the request.
+
+Additional contextual information may be included in the response alongside the CompletedWork, including:
+* the functional location (segment), asset, or list of resources on which the work was performed
+* the Agent(s) who performed the work and their role
+* the Work Order(s) and/or Work Request(s)
+
+The Completed Work records themselves should include the complete lists of resources utlized and consumed.
+			</xs:documentation>
+		</xs:annotation>
+		<xs:complexType>
+			<xs:complexContent>
+				<xs:extension base="oa:BusinessObjectDocumentType">
+					<xs:sequence>
+						<xs:element name="DataArea">
+							<xs:complexType>
+								<xs:sequence>
+									<xs:element ref="oa:Show"/>
+									<xs:element name="CompletedWork" minOccurs="0" maxOccurs="unbounded">
+										<xs:complexType>
+											<xs:sequence>
+												<xs:element name="Count" type="cct:NumericType" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:choice minOccurs="0" maxOccurs="unbounded">
+													<xs:element name="Segment" type="Segment" minOccurs="1" maxOccurs="1"/>
+													<xs:element name="Asset" type="Asset" minOccurs="1" maxOccurs="1"/>
+													<xs:element name="OrderedList" type="OrderedList" minOccurs="1" maxOccurs="1"/>
+												</xs:choice>
+												<xs:element name="Agent" type="Agent" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="AgentRole" type="AgentRole" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="RelatedWork" type="CalendaredWork" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="CompletedWork" type="CompletedWork" minOccurs="0" maxOccurs="unbounded"/>
+											</xs:sequence>
+										</xs:complexType>
+									</xs:element>
+								</xs:sequence>
+							</xs:complexType>
+						</xs:element>
+					</xs:sequence>
+				</xs:extension>
+			</xs:complexContent>
+		</xs:complexType>
+	</xs:element>
+
+</xs:schema>

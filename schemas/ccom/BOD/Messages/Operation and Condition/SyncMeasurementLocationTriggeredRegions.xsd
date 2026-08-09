@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+	xmlns:oa="http://www.openapplications.org/oagis/9"
+	xmlns="http://www.mimosa.org/ccom4"
+	targetNamespace="http://www.mimosa.org/ccom4"
+	elementFormDefault="qualified"
+	attributeFormDefault="unqualified">
+
+	<xs:import schemaLocation="../../OAGIS/Meta.xsd" namespace="http://www.openapplications.org/oagis/9"/>
+	<xs:include schemaLocation="../CCOMElements.xsd"/>
+
+	<xs:element name="SyncMeasurementLocationTriggeredRegions">
+		<xs:annotation>
+			<xs:documentation xml:lang="en">
+Synchronizes information about MeasurementLocationTriggeredRegions and their context (optional).
+This should include the MeasurementLocation of each triggered region to ensure 
+adequate context is maintained across systems.
+Many triggered regions can be bundled for each MeasurementLocation.
+
+When syncing MeasurementLocationTriggeredRegions, each should include their contained 
+TriggeredRegionMeasurement and their GridTriggeredRegions, if any, or their contained
+TriggeredRegionTestComponents, if any.
+			</xs:documentation>
+		</xs:annotation>
+		<xs:complexType>
+			<xs:complexContent>
+				<xs:extension base="oa:BusinessObjectDocumentType">
+					<xs:sequence>
+						<xs:element name="DataArea">
+							<xs:complexType>
+								<xs:sequence>
+									<xs:element ref="oa:Sync"/>
+									<xs:element name="MeasurementLocationTriggeredRegions" minOccurs="0" maxOccurs="unbounded">
+										<xs:complexType>
+											<xs:sequence>
+												<xs:element name="MeasurementLocation" type="MeasurementLocation" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="MeasurementLocationTriggeredRegion" type="MeasurementLocationTriggeredRegion" minOccurs="1" maxOccurs="unbounded"/>
+											</xs:sequence>
+										</xs:complexType>
+									</xs:element>
+								</xs:sequence>
+							</xs:complexType>
+						</xs:element>
+					</xs:sequence>
+				</xs:extension>
+			</xs:complexContent>
+		</xs:complexType>
+	</xs:element>
+
+</xs:schema>

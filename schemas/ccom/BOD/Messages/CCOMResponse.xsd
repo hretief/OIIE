@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+	xmlns:cct="urn:un:unece:uncefact:documentation:standard:CoreComponentType:2"
+	xmlns="http://www.mimosa.org/ccom4"
+	targetNamespace="http://www.mimosa.org/ccom4"
+	elementFormDefault="qualified"
+	attributeFormDefault="unqualified"
+	version="4.1.0-draft">
+
+	<xs:include schemaLocation="../../XSD/CCOM.xsd"/>
+	<xs:import namespace="urn:un:unece:uncefact:documentation:standard:CoreComponentType:2" schemaLocation="../../XSD/CoreComponentType_2p0.xsd"/>
+
+	<xs:complexType name="BooleanFilter">
+		<xs:simpleContent>
+			<xs:extension base="xs:boolean"/>
+		</xs:simpleContent>
+	</xs:complexType>
+	
+	<xs:complexType name="UTCDateTimeFilter">
+		<xs:complexContent>
+			<xs:extension base="UTCDateTime">
+				<xs:attribute name="Type" use="optional">
+					<xs:annotation>
+						<xs:documentation>Indicates how the filter should be interpreted regarding the date value. Defaults to Equal if not specified.</xs:documentation>
+					</xs:annotation>
+					<xs:simpleType>
+						<xs:restriction base="xs:string">
+							<xs:enumeration value="Equal">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be equal to the specified value.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+							<xs:enumeration value="NotEqual">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be not equal to the specified value.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+							<xs:enumeration value="Min">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be greater than the specified value.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+							<xs:enumeration value="MinInclusive">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be greater than or equal to the specified value.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+							<xs:enumeration value="Max">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be less than the specified value.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+							<xs:enumeration value="MaxInclusive">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be less than or equal to the specified value.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+						</xs:restriction>
+					</xs:simpleType>
+				</xs:attribute>
+			</xs:extension>
+		</xs:complexContent>
+	</xs:complexType>
+
+	<xs:complexType name="NumericFilter">
+		<xs:complexContent>
+			<xs:extension base="cct:NumericType">
+				<xs:attribute name="Type" use="optional">
+					<xs:annotation>
+						<xs:documentation>Indicates how the filter should be interpreted regarding the number value. Defaults to Equal if not specified.</xs:documentation>
+					</xs:annotation>
+					<xs:simpleType>
+						<xs:restriction base="xs:string">
+							<xs:enumeration value="Equal">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be equal to the specified value.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+							<xs:enumeration value="NotEqual">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be not equal to the specified value.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+							<xs:enumeration value="Min">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be greater than the specified value.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+							<xs:enumeration value="MinInclusive">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be greater than or equal to the specified value.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+							<xs:enumeration value="Max">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be less than the specified value.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+							<xs:enumeration value="MaxInclusive">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be less than or equal to the specified value.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+						</xs:restriction>
+					</xs:simpleType>
+				</xs:attribute>
+			</xs:extension>
+		</xs:complexContent>
+	</xs:complexType>
+
+	<xs:complexType name="TextFilter">
+		<xs:complexContent>
+			<xs:extension base="cct:TextType">
+				<xs:attribute name="Type" use="optional">
+					<xs:annotation>
+						<xs:documentation>Indicates how the filter should be interpreted regarding the text value. Defaults to Equal if not specified.</xs:documentation>
+					</xs:annotation>
+					<xs:simpleType>
+						<xs:restriction base="xs:string">
+							<xs:enumeration value="Equal">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be equal to the specified value.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+							<xs:enumeration value="NotEqual">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be not equal to the specified value.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+							<xs:enumeration value="SqlLike">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be the result of match processing using a SQL LIKE statement.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+							<xs:enumeration value="SqlNotLike">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be the result of match processing using a SQL NOT LIKE statement.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+						</xs:restriction>
+					</xs:simpleType>
+				</xs:attribute>
+			</xs:extension>
+		</xs:complexContent>
+	</xs:complexType>
+
+	<xs:complexType name="UUIDFilter">
+		<xs:complexContent>
+			<xs:extension base="UUID">
+				<xs:attribute name="Type" use="optional">
+					<xs:annotation>
+						<xs:documentation>Indicates how the filter should be interpreted regarding the UUID. Defaults to Equal if not specified.</xs:documentation>
+					</xs:annotation>
+					<xs:simpleType>
+						<xs:restriction base="xs:string">
+							<xs:enumeration value="Equal">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be equal to the specified value.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+							<xs:enumeration value="NotEqual">
+								<xs:annotation>
+									<xs:documentation>Filtered values should be not equal to the specified value.</xs:documentation>
+								</xs:annotation>
+							</xs:enumeration>
+						</xs:restriction>
+					</xs:simpleType>
+				</xs:attribute>
+			</xs:extension>
+		</xs:complexContent>
+	</xs:complexType>
+
+</xs:schema>

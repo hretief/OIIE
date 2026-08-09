@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+	xmlns:oa="http://www.openapplications.org/oagis/9"
+	xmlns:cct="urn:un:unece:uncefact:documentation:standard:CoreComponentType:2"
+	xmlns="http://www.mimosa.org/ccom4"
+	targetNamespace="http://www.mimosa.org/ccom4"
+	elementFormDefault="qualified"
+	attributeFormDefault="unqualified">
+
+	<xs:import schemaLocation="../../OAGIS/Meta.xsd" namespace="http://www.openapplications.org/oagis/9"/>
+	<xs:import namespace="urn:un:unece:uncefact:documentation:standard:CoreComponentType:2" schemaLocation="../../../XSD/CoreComponentType_2p0.xsd"/>
+	<xs:include schemaLocation="../CCOMElements.xsd"/>
+
+	<xs:element name="ShowWorkOrders">
+		<xs:annotation>
+			<xs:documentation xml:lang="en">
+Response returning 0 to N work orders or the number of work orders resulting from the request.
+
+Additional contextual information may be included in the response alongside the WorkOrder, including:
+* the functional location (segment), asset, or list of resources on which the work was performed
+* the Agent(s) who performed the work and their role
+* the Work Request(s) and/or Completed Work record(s) that the Work Order originated from and resulted in, respectively
+* the SolutionPackage associated with the WorkOrder (if any)
+* the EngineeringStudyEntrys related to the WorkOrder (if any)
+
+The WorkOrders themselves should include all Work Steps and (currently known) Work Statuses.
+			</xs:documentation>
+		</xs:annotation>
+		<xs:complexType>
+			<xs:complexContent>
+				<xs:extension base="oa:BusinessObjectDocumentType">
+					<xs:sequence>
+						<xs:element name="DataArea">
+							<xs:complexType>
+								<xs:sequence>
+									<xs:element ref="oa:Show"/>
+									<xs:element name="WorkOrders" minOccurs="0" maxOccurs="unbounded">
+										<xs:complexType>
+											<xs:sequence>
+												<xs:element name="Count" type="cct:NumericType" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:choice minOccurs="0" maxOccurs="unbounded">
+													<xs:element name="Segment" type="Segment" minOccurs="1" maxOccurs="1"/>
+													<xs:element name="Asset" type="Asset" minOccurs="1" maxOccurs="1"/>
+													<xs:element name="OrderedList" type="OrderedList" minOccurs="1" maxOccurs="1"/>
+												</xs:choice>
+												<xs:element name="Agent" type="Agent" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="AgentRole" type="AgentRole" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="WorkRequest" type="WorkRequest" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="CompletedWork" type="CompletedWork" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="SolutionPackage" type="SolutionPackage" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="EngineeringStudyEntry" type="EngineeringStudyEntry" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="WorkOrder" type="WorkOrder" minOccurs="0" maxOccurs="unbounded"/>
+											</xs:sequence>
+										</xs:complexType>
+									</xs:element>
+								</xs:sequence>
+							</xs:complexType>
+						</xs:element>
+					</xs:sequence>
+				</xs:extension>
+			</xs:complexContent>
+		</xs:complexType>
+	</xs:element>
+
+</xs:schema>

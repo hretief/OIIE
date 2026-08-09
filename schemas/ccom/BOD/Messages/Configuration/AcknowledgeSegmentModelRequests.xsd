@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+	xmlns:oa="http://www.openapplications.org/oagis/9"
+	xmlns:isdd="http://www.mimosa.org/ccom4-isdd"
+	xmlns="http://www.mimosa.org/ccom4"
+	targetNamespace="http://www.mimosa.org/ccom4"
+	elementFormDefault="qualified"
+	attributeFormDefault="unqualified">
+
+	<xs:import schemaLocation="../../OAGIS/Meta.xsd" namespace="http://www.openapplications.org/oagis/9"/>
+	<xs:import namespace="urn:un:unece:uncefact:documentation:standard:CoreComponentType:2" schemaLocation="../../../XSD/CoreComponentType_2p0.xsd"/>
+	<xs:import namespace="http://www.mimosa.org/ccom4-isdd" schemaLocation="../../../ISDD/isdd.xsd"/>
+	<xs:include schemaLocation="../CCOMElements.xsd"/>
+
+	<xs:element name="AcknowledgeSegmentModelRequests">
+		<xs:annotation>
+			<xs:documentation xml:lang="en">
+Indicates to the original sending system that the requests for model have been processed, 
+returning the model(s) and an optional model data sheets.
+The latter must have a definition related to the returned model(s).
+
+The ISDDPropertySet must have a type that extends the ISDD Type (UUID: c565d2e0-4183-0134-2e99-22000b1e87fF)
+In the response, the ModelDatasheet should also extend the ISDD Type.
+
+For brevity, the response should include only the new/additional information being provided by
+and owned by the responder, rather than repeating the entire request content.
+
+See also: ProcessSegmentModelRequests.
+			</xs:documentation>
+		</xs:annotation>
+		<xs:complexType>
+			<xs:complexContent>
+				<xs:extension base="oa:BusinessObjectDocumentType">
+					<xs:sequence>
+						<xs:element name="DataArea">
+							<xs:complexType>
+								<xs:sequence>
+									<xs:element ref="oa:Acknowledge"/>
+									<xs:element name="SegmentModelRequests" minOccurs="0" maxOccurs="unbounded">
+										<xs:complexType>
+											<xs:sequence>
+												<xs:element name="SegmentModelRequest" type="RequestForInformation" minOccurs="1" maxOccurs="1"/>
+												<xs:element name="From" type="Agent" minOccurs="1" maxOccurs="1"/>
+												<xs:element name="RespondBy" type="UTCDateTime" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="FunctionalLocation" type="Segment" minOccurs="0" maxOccurs="1"/>
+												<xs:element name="FunctionalRequirements" minOccurs="0" maxOccurs="unbounded">
+													<xs:complexType>
+														<xs:choice minOccurs="1" maxOccurs="1">
+															<xs:element name="ISDDPropertySet" type="PropertySet" minOccurs="1" maxOccurs="1"/>
+															<xs:element name="ISDDInstance" type="isdd:ISDDInstance" minOccurs="1" maxOccurs="1"/>
+														</xs:choice>
+													</xs:complexType>
+												</xs:element>
+												<xs:element name="AdditionalProperties" minOccurs="0" maxOccurs="unbounded">
+													<xs:complexType>
+														<xs:sequence minOccurs="1" maxOccurs="1">
+															<xs:element name="PropertySet" type="PropertySet" minOccurs="0" maxOccurs="unbounded"/>
+															<xs:element name="Property" type="Property" minOccurs="0" maxOccurs="unbounded"/>
+														</xs:sequence>
+													</xs:complexType>
+												</xs:element>
+												<xs:element name="ModelDatasheet" type="PropertySetDefinition" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="Model" type="Model" minOccurs="0" maxOccurs="unbounded"/>
+												<xs:element name="AssetTemplate" type="Asset" minOccurs="0" maxOccurs="unbounded"/>
+											</xs:sequence>
+										</xs:complexType>
+									</xs:element>
+								</xs:sequence>
+							</xs:complexType>
+						</xs:element>
+					</xs:sequence>
+				</xs:extension>
+			</xs:complexContent>
+		</xs:complexType>
+	</xs:element>
+
+</xs:schema>
