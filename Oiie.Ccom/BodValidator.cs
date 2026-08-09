@@ -35,7 +35,7 @@ public sealed record BodValidationResult(
 /// </summary>
 public sealed class BodValidator
 {
-    private readonly XmlSchemaSet _schemas = new();
+    private XmlSchemaSet _schemas = new();
     private readonly HashSet<string> _knownNamespaces = new(StringComparer.Ordinal);
     private readonly List<string> _loadDiagnostics = [];
     private readonly HashSet<string> _declared = new(StringComparer.Ordinal);
@@ -177,9 +177,14 @@ public sealed class BodValidator
             .Select(element => $"{schema.TargetNamespace}:{element.Name}");
 
     /// <summary>
-    /// Compiles at most once. A compilation fault is recorded and the namespaces are
-    /// dropped, so documents fall back to NotValidated. Rethrowing per message would
-    /// turn one defective schema into a failure of every read on the channel.
+    /// Compiles at most once.
+    ///
+    /// A published package can carry a defect in one BOD that has nothing to do with
+    /// the messages under test — ws-CIR redeclares globals, and the CCOM Show BODs
+    /// reference a 'Count' type the package never declares. Because XmlSchemaSet
+    /// compiles as a whole, any one of these otherwise disables validation for every
+    /// namespace. So a failed compile is retried without the files the errors name,
+    /// and what was dropped is recorded rather than passed off as absent schemas.
     /// </summary>
     private void EnsureCompiled()
     {
@@ -190,24 +195,88 @@ public sealed class BodValidator
 
         _compiled = true;
 
+        var faulted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (TryCompile(faulted) || faulted.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var source in faulted)
+        {
+            _loadDiagnostics.Add(
+                $"{Path.GetFileName(source)}: dropped — it did not compile, and one " +
+                "uncompilable schema invalidates the whole set.");
+        }
+
+        var retained = _schemas.Schemas()
+            .OfType<XmlSchema>()
+            .Where(schema => schema.SourceUri is null || !faulted.Contains(schema.SourceUri))
+            .ToList();
+
+        _schemas = new XmlSchemaSet();
+        _knownNamespaces.Clear();
+
+        foreach (var schema in retained)
+        {
+            _schemas.Add(schema);
+            if (!string.IsNullOrEmpty(schema.TargetNamespace))
+            {
+                _knownNamespaces.Add(schema.TargetNamespace);
+            }
+        }
+
+        if (!TryCompile(null))
+        {
+            // Two failures means the fault is not isolated to the files named, and
+            // guessing further would risk reporting a valid document as unvalidated
+            // for the wrong reason.
+            _loadDiagnostics.Add(
+                "Schema set still did not compile after dropping the faulted files.");
+            _knownNamespaces.Clear();
+        }
+    }
+
+    private bool TryCompile(HashSet<string>? faulted)
+    {
+        void OnEvent(object? sender, ValidationEventArgs args)
+        {
+            _loadDiagnostics.Add($"{args.Severity}: {args.Message}");
+
+            var source = args.Exception?.SourceUri;
+            if (faulted is not null &&
+                args.Severity == XmlSeverityType.Error &&
+                !string.IsNullOrEmpty(source))
+            {
+                faulted.Add(source);
+            }
+        }
+
+        var before = _loadDiagnostics.Count;
+
         try
         {
-            _schemas.ValidationEventHandler += OnSchemaValidationEvent;
+            _schemas.ValidationEventHandler += OnEvent;
             _schemas.Compile();
         }
         catch (Exception ex) when (ex is XmlSchemaException or XmlException)
         {
             _loadDiagnostics.Add($"Schema set failed to compile: {ex.Message}");
-            _knownNamespaces.Clear();
+
+            if (faulted is not null && ex is XmlSchemaException { SourceUri: { } uri })
+            {
+                faulted.Add(uri);
+            }
+
+            return false;
         }
         finally
         {
-            _schemas.ValidationEventHandler -= OnSchemaValidationEvent;
+            _schemas.ValidationEventHandler -= OnEvent;
         }
-    }
 
-    private void OnSchemaValidationEvent(object? sender, ValidationEventArgs args) =>
-        _loadDiagnostics.Add($"{args.Severity}: {args.Message}");
+        return _loadDiagnostics.Count == before;
+    }
 
     public BodValidationResult Validate(XDocument document)
     {

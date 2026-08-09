@@ -102,6 +102,7 @@ steps:
     assert: store_contains
     entity: Location
     where: "SourceIdentifier = 'TIC-106' AND LocationCode <> 'TIC-106'"
+    within: 30s
 
   - at: reg-location
     assert: outbox_state
@@ -123,10 +124,16 @@ steps:
 
   # MMS holds a third identifier and, at this point, no idea that it names the
   # same thing as the other two.
+  #
+  # The wait matters: this row arrives over the bus, so evaluating it instantly
+  # races delivery and the step passes only on a warm second run. Cirid IS NULL
+  # stays true until the register_cir steps below, so waiting cannot mask a
+  # premature link.
   - at: mms
     assert: store_contains
     entity: FunctionalLocationRecord
     where: "ForeignSourceId = 'REG-LOCATION' AND Cirid IS NULL"
+    within: 60s
 
   # -- CIR registration and resolution ------------------------------------------
   - id: register-eng
