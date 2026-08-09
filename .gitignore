@@ -12,3 +12,14 @@ artifacts/
 
 # Test result files produced by dotnet test --results-directory
 TestResults/
+
+# Raw agent session transcripts. These are verbatim terminal output, so they
+# capture whatever was on screen -- including secrets that were being redacted
+# at the time. One already tripped GitHub push protection: the log of the
+# session that removed a Service Bus key quoted that key as a literal while
+# verifying the removal.
+#
+# Keep them locally if useful, but they are not documentation and the review
+# cost of scrubbing each one outweighs their value in the repository.
+*chatLog.md
+
