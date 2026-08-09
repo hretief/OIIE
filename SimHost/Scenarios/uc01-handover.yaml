@@ -77,17 +77,17 @@ steps:
   - at: reg-location
     assert: bod_valid
 
-  # Arrival is not acceptance. If this passed without a queued item, the registry
-  # would be a relay rather than a governance gate.
-  - at: reg-location
-    assert: pending_work
-    count: 1
-    within: 30s
-
+  # Arrival is not acceptance. REG-LOCATION's gate is the stewardship queue rather
+  # than PendingWork, which is REG-ASSET's separate acceptance queue in phase 2 --
+  # asserting pending_work here tested for a queue this participant never fills.
   - at: reg-location
     assert: store_contains
     entity: StewardshipItem
-    where: "SourceIdentifier = 'TIC-106'"
+    #
+    # State is stored as a string, not the enum's ordinal, so 'Proposed' is the
+    # comparison that actually matches a queued row.
+    where: "SourceIdentifier = 'TIC-106' AND State = 'Proposed'"
+    within: 30s
 
   - id: approve
     at: reg-location
@@ -149,10 +149,22 @@ steps:
     args:
       id: TIC-106
 
-  # The handover has only succeeded once MMS can turn the identifier it received
-  # into the shared identity, which is what the whole chain above exists for.
+  # The handover has only succeeded once MMS can turn an identifier it never
+  # issued into the shared identity. Asked from MMS's point of view, because that
+  # is how a participant actually asks: it holds a foreign identifier and wants
+  # to know what it names.
+  #
+  # This asserts the registry rather than a local column: nothing writes Cirid
+  # back onto FunctionalLocationRecord yet, so asserting that column would report
+  # a missing write-back as a CIR failure.
+  #
+  # Only TIC-106 appears here because it is the one identifier this file authors.
+  # LOC-nnnnnn and the MMS equipment number are assigned during the run, and the
+  # engine has no way yet to carry a value from an earlier step into a later
+  # assertion -- so a full three-way cir_equivalent cannot be written honestly.
   - at: mms
-    assert: store_contains
-    entity: FunctionalLocationRecord
-    where: "ForeignSourceId = 'REG-LOCATION' AND Cirid IS NOT NULL"
+    assert: cir_registered
     within: 60s
+    args:
+      source: eng
+      id: TIC-106
