@@ -3,6 +3,7 @@ using SimHost.Application.Identity;
 using SimHost.Domain.Common;
 using SimHost.Domain.Eng;
 using SimHost.Domain.Mms;
+using SimHost.Domain.OmReliability;
 using SimHost.Domain.RegLocation;
 
 namespace SimHost.Infrastructure.Sql;
@@ -277,6 +278,10 @@ public class ParticipantDbContext : DbContext
             case "mms":
                 ConfigureMms(modelBuilder);
                 break;
+
+            case "om_reliability":
+                ConfigureOmReliability(modelBuilder);
+                break;
         }
     }
 
@@ -313,7 +318,63 @@ public class ParticipantDbContext : DbContext
             entity.Property(e => e.Designation).HasMaxLength(400);
             entity.Property(e => e.FunctionalLocationNumber).HasMaxLength(32);
             entity.Property(e => e.SerialNumber).HasMaxLength(64);
+            entity.Property(e => e.ModelNumber).HasMaxLength(64);
             entity.HasIndex(e => e.EquipmentNumber).IsUnique();
+            entity.HasIndex(e => e.FunctionalLocationNumber);
+
+            // Unlike a functional location, MMS originates its assets, so every row
+            // has a real identity and the constraint needs no empty-Guid exemption.
+            entity.HasIndex(e => e.FederationId).IsUnique();
+        });
+
+        modelBuilder.Entity<WorkOrder>(entity =>
+        {
+            entity.ToTable("WorkOrder");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.OrderNumber).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.EventKind).HasConversion<string>().HasMaxLength(16);
+            entity.Property(e => e.State).HasConversion<string>().HasMaxLength(16);
+            entity.Property(e => e.EquipmentNumber).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.FunctionalLocationNumber).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.Description).HasMaxLength(1000);
+            entity.Property(e => e.PerformedBy).HasMaxLength(128);
+            entity.Property(e => e.SignedOffBy).HasMaxLength(128);
+            entity.HasIndex(e => e.OrderNumber).IsUnique();
+            entity.HasIndex(e => e.State);
+        });
+    }
+
+    /// <summary>
+    /// The O&amp;M consumer in OIIE Scenario 11.
+    ///
+    /// It holds only the event log: no locations, no assets, no reference data of its
+    /// own. That is the honest shape of a system being provisioned entirely by
+    /// publication, and it is what makes the unmapped-value behaviour visible here
+    /// rather than hidden behind a local model that happens to agree.
+    /// </summary>
+    private static void ConfigureOmReliability(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AssetInstallationEvent>(entity =>
+        {
+            entity.ToTable("AssetInstallationEvent");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.EventKind).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.AssetIdInSource).HasMaxLength(200);
+            entity.Property(e => e.AssetSerialNumber).HasMaxLength(64);
+            entity.Property(e => e.AssetDesignation).HasMaxLength(400);
+            entity.Property(e => e.LocationIdInSource).HasMaxLength(200);
+            entity.Property(e => e.LocationDesignation).HasMaxLength(400);
+            entity.Property(e => e.PerformedBy).HasMaxLength(128);
+            entity.Property(e => e.WorkOrderNumber).HasMaxLength(32);
+            entity.Property(e => e.SourceParticipant).HasMaxLength(64);
+
+            // Unique on the event identity, not on asset+location: the same asset
+            // legitimately returns to the same location after a workshop repair, and a
+            // composite constraint would reject the second installation as a duplicate.
+            entity.HasIndex(e => e.FederationId).IsUnique();
+            entity.HasIndex(e => new { e.AssetFederationId, e.OccurredAt });
+            entity.HasIndex(e => e.LocationFederationId);
+            entity.HasIndex(e => e.Cirid);
         });
     }
 

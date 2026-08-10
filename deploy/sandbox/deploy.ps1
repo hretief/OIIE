@@ -163,7 +163,7 @@ if (-not $SkipInfrastructure) {
     $outputs = Invoke-Az -AsJson @(
         'deployment', 'group', 'create',
         '--resource-group', $ResourceGroup,
-        '--template-file', (Join-Path $repoRoot 'infra/main.bicep'),
+        '--template-file', (Join-Path $repoRoot 'infra/sandbox/main.bicep'),
         '--parameters',
         "environmentName=$Environment",
         "keyVaultName=$KeyVault",
@@ -199,11 +199,19 @@ Write-Host "`nBuilding..."
 
 if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed.' }
 
-# Personalities and Schemas are read at runtime and are not compiled in, so the
-# build does not carry them. Without this the app starts and reports zero
-# participants, which looks like a configuration error rather than a missing folder.
+# Schemas are read at runtime and are not compiled in, so the build does not
+# carry them. Without this the app starts and reports zero participants, which
+# looks like a configuration error rather than a missing folder.
+#
+# Personality packs are NOT copied here. The csproj already publishes
+# PersonalityPacks/**/*.yaml, and Sandbox__PersonalitiesPath points at it.
+# An earlier version of this script copied SimHost/Personalities -- the C#
+# handler source -- into a Personalities/ folder, which the app then read in
+# preference to the real packs. Zip deployment does not remove files, so that
+# folder persisted across deployments and served stale fixtures indefinitely:
+# reg-location reported 2 property definitions after ControlAction was added,
+# and no error was raised because the folder did parse.
 foreach ($folder in @(
-    @{ Name = 'Personalities'; Source = 'SimHost/Personalities' },
     @{ Name = 'Schemas'; Source = 'schemas' }
 )) {
     $source = Join-Path $repoRoot $folder.Source
@@ -217,6 +225,12 @@ foreach ($folder in @(
     $count = @(Get-ChildItem (Join-Path $publishDir $folder.Name) -Recurse -File).Count
     Write-Host "  $($folder.Name) : $count file(s)"
 }
+
+$packCount = @(Get-ChildItem (Join-Path $publishDir 'PersonalityPacks') -Recurse -File -ErrorAction SilentlyContinue).Count
+if ($packCount -eq 0) {
+    throw 'PersonalityPacks did not publish. The csproj Content glob is the only thing that carries them.'
+}
+Write-Host "  PersonalityPacks : $packCount file(s)"
 
 # Developer settings must not ship: they name one developer's database and alias.
 Remove-Item (Join-Path $publishDir 'appsettings.Development.json') -Force -ErrorAction SilentlyContinue
@@ -272,7 +286,7 @@ $participantCount = @($health.participants).Count
 Write-Host "  participants   : $participantCount"
 
 if ($participantCount -eq 0) {
-    throw 'No participants loaded. The Personalities folder did not deploy, or Sandbox__PersonalitiesPath is wrong.'
+    throw 'No participants loaded. PersonalityPacks did not deploy, or Sandbox__PersonalitiesPath is wrong (it should be PersonalityPacks).'
 }
 
 Write-Host "  isbmConfigured : $($health.isbmConfigured)"

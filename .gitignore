@@ -23,3 +23,8 @@ TestResults/
 # cost of scrubbing each one outweighs their value in the repository.
 *chatLog.md
 
+
+# Official MIMOSA use case and scenario PDFs. Source of truth for the scenario
+# implementations, but large binaries that never diff usefully - keep them
+# locally under docs/ rather than in the history.
+docs/*.pdf

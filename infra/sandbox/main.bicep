@@ -122,7 +122,14 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
 
         // Deployed alongside the app rather than a level up, unlike the local
         // layout where the solution root is the parent.
-        { name: 'Sandbox__PersonalitiesPath', value: 'Personalities' }
+        //
+        // This must be PersonalityPacks, not Personalities. SimHost/Personalities
+        // is C# handler source; the deployed packs are PersonalityPacks/**/*.yaml,
+        // published by the csproj. Pointing here at 'Personalities' made the app
+        // read a stale folder left behind by an earlier deployment -- zip deploy
+        // does not delete files -- and that folder parsed without error, so the
+        // roster silently omitted participants added since.
+        { name: 'Sandbox__PersonalitiesPath', value: 'PersonalityPacks' }
         { name: 'Sandbox__SchemasPath', value: 'Schemas' }
 
         { name: 'KeyVault__Uri', value: 'https://${keyVaultName}.vault.azure.net/' }

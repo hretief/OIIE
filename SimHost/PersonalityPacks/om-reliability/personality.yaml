@@ -1,0 +1,45 @@
+participantId: om-reliability
+displayName: OM-RELIABILITY - Reliability and Condition Management
+schema: om_reliability
+sourceId: OM-RELIABILITY
+sourceOwnerId: ACME-OPERATIONS
+logicalId: urn:oiie-sandbox:om-reliability
+accentColour: "#7c3aed"
+releaseMode: Manual
+identifierStyle: surrogate
+
+# The "O&M Systems" actor of OIIE Scenario 11, receiving asset install and removal
+# events from MMS.
+#
+# Subscriber only, and deliberately so. Scenario 11 is one-directional: the
+# maintenance system announces what changed and interested O&M systems listen. A
+# reliability system that answered back would be implementing a different scenario.
+#
+# Note the channel. Scenario 11 specifies ISO18435 D1.3 for operational events,
+# whereas the engineering provisioning flow of Scenarios 2 and 5 uses D0.2. Reusing
+# the existing /OandM channel would have been less work and would have quietly
+# merged two distinct information domains onto one bus path — which is exactly the
+# conflation the ISO18435 addressing is there to prevent.
+channels:
+  - channelUri: /OIIE-SANDBOX/Enterprise/Site/OandM-Events
+    role: Subscriber
+    topics:
+      - AssetSegmentEvents
+    useNotifications: false
+
+isbm:
+  baseUrl: https://isbm-func-44p2f3n6dv7p4.azurewebsites.net/api
+  tokenSecretName: sandbox-isbm-token-om-reliability
+
+cir:
+  # The CIR provider's own request channel and topic, taken from its deployed
+  # configuration rather than invented here.
+  #
+  # This channel belongs to the CIR provider: reset ensures it exists but never
+  # deletes it, because deleting it would destroy the provider's long-lived
+  # provider-request session.
+  channelUri: /OIIE/CIR/Request
+  requestTopic: ws-CIR
+  baseUrl: https://cir-func-44p2f3n6.azurewebsites.net/api
+  registryId: OIIE-SANDBOX
+  identityCacheTtl: 00:05:00

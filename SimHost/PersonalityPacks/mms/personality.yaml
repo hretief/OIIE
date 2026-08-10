@@ -8,13 +8,28 @@ accentColour: "#b45309"
 releaseMode: Manual
 identifierStyle: numeric
 
-# Consumer only. MMS publishes nothing in phase 1 - it is the end of the chain and
-# the participant with the least context about what it receives.
+# Consumer of engineering provisioning, publisher of maintenance events.
+#
+# The second role is new. Through phase 1 MMS was the end of the chain — it received
+# functional locations and told nobody anything. OIIE Scenario 11 inverts that: when
+# a technician installs or removes a serialised asset, MMS is the only system that
+# knows, and it becomes the source of record for asset configuration.
+#
+# The two channels are separate on purpose. /OandM carries engineering structure
+# inbound (ISO18435 D0.2 territory); /OandM-Events carries operational events
+# outbound (D1.3). Publishing events back onto the channel MMS subscribes to would
+# have worked and would have made MMS both publisher and subscriber of one path,
+# which is how feedback loops get built by accident.
 channels:
   - channelUri: /OIIE-SANDBOX/Enterprise/Site/OandM
     role: Subscriber
     topics:
       - Segments
+    useNotifications: false
+  - channelUri: /OIIE-SANDBOX/Enterprise/Site/OandM-Events
+    role: Publisher
+    topics:
+      - AssetSegmentEvents
     useNotifications: false
 
 isbm:

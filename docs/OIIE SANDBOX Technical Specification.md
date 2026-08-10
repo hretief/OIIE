@@ -169,6 +169,7 @@ Sandbox/
       Fixtures/
       Screens/
     construct/  reg-location/  reg-asset/  reg-product/  reg-material/  mms/
+    om-reliability/
     rdl/                            MIMOSA RDL — class and property definitions
   Scenarios/
     uc01-handover.yaml
@@ -227,7 +228,8 @@ Acceptance: the existing CIR 15/15 integration assertions and 104 unit tests pas
 |---|---|---|---|
 | **ENG** | Engineering design authority — model-based tag/segment source | 1, 27 | 1 |
 | **REG-LOCATION** | Functional location / breakdown structure registry, with stewardship gate | 1, 2, 27, 28 | 1 |
-| **MMS** | Maintenance management system — primary O&M consumer | 2, 5, 11, 33 | 1 |
+| **MMS** | Maintenance management system — consumes engineering structure, publishes asset install/removal events | 2, 11, 33 | 1 |
+| **OM-RELIABILITY** | O&M system — consumes asset installation and removal events | 11 | 1 |
 | **CONSTRUCT** | Construction / commissioning — as-built asset source | 4, 40 | 2 |
 | **REG-ASSET** | Serialised asset registry, install/remove events | 4, 5, 33 | 2 |
 | **RDL** | Reference data library — publishes class and property definitions | 34, 35 | 2 |
@@ -235,6 +237,12 @@ Acceptance: the existing CIR 15/15 integration assertions and 104 unit tests pas
 | **REG-MATERIAL** | Material and part master, procurement | 36, 38 | 3 |
 
 Scenario numbers refer to the OIIE Systems Landscape scenario table (`02List_of_Use_Cases`, v1.4).
+
+**Use Case numbers and Scenario numbers are different axes and must not be conflated.** OIIE Use Case 5 is *Asset Installation/Removal Updates*, and it owns Scenarios 10 and 11. Scenario 5 belongs to Use Case 10, not to Use Case 5. An earlier revision of this table read the scenario column as though it were the use case column, which is why MMS was previously described as scenario 5 and as a consumer only.
+
+**MMS publishes.** Under Scenario 11 the maintenance system is the *source* of asset installation and removal events, not merely a receiver of engineering structure. It therefore holds both roles: it subscribes on the engineering provisioning path and publishes on the operational events path.
+
+**OM-RELIABILITY exists because the O&M Systems actor had no seat.** Scenario 11 requires a receiver distinct from the publisher, and overloading REG-LOCATION with that role would have made the scenario prove nothing — a participant cannot demonstrate interoperability by publishing to itself. It is deliberately thin: it holds no reference data and no fixtures, because a reliability system receiving its first event genuinely cannot say what the asset is.
 
 **RDL is in phase 2, not phase 3.** Classification (§6.5) makes graceful degradation and definition propagation demonstrable, and both require a participant that governs and publishes definitions. It impersonates the **MIMOSA RDL**, keeping the demonstration inside the OpenO&M family — the choice of library is deliberately not a proof point at this phase, so no external library content or dependency is taken on. Class and property keys are written as resolvable URIs so the structure is realistic without the fixtures claiming to be the published library.
 
@@ -303,7 +311,7 @@ Cost control: per-developer databases are provisioned on request and deprovision
 One SQL schema per participant, with a dedicated SQL login per participant granted access **only** to its own schema.
 
 ```
-reg_location  reg_asset  reg_product  reg_material  eng  construct  mms  rdl
+reg_location  reg_asset  reg_product  reg_material  eng  construct  mms  om_reliability  rdl
 sandbox       (orchestration, scenario runs, assertions)
 tower         (read-only cross-schema views — the single sanctioned exception)
 ```
@@ -450,6 +458,7 @@ Spine tables, indicative and not exhaustive:
 | `reg_product` | `Model`, `ModelRevision`, `ModelRelationship`, `Ecn`, `EcnAffectedModel` |
 | `reg_material` | `MaterialMaster`, `MaterialModelLink`, `Requisition`, `RequisitionLine` |
 | `mms` | `EquipmentRecord`, `FunctionalLocationRecord`, `WorkOrder` |
+| `om_reliability` | `AssetInstallationEvent` |
 | `rdl` | `PublishedClass`, `PublishedProperty`, `LibraryVersion` (authoring side; see §6.5) |
 
 Per-personality attribute tables (`TagAttribute`, `AssetAttribute`, `LocationAttribute` in version 0.1) are removed — attributes are now handled uniformly by the property model.
@@ -667,7 +676,7 @@ ENG is data-centric: tags are extracted from the model and published independent
 
 **REG-MATERIAL — material master activation, or requisition submission.** The RFI of scenarios 36/37 releases when a buyer submits the request, not while requirements are still being assembled.
 
-**MMS — consumer only in phase 1.** Later phases may add work order status publication (scenarios 15/16).
+**MMS — work order sign-off.** Completion is not the trigger. A technician recording that the work is done is a claim about the field; sign-off by the planner is the maintenance system asserting the configuration has actually changed, and that is the act Scenario 11 publishes. Keeping the two distinct is what lets `uc05` assert that nothing left the building while the order sat completed. Later phases may add work order *status* publication (scenarios 15/16), which is a different feed.
 
 ### 7.3 Auto-release toggle
 
@@ -1007,7 +1016,7 @@ Identical scenario files, identical service methods, identical assertions.
 | Scenario | OIIE mapping | Demonstrates | Phase |
 |---|---|---|---|
 | `uc01-handover` | Scenarios 1, 2 | Pub/sub fan-out; CIR as identity bridge; stewardship gate | 1 |
-| `uc05-asset-install` | Scenarios 4, 5, 33 | Request/response with correct response correlation; BOD confirmation; human acceptance; pub/sub follow-on | 2 |
+| `uc05-asset-install` | Use Case 5, Scenario 11 | MMS as publisher; event timestamp distinct from message time; append-only install/removal history at the receiver; identity unresolved on arrival | 1 |
 | `identity-merge` | — | M1–M4; `ChangeEntryCIRID`; cross-window causality; stale cache correction | 2 |
 | `rdl-graceful-degradation` | — | Unknown leaf class bound at a known ancestor; leaf properties retained as unmapped; asset still displayed correctly (§6.5.6) | 2 |
 | `rdl-definition-propagation` | Scenarios 34, 35 | RDL publishes the leaf class; receivers bind it; unmapped chips clear and orphaned values slot in with no data re-sent | 2 |
@@ -1132,8 +1141,8 @@ Consistent with existing practice: tests run immediately after each substantive 
 | Phase | Scope | Exit criteria |
 |---|---|---|
 | **0** | Extract `Oiie.Isbm.Client` from CIR; shared session helper; CIR refactored to consume it | Existing CIR 15/15 integration and 104 unit tests pass unchanged |
-| **1** | SimHost runtime; persistence including the §6.5 tables and chain-resolution engine; outbox/inbox; BOD dispatcher and validator; headless runner; ENG, REG-LOCATION, MMS; `uc01-handover` | `uc01` passes in CI end to end; entities classify and resolve an effective property set, with a minimal fixture hierarchy |
-| **2** | CONSTRUCT, REG-ASSET, **RDL**; classification and property model (§6.5); class fixtures; request/response and confirmations; `PendingWork`; CIR merge tooling; `uc05-asset-install`, `identity-merge`, `rdl-graceful-degradation`, `rdl-definition-propagation`, `eng-validation-gate`, `local-property-extension`, `notifications` | All phase-2 scenarios pass in CI; M1–M4 demonstrable manually; `NotifyListener` push delivery working |
+| **1** | SimHost runtime; persistence including the §6.5 tables and chain-resolution engine; outbox/inbox; BOD dispatcher and validator; headless runner; ENG, REG-LOCATION, MMS, **OM-RELIABILITY**; `uc01-handover`, `uc05-asset-install` | `uc01` and `uc05` pass in CI end to end; entities classify and resolve an effective property set, with a minimal fixture hierarchy |
+CIR merge tooling; `identity-merge`, `rdl-graceful-degradation`
 | **3** | REG-PRODUCT, REG-MATERIAL; attribute BODs; `uc04-product-pull`, `uc12-rfi-models`, `eng-delta-publish`, `reclassification` | All phase-3 scenarios pass in CI |
 | **4** | Full UI: domain screens, BOD renderer, identity panel, control tower, cluster graph, CIR explorer, kiosk mode, SignalR; snapshot/restore | SC-2 and SC-4 met; demo rehearsed end to end |
 | **5** | Service Directory bootstrap; `negative-paths` | SC-6 met; remaining ISBM conformance skips closed |

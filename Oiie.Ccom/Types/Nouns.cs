@@ -181,11 +181,14 @@ public class Asset : Entity
     [XmlElement(Order = 7)]
     public AssetType? Type { get; set; }
 
+    // Model before SerialNumber. The CCOM sequence runs Type, RegistrationSite,
+    // Manufacturer, Model, ... , SerialNumber, so the obvious pairing of the two
+    // identifying fields is the wrong order and the schema rejects it.
     [XmlElement(Order = 8)]
-    public string? SerialNumber { get; set; }
+    public Model? Model { get; set; }
 
     [XmlElement(Order = 9)]
-    public Model? Model { get; set; }
+    public string? SerialNumber { get; set; }
 
     public override string ToString() => $"{ShortName} ({IDInInfoSource})";
 }
@@ -202,7 +205,7 @@ public class Model : Entity
         ShortName = element.Child(nameof(ShortName)).SafeValue();
         FullName = element.Child(nameof(FullName)).SafeValue();
         Description = element.Child(nameof(Description)).SafeValue();
-        ModelNumber = element.Child(nameof(ModelNumber)).SafeValue();
+        ModelNumber = element.Child("PartNumber").SafeValue();
     }
 
     [XmlElement(Order = 4)]
@@ -214,7 +217,12 @@ public class Model : Entity
     [XmlElement(Order = 6)]
     public string? Description { get; set; }
 
-    [XmlElement(Order = 7)]
+    /// <summary>
+    /// The manufacturer's designation for the model, carried as CCOM's
+    /// <c>PartNumber</c>. CCOM has no <c>ModelNumber</c> element: the number a
+    /// nameplate calls the model is the number the manufacturer orders it by.
+    /// </summary>
+    [XmlElement("PartNumber", Order = 7)]
     public string? ModelNumber { get; set; }
 
     public override string ToString() => $"{ShortName} ({ModelNumber})";
@@ -236,7 +244,7 @@ public class AssetSegmentEvent : Entity
         Description = element.Child(nameof(Description)).SafeValue();
         Asset = GetChild(nameof(Asset), e => new Asset(e));
         Segment = GetChild(nameof(Segment), e => new Segment(e));
-        EventDateTime = element.Child(nameof(EventDateTime)).SafeInstant();
+        EventDateTime = element.Child("Start").SafeInstant();
         Type = GetChild(nameof(Type), e => new EventType(e));
     }
 
@@ -249,16 +257,20 @@ public class AssetSegmentEvent : Entity
     [XmlElement(Order = 6)]
     public EventType? Type { get; set; }
 
-    [XmlElement(Order = 7)]
-    public Asset? Asset { get; set; }
-
-    [XmlElement(Order = 8)]
-    public Segment? Segment { get; set; }
-
+    // Start and End belong to TimestampedEvent, so they precede AssetSegmentEvent's
+    // own Asset and Segment in the schema sequence.
     [XmlIgnore]
     public Instant? EventDateTime { get; set; }
 
-    [XmlElement("EventDateTime", Order = 9)]
+    /// <summary>
+    /// The instant the installation or removal occurred, carried as CCOM's
+    /// <c>Start</c>. There is no <c>EventDateTime</c> element in CCOM: a
+    /// TimestampedEvent expresses a point in time as a Start with no End, and the
+    /// same pair expresses a duration when both are present. Naming the property
+    /// for its meaning while serialising it under the schema's name keeps the
+    /// distinction from leaking into every caller.
+    /// </summary>
+    [XmlElement("Start", Order = 7)]
     public string? EventDateTimeText
     {
         get => EventDateTime is { } value ? InstantPattern.ExtendedIso.Format(value) : null;
@@ -266,6 +278,12 @@ public class AssetSegmentEvent : Entity
     }
 
     public bool ShouldSerializeEventDateTimeText() => EventDateTime.HasValue;
+
+    [XmlElement(Order = 8)]
+    public Asset? Asset { get; set; }
+
+    [XmlElement(Order = 9)]
+    public Segment? Segment { get; set; }
 }
 
 /// <summary>Reference-data type of an event — Install, Remove, and so on.</summary>

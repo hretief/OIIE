@@ -11,6 +11,7 @@ using SimHost.Application.Outbox;
 using SimHost.Application.Scenarios;
 using SimHost.Personalities.Eng;
 using SimHost.Personalities.Mms;
+using SimHost.Personalities.OmReliability;
 using SimHost.Personalities.RegLocation;
 using SimHost.Application.Participants;
 using SimHost.Components;
@@ -117,6 +118,10 @@ builder.Services.AddSingleton<SimHost.Application.Scenarios.ScenarioRunContext>(
 builder.Services.AddSingleton<IScenarioAction, CreateTagAction>();
 builder.Services.AddSingleton<IScenarioAction, PromoteNamedVersionAction>();
 builder.Services.AddSingleton<IScenarioAction, ApproveStewardshipAction>();
+builder.Services.AddSingleton<IScenarioAction, RegisterEquipmentAction>();
+builder.Services.AddSingleton<IScenarioAction, RaiseWorkOrderAction>();
+builder.Services.AddSingleton<IScenarioAction, CompleteWorkOrderAction>();
+builder.Services.AddSingleton<IScenarioAction, SignOffWorkOrderAction>();
 builder.Services.AddSingleton<IScenarioAction, RegisterCirAction>();
 builder.Services.AddSingleton<IScenarioAction, ResolveIdentityAction>();
 builder.Services.AddSingleton<ScenarioActionRegistry>();
@@ -164,6 +169,13 @@ builder.Services.AddSingleton<IBodHandler, SyncSegmentsHandler>();
 builder.Services.AddSingleton<RegLocationService>();
 
 builder.Services.AddSingleton<IBodHandler, MmsSegmentsHandler>();
+
+// OIIE Scenario 11. MMS publishes asset install/removal events for the first time —
+// through phase 1 it only consumed — and OM-RELIABILITY is the "O&M Systems" actor
+// that receives them.
+builder.Services.AddSingleton<IBodBuilder, MmsAssetSegmentEventsBuilder>();
+builder.Services.AddSingleton<MmsWorkOrderService>();
+builder.Services.AddSingleton<IBodHandler, OmAssetSegmentEventsHandler>();
 
 if (isbmConfigured)
 {

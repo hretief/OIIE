@@ -37,6 +37,7 @@ Participant ids use hyphens (route segments); schemas and logins use underscores
 | `reg-product` | `reg_product` | `sb_reg_product` |
 | `reg-material` | `reg_material` | `sb_reg_material` |
 | `mms` | `mms` | `sb_mms` |
+| `om-reliability` | `om_reliability` | `sb_om_reliability` |
 | `rdl` | `rdl` | `sb_rdl` |
 
 Two non-participant schemas:
@@ -151,6 +152,31 @@ like an application bug.
 
 Role assignments take a few minutes to propagate. A Key Vault 403 immediately after
 a first deployment is usually that.
+
+Adding a participant is not finished when the code is. Its Key Vault secret,
+contained user, schema and ISBM subscription all have to exist before a scenario
+naming it can run, and `schema/reset` must run afterwards to create its tables:
+provisioning creates the schema, the app creates what is in it. A missing table
+surfaces as `Invalid object name '<schema>.IsbmSession'` during the subscription
+check, which reads like a broker fault rather than a provisioning gap.
+
+### Two failures that report the wrong cause
+
+**Zip deploy never deletes.** Files removed from the project stay on the server
+indefinitely. `Sandbox__PersonalitiesPath` must therefore be `PersonalityPacks`,
+never `Personalities` — the latter was a folder an earlier deployment left behind,
+and because it parsed cleanly the app reported a smaller participant roster with
+no error at all. The scenario then failed with "`om-reliability` is not a known
+participant", which points at the scenario file rather than at the deployment that
+actually caused it.
+
+**`az webapp deploy` reports failure on successful deployments.** Cold start on
+the B1 plan regularly exceeds the CLI's ten-minute budget, and Kudu sometimes
+answers 502 after the upload has already been accepted. Confirm against
+`/api/deployments/latest` (status 4 is success) before treating the reported error
+as real. The cost is that the deploy script's own verification stage never runs on
+these paths, so a genuinely broken deployment currently looks identical to a slow
+one.
 
 ## Identity model
 

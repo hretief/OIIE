@@ -1,7 +1,9 @@
 using System.Globalization;
 using SimHost.Application.Cir;
 using SimHost.Application.Participants;
+using SimHost.Domain.Mms;
 using SimHost.Personalities.Eng;
+using SimHost.Personalities.Mms;
 using SimHost.Personalities.RegLocation;
 
 namespace SimHost.Application.Scenarios;
@@ -183,6 +185,124 @@ public sealed class ApproveStewardshipAction(
 
         return new ScenarioActionResult(
             $"Approved {result.Approved}, rejected {result.Rejected}.", result);
+    }
+}
+
+/// <summary>Registers a serialised asset MMS itself originates.</summary>
+public sealed class RegisterEquipmentAction(MmsWorkOrderService service) : IScenarioAction
+{
+    public string Name => "register_equipment";
+
+    public async Task<ScenarioActionResult> ExecuteAsync(ScenarioActionContext context, CancellationToken ct)
+    {
+        var equipment = await service.RegisterEquipmentAsync(
+            context.RequireString("equipmentNumber"),
+            context.GetString("designation"),
+            context.GetString("serialNumber"),
+            context.GetString("modelNumber"),
+            ct);
+
+        return new ScenarioActionResult(
+            $"Equipment {equipment.EquipmentNumber} registered.",
+            new
+            {
+                equipment.EquipmentNumber,
+                FederationId = equipment.FederationId.ToString(),
+                equipment.SerialNumber
+            });
+    }
+}
+
+/// <summary>Raises a maintenance work order to install or remove a serialised asset.</summary>
+public sealed class RaiseWorkOrderAction(MmsWorkOrderService service) : IScenarioAction
+{
+    public string Name => "raise_work_order";
+
+    public async Task<ScenarioActionResult> ExecuteAsync(ScenarioActionContext context, CancellationToken ct)
+    {
+        var kindText = context.RequireString("eventKind");
+
+        if (!Enum.TryParse<AssetEventKind>(kindText, ignoreCase: true, out var kind))
+        {
+            throw new ScenarioActionException(
+                $"{context.Item.Describe()}: 'eventKind' is '{kindText}'; expected Install or Removal.");
+        }
+
+        var order = await service.RaiseAsync(
+            context.RequireString("orderNumber"),
+            kind,
+            context.RequireString("equipmentNumber"),
+            context.RequireString("functionalLocation"),
+            context.GetString("description"),
+            ct);
+
+        return new ScenarioActionResult(
+            $"Work order {order.OrderNumber} raised to {order.EventKind} {order.EquipmentNumber}.",
+            new { order.OrderNumber, EventKind = order.EventKind.ToString(), order.State });
+    }
+}
+
+/// <summary>
+/// Records that the technician did the physical work.
+///
+/// <c>occurredAt</c> may be given to model a work order entered days after the
+/// event, which is the ordinary case on a paper-then-keyboard workflow and the
+/// reason Scenario 11 carries an explicit event timestamp at all.
+/// </summary>
+public sealed class CompleteWorkOrderAction(MmsWorkOrderService service) : IScenarioAction
+{
+    public string Name => "complete_work_order";
+
+    public async Task<ScenarioActionResult> ExecuteAsync(ScenarioActionContext context, CancellationToken ct)
+    {
+        var occurredText = context.GetString("occurredAt");
+
+        var occurredAt = occurredText is { Length: > 0 }
+            ? DateTimeOffset.TryParse(
+                occurredText, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed)
+                ? parsed
+                : throw new ScenarioActionException(
+                    $"{context.Item.Describe()}: 'occurredAt' is '{occurredText}', which is not a timestamp.")
+            : DateTimeOffset.UtcNow;
+
+        var order = await service.CompleteAsync(
+            context.RequireString("orderNumber"),
+            occurredAt,
+            context.GetString("performedBy"),
+            ct);
+
+        return new ScenarioActionResult(
+            $"Work order {order.OrderNumber} completed.",
+            new { order.OrderNumber, order.State, OccurredAt = order.OccurredAt?.ToString("O") });
+    }
+}
+
+/// <summary>
+/// MMS's release event: sign off a completed work order and publish the
+/// installation or removal to O&amp;M systems.
+/// </summary>
+public sealed class SignOffWorkOrderAction(
+    MmsWorkOrderService service, ParticipantRegistry registry) : IScenarioAction
+{
+    public string Name => "sign_off_work_order";
+
+    public async Task<ScenarioActionResult> ExecuteAsync(ScenarioActionContext context, CancellationToken ct)
+    {
+        var publisher = ScenarioChannels.RequirePublisher(registry, MmsService.ParticipantId);
+
+        var result = await service.SignOffAsync(
+            context.RequireString("orderNumber"),
+            publisher.ChannelUri,
+            publisher.Topics.FirstOrDefault(),
+            context.GetString("signedOffBy") ?? "planner",
+            ct);
+
+        var summary = result.Published
+            ? $"Signed off {result.OrderNumber}: {result.EventKind} of {result.EquipmentNumber}."
+            : $"Sign-off of {result.OrderNumber} was refused: {string.Join("; ", result.Findings)}";
+
+        return new ScenarioActionResult(summary, result);
     }
 }
 

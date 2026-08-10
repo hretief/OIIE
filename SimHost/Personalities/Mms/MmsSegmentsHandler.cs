@@ -241,4 +241,7 @@ public sealed class MmsSegmentsHandler(
 public sealed class MmsService
 {
     public const string ParticipantId = "mms";
+
+    /// <summary>CIR Entry.SourceID, matching the personality pack.</summary>
+    public const string SourceId = "MMS";
 }

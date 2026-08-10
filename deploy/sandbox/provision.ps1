@@ -112,12 +112,17 @@ $participants = [ordered]@{
     'reg-product'  = 'reg_product'
     'reg-material' = 'reg_material'
     'mms'          = 'mms'
+
+    # The "O&M Systems" actor of OIIE Scenario 11, which receives asset
+    # installation and removal events published by MMS.
+    'om-reliability' = 'om_reliability'
     'rdl'          = 'rdl'
 }
 
 $expectedSchemas = @(
     'eng', 'construct', 'reg_location', 'reg_asset',
-    'reg_product', 'reg_material', 'mms', 'rdl', 'sandbox', 'tower'
+    'reg_product', 'reg_material', 'mms', 'om_reliability',
+    'rdl', 'sandbox', 'tower'
 )
 
 Write-Host "Environment : $Environment"

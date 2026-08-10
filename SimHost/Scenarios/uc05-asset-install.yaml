@@ -1,0 +1,258 @@
+# uc05 - asset installation and removal updates.
+#
+# OIIE Use Case 5, realised through OIIE Scenario 11: "Publish Asset
+# Removal/Installation events from MMS to O&M".
+#
+# Note what this is NOT. An earlier version of this repository used the name
+# uc05-asset-install for a CONSTRUCT -> REG-ASSET -> MMS flow, which is Scenarios 4
+# and 5 under Use Case 10, not Use Case 5 at all. Use Case 5 owns exactly two
+# scenarios, 10 and 11, and its trigger is a completed maintenance work order rather
+# than an engineering handover.
+#
+# Scenario 10 (an I&C Device Monitoring System sensing the change and letting MMS
+# reconcile it against recent work orders) is deliberately out of scope, so MMS
+# publishes on the technician's word alone. That is the unverified case Scenario 10
+# exists to improve on, and leaving it visible is more honest than simulating a
+# confirmation nothing observed.
+#
+# The use case is predicated on Use Cases 1 and 10 having populated MMS with
+# functional locations first, so this scenario performs the uc01 handover before it
+# can raise a work order against anything.
+id: uc05-asset-install
+name: Asset installation and removal updates
+
+participants:
+  - eng
+  - reg-location
+  - mms
+  - om-reliability
+
+setup:
+  reset: true
+  channels:
+    - uri: /OIIE-SANDBOX/Enterprise/Site/Eng
+      type: Publication
+      subscribers:
+        - reg-location
+    - uri: /OIIE-SANDBOX/Enterprise/Site/OandM
+      type: Publication
+      subscribers:
+        - mms
+
+    # ISO18435 D1.3 - operational events, kept apart from the D0.2 engineering
+    # provisioning path above. Scenario 11 names a different channel level for a
+    # reason: an install event and a design change are different information
+    # domains, and one channel carrying both would make the distinction unavailable
+    # to any subscriber that cared.
+    - uri: /OIIE-SANDBOX/Enterprise/Site/OandM-Events
+      type: Publication
+      subscribers:
+        - om-reliability
+
+steps:
+  # -- Precondition: UC1 populates MMS with a functional location ---------------
+  #
+  # Without this MMS has nowhere to install anything. The use case states the
+  # dependency explicitly, so it is executed rather than assumed.
+  - id: author-tag
+    at: eng
+    action: create_tag
+    args:
+      tagNumber: P-101
+      serviceDescription: Feed pump
+      unitNumber: "101"
+      classKey: rdl:Instrument
+      controlAction: Reverse
+
+  - id: release
+    at: eng
+    action: promote_named_version
+    args:
+      name: uc05 precondition
+
+  - at: reg-location
+    assert: message_received
+    channel: /OIIE-SANDBOX/Enterprise/Site/Eng
+    verb: Sync
+    noun: Segments
+    within: 60s
+
+  - id: approve
+    at: reg-location
+    action: approve_stewardship
+    args:
+      decidedBy: uc05
+
+  - at: mms
+    assert: message_received
+    channel: /OIIE-SANDBOX/Enterprise/Site/OandM
+    verb: Sync
+    noun: Segments
+    within: 60s
+
+  # MMS now holds the location under its own numeric key. The work order below
+  # names it by the foreign identifier, because nothing outside MMS knows the
+  # number it minted.
+  - at: mms
+    assert: store_contains
+    entity: FunctionalLocationRecord
+    where: "ForeignSourceId = 'REG-LOCATION'"
+    within: 60s
+
+  # -- The serialised asset ------------------------------------------------------
+  #
+  # MMS mints identity here, unlike for the location above. The asset's serial
+  # number was read off a nameplate in the field and no upstream system has ever
+  # named it, so there is no competing identity to collide with.
+  - id: register-pump
+    at: mms
+    action: register_equipment
+    args:
+      equipmentNumber: "500001"
+      designation: Feed pump, centrifugal
+      serialNumber: SN-88213
+      modelNumber: CP-400
+
+  - at: mms
+    assert: store_contains
+    entity: EquipmentRecord
+    where: "SerialNumber = 'SN-88213' AND FunctionalLocationNumber IS NULL"
+
+  # -- Installation --------------------------------------------------------------
+  - id: raise-install
+    at: mms
+    action: raise_work_order
+    args:
+      orderNumber: WO-40001
+      eventKind: Install
+      equipmentNumber: "500001"
+      functionalLocation: P-101
+      description: Install feed pump following overhaul
+
+  - id: complete-install
+    at: mms
+    action: complete_work_order
+    args:
+      orderNumber: WO-40001
+      occurredAt: "2026-03-04T08:15:00Z"
+      performedBy: technician.fourie
+
+  # Sign-off is the publication trigger, not completion. Nothing has been
+  # published while the order sits Completed.
+  - at: om-reliability
+    assert: message_not_received
+    channel: /OIIE-SANDBOX/Enterprise/Site/OandM-Events
+    verb: Sync
+    noun: AssetSegmentEvents
+
+  - id: sign-off-install
+    at: mms
+    action: sign_off_work_order
+    args:
+      orderNumber: WO-40001
+      signedOffBy: planner.mokoena
+
+  - at: mms
+    assert: outbox_state
+    state: Posted
+    verb: Sync
+    noun: AssetSegmentEvents
+    within: 60s
+
+  # The configuration change itself: the asset is now installed somewhere.
+  - at: mms
+    assert: store_contains
+    entity: EquipmentRecord
+    where: "SerialNumber = 'SN-88213' AND FunctionalLocationNumber IS NOT NULL"
+
+  # -- The O&M system receives ---------------------------------------------------
+  - at: om-reliability
+    assert: message_received
+    channel: /OIIE-SANDBOX/Enterprise/Site/OandM-Events
+    verb: Sync
+    noun: AssetSegmentEvents
+    within: 60s
+
+  - at: om-reliability
+    assert: bod_valid
+
+  # The event carries the timestamp of the physical work, not of the message. The
+  # order was entered after the fact, so a receiver that recorded arrival time
+  # would be wrong by the length of the delay -- and every time-in-service figure
+  # built on it would inherit the error.
+  - at: om-reliability
+    assert: store_contains
+    entity: AssetInstallationEvent
+    where: "EventKind = 'Install' AND OccurredAt = '2026-03-04T08:15:00Z'"
+    within: 60s
+
+  # Scenario 11's optional context survived the trip.
+  - at: om-reliability
+    assert: store_contains
+    entity: AssetInstallationEvent
+    where: "WorkOrderNumber = 'WO-40001' AND PerformedBy = 'technician.fourie'"
+    within: 60s
+
+  # And it still cannot say what the asset is. OM-RELIABILITY holds no reference
+  # data and no registry has reconciled anything, so the install is recorded
+  # against an identifier it cannot yet relate to anything else it knows.
+  - at: om-reliability
+    assert: store_contains
+    entity: AssetInstallationEvent
+    where: "WorkOrderNumber = 'WO-40001' AND Cirid IS NULL"
+
+  # -- Removal -------------------------------------------------------------------
+  #
+  # The same asset comes back out. This is the half that a "current installation"
+  # field would quietly destroy: after removal, an overwriting model can no longer
+  # say the pump ever ran, and the reliability history is gone.
+  - id: raise-removal
+    at: mms
+    action: raise_work_order
+    args:
+      orderNumber: WO-40002
+      eventKind: Removal
+      equipmentNumber: "500001"
+      functionalLocation: P-101
+      description: Remove feed pump for bearing failure
+
+  - id: complete-removal
+    at: mms
+    action: complete_work_order
+    args:
+      orderNumber: WO-40002
+      occurredAt: "2026-09-19T14:40:00Z"
+      performedBy: technician.naidoo
+
+  - id: sign-off-removal
+    at: mms
+    action: sign_off_work_order
+    args:
+      orderNumber: WO-40002
+      signedOffBy: planner.mokoena
+
+  # Removed, so installed nowhere. Null is the real state of an asset in the
+  # workshop, not absent data.
+  - at: mms
+    assert: store_contains
+    entity: EquipmentRecord
+    where: "SerialNumber = 'SN-88213' AND FunctionalLocationNumber IS NULL"
+    within: 60s
+
+  - at: om-reliability
+    assert: store_contains
+    entity: AssetInstallationEvent
+    where: "EventKind = 'Removal' AND WorkOrderNumber = 'WO-40002'"
+    within: 60s
+
+  # Both events survive. The append-only log is what makes the six-month service
+  # interval recoverable, which is the entire reason a reliability system wants
+  # this feed rather than a periodic snapshot of what is installed today.
+  #
+  # Asserted as the surviving install rather than as a count of two, because
+  # store_contains has no count argument and the install row is the one an
+  # overwriting model would have destroyed.
+  - at: om-reliability
+    assert: store_contains
+    entity: AssetInstallationEvent
+    where: "AssetSerialNumber = 'SN-88213' AND EventKind = 'Install'"

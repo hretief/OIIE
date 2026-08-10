@@ -1,10 +1,10 @@
 # SimHost
 
-The sandbox. Three simulated participants — ENG, REG-LOCATION and MMS — exchange
-CCOM BODs over the live ws-ISBM provider and resolve identity through the live
-ws-CIR provider. It is the only thing in the repository that proves the round
-trip, and the only place where the claim "the data arrived" can be checked
-against rows rather than logs.
+The sandbox. Four simulated participants — ENG, REG-LOCATION, MMS and
+OM-RELIABILITY — exchange CCOM BODs over the live ws-ISBM provider and resolve
+identity through the live ws-CIR provider. It is the only thing in the repository
+that proves the round trip, and the only place where the claim "the data arrived"
+can be checked against rows rather than logs.
 
 ## What it demonstrates
 
@@ -94,9 +94,20 @@ survived the reload; equal counts mean a fixture leaked.
 - `uc02-greenfield.yaml` — allocator behaviour on an empty store. Re-run safe:
   it asserts relative code sequences rather than literal `P-001`, so it does not
   depend on being the first run against the database.
+- `uc05-asset-install.yaml` — Use Case 5 via Scenario 11: MMS publishes asset
+  install and removal events to OM-RELIABILITY. Runs the uc01 handover first,
+  because Use Case 5 assumes the functional location already exists rather than
+  creating it.
 
 Assertions carry a severity. `bod_valid` failing is a defect;
 `classification_degraded` firing at REG-LOCATION is the scenario working.
+
+Two things `uc05` asserts that are easy to lose in a refactor. Publication is
+triggered by planner **sign-off**, not by completion, so the scenario asserts
+`message_not_received` while the order sits completed. And the receiver stores
+both the install and the removal rather than overwriting a "currently installed"
+field — an overwriting model cannot afterwards say the asset ever ran there,
+which destroys the service interval the feed exists to provide.
 
 ## Layout
 
