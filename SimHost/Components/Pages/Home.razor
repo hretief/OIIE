@@ -7,28 +7,38 @@
 
 <p>@Registry.All.Count participant(s) configured.</p>
 
-<table>
-    <thead>
-        <tr>
-            <th>Participant</th>
-            <th>Schema</th>
-            <th>Source ID</th>
-            <th>Channels</th>
-        </tr>
-    </thead>
-    <tbody>
-        @foreach (var participant in Registry.All)
-        {
-            <tr>
-                <td>
-                    <span style="border-left: 4px solid @participant.Config.AccentColour; padding-left: 8px;">
-                        @participant.Config.DisplayName
-                    </span>
-                </td>
-                <td>@participant.Schema</td>
-                <td>@participant.Config.SourceId</td>
-                <td>@participant.Config.Channels.Count</td>
-            </tr>
-        }
-    </tbody>
-</table>
+@*
+    One block per participant rather than one table of all of them, because each now
+    carries its own repository expander and a row cannot hold a grid without the layout
+    fighting it.
+*@
+
+@foreach (var participant in Registry.All)
+{
+    <div class="section participant">
+        <h2 style="border-left: 4px solid @participant.Config.AccentColour; padding-left: 8px;">
+            @participant.Config.DisplayName
+        </h2>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Schema</th>
+                    <th>Source ID</th>
+                    <th>Channels</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>@participant.Schema</td>
+                    <td>@participant.Config.SourceId</td>
+                    <td>@participant.Config.Channels.Count</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <ParticipantStoreView @rendermode="InteractiveServer"
+                              ParticipantId="@participant.ParticipantId"
+                              Schema="@participant.Schema" />
+    </div>
+}

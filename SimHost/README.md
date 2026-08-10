@@ -44,6 +44,17 @@ values before the first run.
 
 ## The UI
 
+`/` lists the configured participants. Each one carries a **Repository contents**
+expander showing what is actually in that participant's schema: its own domain
+tables first, the infrastructure tables every participant carries grouped below.
+Tables and columns are read from the EF model rather than a maintained list, so a
+table added to `ParticipantDbContext` appears without a second edit. Rows are
+capped at 100 with the true count shown, since a grid that stops silently at its
+limit invites the conclusion that the table ends there. Reads run as the
+participant's own contained SQL user, so a table the participant cannot read
+reports as unreadable rather than being quietly skipped — under the isolation
+this sandbox exists to demonstrate, that is a finding worth seeing.
+
 `/runs` lists scenario runs and starts new ones. `/runs/{id}` opens a run across
 four tabs, polling every two seconds while it is still executing.
 
@@ -59,6 +70,11 @@ four tabs, polling every two seconds while it is still executing.
   run's identities, read straight out of SQL. This is the tab that answers "did
   it really arrive", and it distinguishes *no rows* from *store unreadable*,
   because those are different problems.
+
+Pages are static-rendered unless they declare otherwise. Anything with a click
+handler needs `@rendermode InteractiveServer` on the page or the component, or
+the markup renders and the handler never fires — the control looks fine and does
+nothing, with no error anywhere to say why.
 
 ## Resetting
 

@@ -151,6 +151,7 @@ builder.Services.AddSingleton<IdentityLineageService>();
 builder.Services.AddSingleton<RunTimelineService>();
 builder.Services.AddSingleton<MessageTransformService>();
 builder.Services.AddSingleton<RunDataService>();
+builder.Services.AddSingleton<ParticipantStoreBrowser>();
 builder.Services.AddSingleton<SandboxResetService>();
 builder.Services.AddSingleton<ScenarioLauncher>();
 

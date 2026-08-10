@@ -45,7 +45,9 @@ SimHost runs a scenario and then lets you check the claim. `/runs/{id}` opens
 four tabs: identity lineage, assertion results, message flow, and the rows each
 participant actually persisted. Every message in the flow links to a page
 showing the source record, the BOD XML, the resulting records and the provenance
-trail side by side.
+trail side by side. The participants page at `/` goes wider than a single run:
+each participant expands to show its whole schema, read as that participant's
+own SQL user.
 
 The behaviour worth watching is what happens to a property value across three
 systems holding different reference data. ENG classifies a tag against

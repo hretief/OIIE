@@ -1,0 +1,161 @@
+@using SimHost.Application.Participants
+@inject ParticipantStoreBrowser Browser
+
+@*
+    One participant's SQL schema, on demand.
+
+    The contents are not loaded until the expander is opened. Rendering every table for
+    every participant on first paint would put four schemas' worth of queries in front of
+    someone who came to read the roster.
+*@
+
+<div class="store">
+    <button type="button" class="store-toggle" @onclick="ToggleAsync">
+        <span class="store-caret">@(_open ? "\u25be" : "\u25b8")</span>
+        Repository contents (@Schema)
+    </button>
+
+    @if (_open)
+    {
+        <div class="store-body">
+        @if (_loading)
+        {
+            <p class="muted small">Reading @Schema&hellip;</p>
+        }
+        else if (_contents is null)
+        {
+            <p class="muted small">Not loaded.</p>
+        }
+        else if (_contents.Error is { } schemaError)
+        {
+            <div class="card card-fail">
+                <div class="sev sev-fail">Store unreadable</div>
+                <div class="small">@schemaError</div>
+            </div>
+        }
+        else
+        {
+            @RenderGroup("Domain", _contents.Tables.Where(t => !t.IsInfrastructure).ToList())
+            @RenderGroup("Infrastructure", _contents.Tables.Where(t => t.IsInfrastructure).ToList())
+        }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string ParticipantId { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired]
+    public string Schema { get; set; } = string.Empty;
+
+    private StoreContents? _contents;
+    private bool _open;
+    private bool _loading;
+
+    private async Task ToggleAsync()
+    {
+        _open = !_open;
+
+        if (!_open || _loading)
+        {
+            return;
+        }
+
+        // Re-read on every open rather than caching for the page's lifetime: the point of
+        // the sandbox is to run scenarios, so a second look should show what has changed.
+        _loading = true;
+
+        try
+        {
+            _contents = await Browser.ReadAsync(ParticipantId);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private RenderFragment RenderGroup(string title, IReadOnlyList<StoreTable> tables) => __builder =>
+    {
+        if (tables.Count == 0)
+        {
+            return;
+        }
+
+        <h4 class="store-group">@title</h4>
+
+        @foreach (var table in tables)
+        {
+            <details class="store-table">
+                <summary>
+                    @table.TableName
+                    <span class="muted small">
+                        @if (table.Error is not null)
+                        {
+                            <text>unreadable</text>
+                        }
+                        else
+                        {
+                            <text>@table.TotalRows row(s)</text>
+                        }
+                    </span>
+                </summary>
+
+                @if (table.Error is { } error)
+                {
+                    <div class="card card-fail">
+                        <div class="sev sev-fail">Table unreadable</div>
+                        <div class="small">@error</div>
+                    </div>
+                }
+                else if (table.Rows.Count == 0)
+                {
+                    <p class="muted small">Empty.</p>
+                }
+                else
+                {
+                    <div class="store-scroll">
+                        <table class="store-grid">
+                            <thead>
+                                <tr>
+                                    @foreach (var column in table.Columns)
+                                    {
+                                        <th>@column</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var row in table.Rows)
+                                {
+                                    <tr>
+                                        @foreach (var cell in row)
+                                        {
+                                            <td>
+                                                @if (cell is null)
+                                                {
+                                                    <span class="muted">null</span>
+                                                }
+                                                else
+                                                {
+                                                    @cell
+                                                }
+                                            </td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    @if (table.IsTruncated)
+                    {
+                        <p class="muted small">
+                            Showing the first @table.Rows.Count of @table.TotalRows rows.
+                        </p>
+                    }
+                }
+            </details>
+        }
+    };
+}

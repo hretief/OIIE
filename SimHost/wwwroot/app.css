@@ -136,3 +136,37 @@ table.record { width: 100%; margin-top: 8px; border-collapse: collapse; }
 table.record td { padding: 3px 0; vertical-align: top; font-size: 13px; }
 .record-label { color: var(--muted); width: 180px; }
 .record-value { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+
+/* Repository browser. Grids are dense and horizontally scrollable rather than wrapped:
+   a row that reflows across three lines stops reading as one record. */
+.participant { border-bottom: 1px solid var(--rule); padding-bottom: 16px; }
+.participant h2 { font-size: 17px; margin: 0 0 8px; }
+
+.store { margin-top: 12px; }
+
+.store-toggle {
+    background: none; border: none; padding: 0; cursor: pointer;
+    font: inherit; font-size: 13px; color: var(--accent);
+}
+
+.store-caret { display: inline-block; width: 12px; }
+
+.store-body { margin: 8px 0 0 12px; }
+
+.store-group {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--muted); margin: 12px 0 4px;
+}
+
+.store-table { margin: 2px 0; }
+.store-table > summary { cursor: pointer; font-size: 13px; }
+.store-table > summary .muted { margin-left: 8px; }
+
+.store-scroll { overflow-x: auto; max-width: 100%; margin: 6px 0; }
+
+table.store-grid { border-collapse: collapse; font-size: 12px; }
+table.store-grid th, table.store-grid td {
+    padding: 3px 10px 3px 0; border-bottom: 1px solid var(--rule);
+    white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+}
+table.store-grid td { font-family: Consolas, "Cascadia Mono", monospace; }
