@@ -50,10 +50,12 @@ tables first, the infrastructure tables every participant carries grouped below.
 Tables and columns are read from the EF model rather than a maintained list, so a
 table added to `ParticipantDbContext` appears without a second edit. Rows are
 capped at 100 with the true count shown, since a grid that stops silently at its
-limit invites the conclusion that the table ends there. Reads run as the
-participant's own contained SQL user, so a table the participant cannot read
-reports as unreadable rather than being quietly skipped — under the isolation
-this sandbox exists to demonstrate, that is a finding worth seeing.
+limit invites the conclusion that the table ends there; the capped read is
+ordered by primary key, because an unordered `TOP` may return a different 100
+each time and a view meant to show what is stored cannot afford that. Reads run
+as the participant's own contained SQL user, so a table the participant cannot
+read reports as unreadable rather than being quietly skipped — under the
+isolation this sandbox exists to demonstrate, that is a finding worth seeing.
 
 `/runs` lists scenario runs and starts new ones. `/runs/{id}` opens a run across
 four tabs, polling every two seconds while it is still executing.

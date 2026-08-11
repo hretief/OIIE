@@ -15,7 +15,7 @@ public sealed record StoreTable(
     bool IsInfrastructure,
     IReadOnlyList<string> Columns,
     IReadOnlyList<IReadOnlyList<string?>> Rows,
-    int TotalRows,
+    long TotalRows,
     string? Error)
 {
     public bool IsTruncated => TotalRows > Rows.Count;
@@ -46,7 +46,8 @@ public sealed class ParticipantStoreBrowser(
 {
     /// <summary>
     /// Rows read per table. A cap rather than paging: this is an "is it in there" view, and
-    /// the tables that grow without bound are the infrastructure ones nobody scrolls.
+    /// the tables that grow without bound are the infrastructure ones nobody scrolls. The
+    /// capped read is ordered by primary key so the same 100 rows come back each time.
     /// </summary>
     public const int RowLimit = 100;
 
@@ -98,6 +99,16 @@ public sealed class ParticipantStoreBrowser(
                     continue;
                 }
 
+                // The primary key gives the capped read a deterministic order. Without one
+                // SQL Server may return any 100 rows, and a different 100 next time - which
+                // would quietly undermine a view whose whole purpose is showing what is
+                // actually stored. Keyless entities fall back to no ordering rather than
+                // failing; arbitrary rows still beat no table at all.
+                var keyColumns = item.Entity.FindPrimaryKey()?.Properties
+                    .Select(p => p.GetColumnName())
+                    .Where(c => !string.IsNullOrEmpty(c))
+                    .ToList();
+
                 tables.Add(await ReadTableAsync(
                     connection,
                     schema,
@@ -105,6 +116,7 @@ public sealed class ParticipantStoreBrowser(
                     item.Entity.ClrType.Name,
                     item.IsInfrastructure,
                     columns!,
+                    keyColumns as IReadOnlyList<string> ?? [],
                     ct));
             }
 
@@ -126,6 +138,7 @@ public sealed class ParticipantStoreBrowser(
         string entityName,
         bool isInfrastructure,
         IReadOnlyList<string> columns,
+        IReadOnlyList<string> keyColumns,
         CancellationToken ct)
     {
         try
@@ -139,11 +152,18 @@ public sealed class ParticipantStoreBrowser(
 
             await using var countCommand = connection.CreateCommand();
             countCommand.CommandText = sql;
-            var total = Convert.ToInt32(await countCommand.ExecuteScalarAsync(ct) ?? 0);
+
+            // COUNT_BIG returns bigint precisely so it can exceed int range; narrowing it
+            // here would trade a correct large number for an overflow exception.
+            var total = Convert.ToInt64(await countCommand.ExecuteScalarAsync(ct) ?? 0L);
+
+            var orderBy = keyColumns.Count > 0
+                ? $" ORDER BY {string.Join(", ", keyColumns.Select(Quote))}"
+                : string.Empty;
 
             await using var command = connection.CreateCommand();
             command.CommandText =
-                $"SELECT TOP ({RowLimit}) {columnList} FROM {Quote(schema)}.{Quote(table)}";
+                $"SELECT TOP ({RowLimit}) {columnList} FROM {Quote(schema)}.{Quote(table)}{orderBy}";
 
             var rows = new List<IReadOnlyList<string?>>();
 
