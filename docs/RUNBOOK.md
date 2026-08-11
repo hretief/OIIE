@@ -90,6 +90,7 @@ Use `/admin/reset`, or `/admin/schema/reset` if ISBM state is known clean.
 | CIR call times out | Work in this order. **(1)** `GET /admin/cir/last?participantId=eng` — durable evidence of the last exchange, safe to call repeatedly. **(2)** `POST /admin/cir/await-response` — re-reads the still-open consumer session; if the response appears, the CIR did reply and only the wait window was short. **(3)** `POST {cir}/api/isbm/drain` — if that completes the exchange, the message path is fine and the CIR's `IsbmPoll` timer is not running: check the plan is `B1`+ with Always On and that App Insights shows `IsbmPoll` requests. **(4)** only then `GET /admin/cir/diagnose`, which *consumes* from the queue and destroys the evidence |
 | A consumer looks healthy but consumes nothing | Its session predates the last channel deletion. Channels take their sessions with them, and a poll loop that swallows session faults will not notice |
 | `NotValidated` | No XSD held for that namespace. `Schemas/ccom` is empty by design |
+| A participant's **Repository contents** expander reports a table unreadable | A grant, not a UI fault. The browser reads as that participant's own contained user, so it shows exactly what the participant can see. Compare against `provision.ps1` for that schema before assuming the page is broken |
 
 ## State that outlives `/admin/reset`
 

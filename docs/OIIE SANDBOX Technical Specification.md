@@ -1,8 +1,9 @@
 # OIIE Sandbox — Technical Specification
 
 **Status:** Draft for review
-**Version:** 0.5
+**Version:** 0.6
 **Date:** 2026-08-01
+**Changes in 0.6:** Added the repository browser (§8.9) — per-participant schema inspection on the participants page, reading as each participant's own contained SQL user so §6.2 isolation is observable rather than merely asserted.
 **Changes in 0.5:** Recorded the UI technology decision (§8.0) — Blazor Server with one JavaScript island for the control tower visualisations (§8.7).
 **Changes in 0.4:** Clarified the development inner loop (§6.1) — `SimHost` compiles and runs on the workstation against remote Azure services with no deployment step and no storage emulator; Dev Tunnels for notification callbacks; `DefaultAzureCredential` for local sign-in.
 **Changes in 0.3:** Azure-only footprint (§12.4) — no containers, emulators, or local infrastructure in any environment; per-developer Azure SQL databases (§6.1); App Service hosting; notification testing moved to phase 2 as a consequence.
@@ -804,6 +805,14 @@ The swimlane and cluster graph are the one **JavaScript island** in the applicat
 ### 8.8 Kiosk mode
 
 Single page: one live tile per participant plus the swimlane underneath. This is the customer-facing configuration for a screen or projector. Separate browser windows per participant is the workshop configuration, where different people drive different systems — which is also what makes cross-window causality (§9.4) work.
+
+### 8.9 Repository browser
+
+Each participant on the participants page expands to show the contents of its own schema: domain tables first, the infrastructure tables every participant carries grouped below.
+
+The point is to make §6.2 isolation observable rather than merely asserted. Reads go through the participant's own contained SQL user, so the page shows exactly what that participant can see and nothing more; a table it cannot read is reported as unreadable rather than skipped, because under this model that is a finding. Reading through a privileged login would have been simpler and would have shown rows no participant can actually reach, which would quietly contradict the property being demonstrated.
+
+Tables and columns are discovered from the EF model, so the screen tracks the schema without a maintained list going stale beside it. Rows are capped with the true count displayed and the capped read ordered by primary key — an unordered `TOP` may return a different subset per read, which a view claiming to show what is stored cannot afford.
 
 ---
 
