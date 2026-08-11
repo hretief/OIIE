@@ -21,6 +21,9 @@ public sealed record PromotionResult(
     int TagCount,
     IReadOnlyList<string> Findings);
 
+public sealed record RelationshipPublicationResult(
+    int EdgeCount, string? CorrelationId, string? Detail);
+
 /// <summary>
 /// ENG's release workflow.
 ///
@@ -182,6 +185,90 @@ public sealed class EngService(
     }
 
     /// <summary>
+    /// Asserts a directed design relationship between two existing tags, e.g. power
+    /// supply BBFQ0032 supplies pump P-101.
+    ///
+    /// Both ends must already exist. A relationship to a tag ENG has never heard of
+    /// is a design error rather than an instruction to invent the missing end: minting
+    /// it here would put a tag into the model that no one designed, and it would then
+    /// publish as though it were real.
+    ///
+    /// Restating an existing edge updates it rather than duplicating it, matching the
+    /// upsert semantics of <see cref="AddTagAsync"/>.
+    /// </summary>
+    public async Task<TagRelationship> RelateTagsAsync(
+        string fromTagNumber,
+        string toTagNumber,
+        string typeKey,
+        int? order = null,
+        CancellationToken ct = default)
+    {
+        if (string.Equals(fromTagNumber, toTagNumber, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                $"A tag cannot be related to itself ({fromTagNumber}).", nameof(toTagNumber));
+        }
+
+        await using var db = factory.Create(ParticipantId);
+
+        var relationshipType = await db.Set<TagRelationshipType>()
+            .FirstOrDefaultAsync(t => t.Key == typeKey, ct)
+            ?? throw new ArgumentException(
+                $"Unknown relationship type '{typeKey}'.", nameof(typeKey));
+
+        var from = await db.Set<Tag>().FirstOrDefaultAsync(t => t.TagNumber == fromTagNumber, ct)
+            ?? throw new ArgumentException(
+                $"No tag '{fromTagNumber}' to relate from.", nameof(fromTagNumber));
+
+        var to = await db.Set<Tag>().FirstOrDefaultAsync(t => t.TagNumber == toTagNumber, ct)
+            ?? throw new ArgumentException(
+                $"No tag '{toTagNumber}' to relate to.", nameof(toTagNumber));
+
+        var existing = await db.Set<TagRelationship>().FirstOrDefaultAsync(
+            r => r.FromTagId == from.Id && r.ToTagId == to.Id && r.TypeKey == typeKey, ct);
+
+        var relationship = existing ?? new TagRelationship
+        {
+            FederationId = identities.Mint(),
+            FromTagId = from.Id,
+            ToTagId = to.Id,
+            TypeKey = typeKey
+        };
+
+        relationship.Order = order;
+        relationship.UpdatedAt = DateTimeOffset.UtcNow;
+
+        if (existing is null)
+        {
+            db.Set<TagRelationship>().Add(relationship);
+        }
+
+        db.Provenance.Add(new ProvenanceEntry
+        {
+            EntityType = nameof(TagRelationship),
+            EntityKey = $"{fromTagNumber}->{toTagNumber}",
+            Action = existing is null ? ProvenanceAction.Created : ProvenanceAction.Updated,
+            Actor = "operator",
+            ChangeSummary = JsonSerializer.Serialize(new
+            {
+                from = fromTagNumber,
+                to = toTagNumber,
+                typeKey,
+                relationshipType.ForwardRole,
+                relationshipType.InverseRole
+            })
+        });
+
+        await db.SaveChangesAsync(ct);
+
+        logger.LogInformation(
+            "{From} {Role} {To}",
+            fromTagNumber, relationshipType.ForwardRole, toTagNumber);
+
+        return relationship;
+    }
+
+    /// <summary>
     /// Promotes a named version. The validation gate is mechanical rather than
     /// gestural: every rule below is checkable, and a finding blocks release.
     /// </summary>
@@ -259,6 +346,66 @@ public sealed class EngService(
     }
 
     /// <summary>
+    /// Publishes the relationships among tags already released.
+    ///
+    /// A separate release from the segments, and deliberately not part of promotion.
+    /// A receiver can only store an edge once both ends exist in its own model, and a
+    /// registry that stewards incoming segments does not have them until a steward has
+    /// approved. Riding along with the segments would mean every edge arrived naming
+    /// two locations that did not yet exist, and being rejected for it — so the edges
+    /// are a second act, published once the ends have landed.
+    ///
+    /// Only edges whose both ends are Published are sent. One end still in draft is not
+    /// a partial edge to repair later; it is one the receiver would have to reject.
+    /// </summary>
+    public async Task<RelationshipPublicationResult> PublishRelationshipsAsync(
+        string channelUri, string? topic, CancellationToken ct = default)
+    {
+        await using var db = factory.Create(ParticipantId);
+
+        var publishedIds = await db.Set<Tag>()
+            .Where(t => t.Maturity == TagMaturity.Published)
+            .Select(t => t.Id)
+            .ToListAsync(ct);
+
+        var edges = await db.Set<TagRelationship>()
+            .Where(r => publishedIds.Contains(r.FromTagId) && publishedIds.Contains(r.ToTagId))
+            .OrderBy(r => r.Id)
+            .ToListAsync(ct);
+
+        if (edges.Count == 0)
+        {
+            return new RelationshipPublicationResult(0, null, "No relationships with both ends published.");
+        }
+
+        var correlationId = Guid.NewGuid().ToString();
+
+        db.Outbox.Add(new OutboxItem
+        {
+            ContainerType = nameof(TagRelationship),
+            ContainerKey = "eng:DesignRelationships",
+            EntityType = nameof(TagRelationship),
+            EntityKeys = JsonSerializer.Serialize(edges.Select(r => r.FederationId.ToString())),
+            ChangeKind = ChangeKind.Add,
+            Verb = "Sync",
+            Noun = "SegmentMeshConnections",
+            Pattern = MessagePattern.Publication,
+            ChannelUri = channelUri,
+            Topic = topic,
+            CorrelationId = correlationId,
+            State = OutboxState.Pending,
+            ScenarioRunId = runContext.CurrentRunId
+        });
+
+        await db.SaveChangesAsync(ct);
+
+        logger.LogInformation(
+            "Published {Count} relationship(s) [{CorrelationId}]", edges.Count, correlationId);
+
+        return new RelationshipPublicationResult(edges.Count, correlationId, null);
+    }
+
+    /// <summary>
     /// The gate. Kept deliberately shallow for now — classification conformance
     /// against the effective property set arrives with the RDL participant.
     /// </summary>
@@ -321,8 +468,12 @@ public sealed class SyncSegmentsBuilder : IBodBuilder
             .OrderBy(t => t.TagNumber)
             .ToListAsync(ct);
 
+        // ChangeKind still records local intent, but Add and Change both publish as
+        // Replace: the receiver upserts either way, so the distinction never reached
+        // anything that acted on it. Delete stays distinct because it is the one case
+        // that means something different on the far side.
         var bod = new SyncSegments(
-            item.ChangeKind == ChangeKind.Add ? ActionCodes.Add : ActionCodes.Change);
+            item.ChangeKind == ChangeKind.Delete ? ActionCodes.Delete : ActionCodes.Replace);
 
         bod.ApplicationArea.BODID = item.CorrelationId;
         bod.ApplicationArea.Sender = new Sender
@@ -463,4 +614,131 @@ public sealed class SyncSegmentsBuilder : IBodBuilder
             ValueContent = new TextContent { Text = value }
         });
     }
+}
+
+/// <summary>
+/// Builds SyncSegmentMeshConnections from committed TagRelationship rows.
+///
+/// The mesh exists only here. ENG stores edges with no notion of a network, but CCOM
+/// has no envelope for a free-standing connection, so one implicit mesh is minted per
+/// release to carry them. Its identity is derived from the release container, so
+/// republishing the same version yields the same mesh rather than a new one each time.
+///
+/// Segments at either end are sent as references — identity and code only, no
+/// attributes. The receiver already has them from the Sync/Segments message that
+/// preceded this one; restating their content here would give it two sources for the
+/// same facts and no rule for which wins.
+/// </summary>
+public sealed class SyncSegmentConnectionsBuilder : IBodBuilder
+{
+    public (string Verb, string Noun) Handles => ("Sync", "SegmentMeshConnections");
+
+    public string? ParticipantId => EngService.ParticipantId;
+
+    public async Task<XDocument> BuildAsync(
+        ParticipantContext participant,
+        ParticipantDbContext db,
+        OutboxItem item,
+        CancellationToken ct)
+    {
+        var keys = (JsonSerializer.Deserialize<List<string>>(item.EntityKeys) ?? [])
+            .Select(k => Guid.TryParse(k, out var id) ? id : Guid.Empty)
+            .Where(id => id != Guid.Empty)
+            .ToList();
+
+        var edges = await db.Set<TagRelationship>()
+            .Where(r => keys.Contains(r.FederationId))
+            .OrderBy(r => r.Id)
+            .ToListAsync(ct);
+
+        // Both endpoints and the type vocabulary, resolved in one pass rather than
+        // per edge: the endpoint sets overlap heavily in any realistic release.
+        var tagIds = edges.SelectMany(r => new[] { r.FromTagId, r.ToTagId }).Distinct().ToList();
+
+        var tags = await db.Set<Tag>()
+            .Where(t => tagIds.Contains(t.Id))
+            .ToDictionaryAsync(t => t.Id, ct);
+
+        var typeKeys = edges.Select(r => r.TypeKey).Distinct().ToList();
+
+        var types = await db.Set<TagRelationshipType>()
+            .Where(t => typeKeys.Contains(t.Key))
+            .ToDictionaryAsync(t => t.Key, ct);
+
+        var bod = new SyncSegmentMeshConnections(
+            item.ChangeKind == ChangeKind.Delete ? ActionCodes.Delete : ActionCodes.Replace);
+
+        bod.ApplicationArea.BODID = item.CorrelationId;
+        bod.ApplicationArea.Sender = new Sender
+        {
+            LogicalID = participant.Config.LogicalId,
+            ComponentID = "SimHost",
+            ReferenceID = item.ContainerKey
+        };
+
+        var infoSource = new InfoSource
+        {
+            UUID = CcomUuid.ForInfoSource(participant.Config.SourceId),
+            ShortName = participant.Config.SourceId
+        };
+
+        var mesh = new SegmentMesh
+        {
+            UUID = CcomUuid.FromKey("SegmentMesh", $"{participant.Config.SourceId}\u001f{item.ContainerKey}"),
+            IDInInfoSource = item.ContainerKey,
+            InfoSource = infoSource,
+            ShortName = item.ContainerKey,
+            Description = "Design relationships released together."
+        };
+
+        foreach (var edge in edges)
+        {
+            if (!tags.TryGetValue(edge.FromTagId, out var from) ||
+                !tags.TryGetValue(edge.ToTagId, out var to))
+            {
+                continue;
+            }
+
+            types.TryGetValue(edge.TypeKey, out var type);
+
+            mesh.Connection.Add(new SegmentConnection
+            {
+                UUID = edge.FederationId,
+                IDInInfoSource = edge.FederationId.ToString(),
+                InfoSource = infoSource,
+                Type = new ConnectionType
+                {
+                    UUID = CcomUuid.ForReferenceData(participant.Config.SourceId, edge.TypeKey),
+                    IDInInfoSource = edge.TypeKey,
+                    InfoSource = infoSource,
+                    ShortName = type?.ForwardRole ?? edge.TypeKey,
+                    // The inverse reading travels with the type so the receiver can
+                    // render the edge from either end without holding ENG's
+                    // vocabulary. Sending only "Supplies" would leave a registry
+                    // displaying the pump unable to say anything about the supply.
+                    Description = type?.InverseRole
+                },
+                From = Reference(from, infoSource),
+                To = Reference(to, infoSource),
+                Order = edge.Order?.ToString()
+            });
+        }
+
+        bod.With(mesh);
+
+        return bod.CreateDocument();
+    }
+
+    /// <summary>
+    /// A segment as an endpoint: enough to resolve it, and nothing more.
+    /// </summary>
+    private static Segment Reference(Tag tag, InfoSource infoSource) => new()
+    {
+        UUID = tag.FederationId,
+        IDInInfoSource = tag.TagNumber is { Length: > 0 }
+            ? tag.TagNumber
+            : tag.FederationId.ToString(),
+        InfoSource = infoSource,
+        ShortName = tag.TagNumber
+    };
 }

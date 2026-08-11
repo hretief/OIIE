@@ -406,6 +406,22 @@ public class ParticipantDbContext : DbContext
             entity.HasIndex(e => new { e.ParentLocationCode, e.ChildLocationCode }).IsUnique();
         });
 
+        modelBuilder.Entity<LocationConnection>(entity =>
+        {
+            entity.ToTable("LocationConnection");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.FromLocationCode).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.ToLocationCode).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.TypeKey).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.ForwardRole).HasMaxLength(128);
+            entity.Property(e => e.InverseRole).HasMaxLength(128);
+            entity.Property(e => e.SourceParticipant).HasMaxLength(64).IsRequired();
+            entity.HasIndex(e => e.FederationId).IsUnique();
+            entity.HasIndex(e => new { e.FromLocationCode, e.ToLocationCode, e.TypeKey }).IsUnique();
+            entity.HasIndex(e => e.FromLocationCode);
+            entity.HasIndex(e => e.ToLocationCode);
+        });
+
         modelBuilder.Entity<StewardshipItem>(entity =>
         {
             entity.ToTable("StewardshipItem");
@@ -465,6 +481,34 @@ public class ParticipantDbContext : DbContext
             entity.Property(e => e.Rule).HasMaxLength(64).IsRequired();
             entity.Property(e => e.Detail).HasMaxLength(1000).IsRequired();
             entity.HasIndex(e => e.NamedVersionId);
+        });
+
+        modelBuilder.Entity<TagRelationshipType>(entity =>
+        {
+            entity.ToTable("TagRelationshipType");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Key).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.ForwardRole).HasMaxLength(128).IsRequired();
+            entity.Property(e => e.InverseRole).HasMaxLength(128).IsRequired();
+            entity.Property(e => e.Description).HasMaxLength(400);
+            entity.HasIndex(e => e.Key).IsUnique();
+        });
+
+        modelBuilder.Entity<TagRelationship>(entity =>
+        {
+            entity.ToTable("TagRelationship");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.TypeKey).HasMaxLength(200).IsRequired();
+            entity.HasIndex(e => e.FederationId).IsUnique();
+
+            // One assertion per direction per kind. Re-sending the same edge is a
+            // restatement, not a second relationship.
+            entity.HasIndex(e => new { e.FromTagId, e.ToTagId, e.TypeKey }).IsUnique();
+
+            // Reading an edge from its sink end is the "Supplied By" direction, and
+            // is as common as reading it from its source, so both ends are indexed.
+            entity.HasIndex(e => e.FromTagId);
+            entity.HasIndex(e => e.ToTagId);
         });
     }
 }

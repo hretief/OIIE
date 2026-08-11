@@ -37,7 +37,7 @@ public class ScenarioRun
 {
     public Guid Id { get; set; } = Guid.NewGuid();
 
-    /// <summary>File stem, e.g. uc01-handover.</summary>
+    /// <summary>File stem, e.g. sc01-design-release.</summary>
     public string ScenarioId { get; set; } = string.Empty;
 
     public string? Title { get; set; }

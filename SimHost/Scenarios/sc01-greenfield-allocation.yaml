@@ -1,15 +1,19 @@
-# uc02 - greenfield identity allocation.
+# Scenario 1 - publish engineering design data from ENG to REG-LOCATION, with the
+# identity allocated rather than authored.
+#
+# OpenO&M use case: UC02 (greenfield design).
 #
 # A designer starts a new chemical facility. They decide they need a valve, so they
 # ask the identity service for the next available identity and are given both a
 # FederationId and a code -- neither of which they chose.
 #
-# That is the distinction this scenario exists to prove. uc01 authors TIC-106 in the
-# scenario file, so the code is a given and only the identity is minted. Here the
-# code is allocated too, and the scenario deliberately does not know it in advance:
-# every assertion below selects on provenance, on relationships between rows, or on
-# the shape of a value, never on a literal -- because a literal would mean the file
-# had assigned what the service is supposed to assign.
+# That is the distinction this scenario exists to prove, and why it sits alongside
+# sc01-design-release rather than replacing it. That file authors TIC-106, so the code
+# is a given and only the identity is minted. Here the code is allocated too, and the
+# scenario deliberately does not know it in advance: every assertion below selects on
+# provenance, on relationships between rows, or on the shape of a value, never on a
+# literal -- because a literal would mean the file had assigned what the service is
+# supposed to assign.
 #
 # This is also why the scenario is safe to re-run. Nothing here assumes an empty
 # series: the assertions say "the newest allocation", "one greater than the previous
@@ -19,8 +23,10 @@
 #
 # The identity then travels ENG -> REG-LOCATION -> MMS unchanged. Each participant
 # adds its own code for the same thing and none of them mints a second identity.
-id: uc02-greenfield
+id: sc01-greenfield-allocation
 name: Greenfield identity allocation
+scenario: 1
+useCase: UC02
 
 participants:
   - eng
@@ -129,12 +135,39 @@ steps:
       FederationId IN (
         SELECT FederationId FROM eng.Tag GROUP BY FederationId HAVING COUNT(*) > 1)
 
+  # -- The two valves are related --------------------------------------------------
+  #
+  # The design says these two valves are on the same line, and that is a fact about
+  # the plant rather than a note about either tag. Neither code is written here: both
+  # were allocated moments ago, so the ends are named by the steps that produced them.
+  # Writing P-001 and P-002 would pass on a clean store and fail on a warm one, which
+  # is the exact failure mode the rest of this file is built to avoid.
+  - id: relate-valves
+    at: eng
+    action: relate_tags
+    args:
+      fromStep: allocate-valve
+      toStep: allocate-second-valve
+      type: eng:FeedsInto
+
+  # The edge exists and joins the two tags this run created. Selecting through the
+  # tag table on maturity rather than on a literal keeps the assertion honest about
+  # which pair it means without naming either code.
+  - at: eng
+    assert: store_contains
+    entity: TagRelationship
+    where: >-
+      TypeKey = 'eng:FeedsInto'
+      AND FromTagId <> ToTagId
+      AND FromTagId IN (SELECT Id FROM eng.Tag WHERE TagNumber LIKE 'P-%')
+      AND ToTagId IN (SELECT Id FROM eng.Tag WHERE TagNumber LIKE 'P-%')
+
   # -- ENG releases --------------------------------------------------------------
   - id: release
     at: eng
     action: promote_named_version
     args:
-      name: uc02 greenfield
+      name: sc01 greenfield allocation
 
   - at: eng
     assert: outbox_state
@@ -172,7 +205,7 @@ steps:
     at: reg-location
     action: approve_stewardship
     args:
-      decidedBy: uc02
+      decidedBy: sc01
 
   # The registry issued its own code and kept the identity it was sent. This is the
   # assertion that distinguishes adoption from re-minting: LocationCode differs from
@@ -212,6 +245,39 @@ steps:
     noun: Segments
     within: 60s
 
+  # -- The relationship follows the tags ------------------------------------------
+  #
+  # Only now, and for the same reason as in scenario 11: REG-LOCATION states edges between
+  # its own location codes, and those codes did not exist until the approval above.
+  # Publishing alongside the segments would have named two locations the registry had
+  # not yet issued, which it rejects by design.
+  - id: publish-relationships
+    at: eng
+    action: publish_relationships
+
+  - at: reg-location
+    assert: message_received
+    channel: /OIIE-SANDBOX/Enterprise/Site/Eng
+    verb: Sync
+    noun: SegmentMeshConnections
+    within: 60s
+
+  # The edge arrived restated in the registry's vocabulary. Both ends are LOC- codes
+  # rather than the P- codes ENG sent, which is what proves the endpoints were
+  # translated rather than copied, and the inverse reading came across so the registry
+  # can describe the edge from either end.
+  - at: reg-location
+    assert: store_contains
+    entity: LocationConnection
+    where: >-
+      TypeKey = 'eng:FeedsInto'
+      AND ForwardRole = 'Feeds Into'
+      AND InverseRole = 'Fed From'
+      AND FromLocationCode LIKE 'LOC-%'
+      AND ToLocationCode LIKE 'LOC-%'
+      AND FromLocationCode <> ToLocationCode
+    within: 60s
+
   # -- MMS consumes ---------------------------------------------------------------
   - at: mms
     assert: message_received
@@ -225,7 +291,7 @@ steps:
 
   # The end of the chain, and the payoff.
   #
-  # In uc01 this same row arrives with Cirid IS NULL and MMS has no idea what it is
+  # In sc02-operations-release this same row arrives with Cirid IS NULL and MMS has no idea what it is
   # holding until the registry is asked. Here it arrives already identified, because
   # the identity was minted once at the design tool and carried the whole way. MMS
   # still holds its own equipment number -- a third code -- but not a third identity.
@@ -267,9 +333,9 @@ steps:
   # is allocated during the run -- that is the entire point of it. The engine cannot
   # yet carry a value from a step into a later assertion, so the only way to assert
   # a literal would be to go back to authoring the code in this file, which is the
-  # thing uc02 exists to stop doing.
+  # thing this scenario exists to stop doing.
   #
-  # uc01 already covers cir_registered against an authored identifier, so nothing is
+  # sc01-design-release already covers cir_registered against an authored identifier, so nothing is
   # lost by leaving it out; asserting a guessed value here would be worse than not
   # asserting at all, because it would pass for the wrong reason on a clean store and
   # fail for the wrong reason on a warm one.

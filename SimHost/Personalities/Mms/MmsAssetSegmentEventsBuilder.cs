@@ -61,7 +61,7 @@ public sealed class MmsAssetSegmentEventsBuilder : IBodBuilder
             .OrderBy(w => w.OrderNumber)
             .ToListAsync(ct);
 
-        var bod = new SyncAssetSegmentEvents(ActionCodes.Add);
+        var bod = new SyncAssetSegmentEvents(ActionCodes.Replace);
 
         bod.ApplicationArea.BODID = item.CorrelationId;
         bod.ApplicationArea.Sender = new Sender

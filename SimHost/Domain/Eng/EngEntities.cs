@@ -89,6 +89,69 @@ public class NamedVersion
 }
 
 /// <summary>
+/// The kind of a design relationship, held as data rather than an enum so that the
+/// inverse reading is derived rather than hard-coded: one stored edge is read as
+/// "Supplies" from its source end and "Supplied By" from its sink end. Adding a
+/// relationship kind is then a row, not a deployment.
+/// </summary>
+public class TagRelationshipType
+{
+    public long Id { get; set; }
+
+    /// <summary>Stable key, e.g. eng:Supplies. Carried across the hop as the connection's type.</summary>
+    public string Key { get; set; } = string.Empty;
+
+    /// <summary>Reading from source to sink, e.g. "Supplies".</summary>
+    public string ForwardRole { get; set; } = string.Empty;
+
+    /// <summary>Reading from sink to source, e.g. "Supplied By".</summary>
+    public string InverseRole { get; set; } = string.Empty;
+
+    public string? Description { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// A directed logical relationship asserted at design time between two tags, e.g.
+/// power supply BBFQ0032 supplies pump P-101. Stored once, in the forward direction:
+/// FromTagId is the source and ToTagId the sink, and the reverse reading comes from
+/// the type's inverse role rather than a second row that could disagree with it.
+///
+/// Deliberately not a CCOM SegmentConnection, and with no notion of a network or a
+/// mesh, in keeping with the rest of this model (spec §5.3). CCOM has no envelope for
+/// a free-standing connection, so the publisher wraps these edges in a mesh at the
+/// boundary; that container is a wire-format artefact and does not belong here.
+/// </summary>
+public class TagRelationship
+{
+    public long Id { get; set; }
+
+    /// <summary>
+    /// The edge's own identity, minted here because the relationship is itself an
+    /// assertion ENG makes and CCOM models a connection as an entity with a lifecycle.
+    /// Independent of the identities of the tags at either end.
+    /// </summary>
+    public Guid FederationId { get; set; }
+
+    /// <summary>Source: the supplier in a Supplies edge.</summary>
+    public long FromTagId { get; set; }
+
+    /// <summary>Sink: the supplied in a Supplies edge.</summary>
+    public long ToTagId { get; set; }
+
+    /// <summary>References <see cref="TagRelationshipType.Key"/>.</summary>
+    public string TypeKey { get; set; } = string.Empty;
+
+    /// <summary>Sequence among sibling edges, where the design gives one. Maps to the connection's Order.</summary>
+    public int? Order { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
 /// Output of the promotion gate. Blocks publication, and is the demonstrable
 /// failure the release workflow needs in order to read as real.
 /// </summary>

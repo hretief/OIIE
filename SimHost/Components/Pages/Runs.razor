@@ -24,7 +24,7 @@ else
         <select @bind="_scenarioId">
             @foreach (var scenario in _scenarios)
             {
-                <option value="@scenario.Id">@scenario.Id</option>
+                <option value="@scenario.Id">@Label(scenario)</option>
             }
         </select>
 
@@ -48,6 +48,14 @@ else
             <button class="btn" @onclick="@(() => _confirmingReset = false)">Cancel</button>
         }
     </div>
+
+    @if (Selected()?.Requires is { Count: > 0 } requires)
+    {
+        <p class="small muted">
+            Runs against state left by @string.Join(", ", requires). Run that first —
+            this scenario does not reset.
+        </p>
+    }
 
     @if (_confirmingReset)
     {
@@ -173,7 +181,7 @@ else
 
         try
         {
-            var runId = await Launcher.StartAsync(_scenarioId);
+            var runId = await Launcher.StartAsync(_scenarioId, Nav.BaseUri);
             Nav.NavigateTo($"/runs/{runId}");
         }
         catch (Exception ex)
@@ -181,6 +189,22 @@ else
             _error = ex.Message;
             _starting = false;
         }
+    }
+
+    private ScenarioDefinition? Selected() =>
+        _scenarios.FirstOrDefault(s =>
+            string.Equals(s.Id, _scenarioId, StringComparison.OrdinalIgnoreCase));
+
+    // Scenario number leads because that is what the exchange is called; the use case
+    // trails in parentheses so readers who know the OpenO&M catalogue can still place
+    // it, without the label implying the use case is what runs.
+    private static string Label(ScenarioDefinition scenario)
+    {
+        var head = scenario.Scenario is { } number
+            ? $"Scenario {number} — {scenario.Name ?? scenario.Id}"
+            : scenario.Name ?? scenario.Id;
+
+        return scenario.UseCase is { } useCase ? $"{head} ({useCase})" : head;
     }
 
     private static string Duration(ScenarioRun run) =>

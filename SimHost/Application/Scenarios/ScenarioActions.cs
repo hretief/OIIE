@@ -16,9 +16,23 @@ namespace SimHost.Application.Scenarios;
 /// arguments is the action's own business, and centralising it here would mean
 /// touching this type every time the vocabulary grows.
 /// </summary>
-public class ScenarioActionContext(ScenarioItem item)
+public class ScenarioActionContext(
+    ScenarioItem item,
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, string?>>? stepOutputs = null)
 {
     public ScenarioItem Item { get; } = item;
+
+    /// <summary>
+    /// What earlier steps produced, keyed by their <c>id</c> then by field name.
+    ///
+    /// Exists because a value the scenario cannot know in advance is still a value a
+    /// later step may need to name. The greenfield case is the whole reason: uc02
+    /// asks the identity service to allocate a code, so the file cannot write that
+    /// code down without asserting the thing it is supposed to be testing.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyDictionary<string, string?>> StepOutputs { get; }
+        = stepOutputs ?? new Dictionary<string, IReadOnlyDictionary<string, string?>>(
+            StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The <c>at</c> key. Actions that need a participant demand it explicitly.</summary>
     public string? At => Item.At;
@@ -33,6 +47,35 @@ public class ScenarioActionContext(ScenarioItem item)
         Item.Args.TryGetValue(key, out var value) && value is not null
             ? Convert.ToString(value, CultureInfo.InvariantCulture)
             : null;
+
+    /// <summary>
+    /// Reads a named field from an earlier step's result.
+    ///
+    /// Both the step and the field are reported by name when either is missing,
+    /// because the alternative — a null flowing on into the action — surfaces later as
+    /// "no tag '' to relate from", which names neither the mistake nor its location.
+    /// </summary>
+    public string RequireFromStep(string stepId, string field)
+    {
+        if (!StepOutputs.TryGetValue(stepId, out var output))
+        {
+            var known = StepOutputs.Count == 0
+                ? "no earlier step recorded a result"
+                : $"known steps: {string.Join(", ", StepOutputs.Keys)}";
+
+            throw new ScenarioActionException(
+                $"{Item.Describe()}: no earlier step with id '{stepId}' ({known}).");
+        }
+
+        if (!output.TryGetValue(field, out var value) || string.IsNullOrEmpty(value))
+        {
+            throw new ScenarioActionException(
+                $"{Item.Describe()}: step '{stepId}' produced no '{field}' " +
+                $"(it produced: {string.Join(", ", output.Keys)}).");
+        }
+
+        return value;
+    }
 
     public decimal? GetDecimal(string key)
     {
@@ -138,6 +181,68 @@ public sealed class CreateTagAction(EngService eng) : IScenarioAction
 }
 
 /// <summary>
+/// Asserts a design relationship between two existing ENG tags.
+///
+/// Direction is explicit: <c>from</c> is the source and <c>to</c> the sink, so
+/// "BBFQ0032 supplies P-101" is authored as from BBFQ0032 to P-101. The reverse
+/// reading is not authored at all — it comes from the relationship type.
+///
+/// Each end is named either literally (<c>from</c>) or by the step that produced it
+/// (<c>fromStep</c>). The second form exists for the greenfield case, where the code
+/// was allocated during the run and writing it into the file would defeat the point
+/// of allocating it.
+/// </summary>
+public sealed class RelateTagsAction(EngService eng) : IScenarioAction
+{
+    public string Name => "relate_tags";
+
+    public async Task<ScenarioActionResult> ExecuteAsync(ScenarioActionContext context, CancellationToken ct)
+    {
+        var from = EndPoint(context, "from");
+        var to = EndPoint(context, "to");
+
+        var relationship = await eng.RelateTagsAsync(
+            from,
+            to,
+            context.RequireString("type"),
+            (int?)context.GetDecimal("order"),
+            ct);
+
+        return new ScenarioActionResult(
+            $"{from} {context.RequireString("type")} {to}.",
+            new
+            {
+                relationship.Id,
+                FederationId = relationship.FederationId.ToString(),
+                relationship.TypeKey,
+                From = from,
+                To = to
+            });
+    }
+
+    /// <summary>
+    /// Resolves one end from whichever form the author used, refusing both and
+    /// neither. Silently preferring one would make a scenario that names an end twice
+    /// read as though both were honoured.
+    /// </summary>
+    private static string EndPoint(ScenarioActionContext context, string key)
+    {
+        var literal = context.GetString(key);
+        var step = context.GetString($"{key}Step");
+
+        return (literal, step) switch
+        {
+            (not null, not null) => throw new ScenarioActionException(
+                $"{context.Item.Describe()}: '{key}' and '{key}Step' are both set; use one."),
+            (not null, null) => literal,
+            (null, not null) => context.RequireFromStep(step, "tagNumber"),
+            _ => throw new ScenarioActionException(
+                $"{context.Item.Describe()}: missing required argument '{key}' or '{key}Step'.")
+        };
+    }
+}
+
+/// <summary>
 /// ENG's release event.
 ///
 /// A failed validation gate is returned as a result, not thrown: the gate refusing
@@ -167,6 +272,36 @@ public sealed class PromoteNamedVersionAction(
     }
 }
 
+/// <summary>
+/// Publishes ENG's design relationships.
+///
+/// Separate from promote_named_version because the edges can only be stored by a
+/// receiver that already holds both ends: a registry stewarding incoming segments
+/// has them only once approved, so this runs after that approval rather than
+/// alongside the release that proposed them.
+/// </summary>
+public sealed class PublishRelationshipsAction(
+    EngService eng, ParticipantRegistry registry) : IScenarioAction
+{
+    public string Name => "publish_relationships";
+
+    public async Task<ScenarioActionResult> ExecuteAsync(ScenarioActionContext context, CancellationToken ct)
+    {
+        var publisher = ScenarioChannels.RequirePublisher(registry, EngService.ParticipantId);
+
+        var result = await eng.PublishRelationshipsAsync(
+            publisher.ChannelUri,
+            publisher.Topics.FirstOrDefault(),
+            ct);
+
+        return new ScenarioActionResult(
+            result.EdgeCount > 0
+                ? $"Published {result.EdgeCount} relationship(s)."
+                : result.Detail ?? "Nothing to publish.",
+            result);
+    }
+}
+
 /// <summary>REG-LOCATION's release event: approve the stewardship queue and republish.</summary>
 public sealed class ApproveStewardshipAction(
     RegLocationService service, ParticipantRegistry registry) : IScenarioAction
@@ -182,6 +317,16 @@ public sealed class ApproveStewardshipAction(
             publisher.Topics.FirstOrDefault(),
             context.GetString("decidedBy") ?? "steward",
             ct);
+
+        // An empty queue is a failure, not a no-op. The step exists to release something,
+        // so approving nothing means the proposal had not arrived yet — and letting that
+        // pass defers the error to a later step where the cause is no longer visible.
+        if (result.Approved == 0 && result.Rejected == 0)
+        {
+            throw new ScenarioActionException(
+                "The stewardship queue at REG-LOCATION was empty, so nothing was released. "
+                + "Wait for the proposal to arrive before approving it.");
+        }
 
         return new ScenarioActionResult(
             $"Approved {result.Approved}, rejected {result.Rejected}.", result);

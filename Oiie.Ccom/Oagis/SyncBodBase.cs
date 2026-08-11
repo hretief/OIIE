@@ -21,7 +21,13 @@ public abstract class SyncBodBase<TNoun> : CcomBod<Sync, TNoun>
 {
     private readonly string _actionCode;
 
-    protected SyncBodBase() : this(ActionCodes.Add)
+    // Replace rather than Add, because that is what every receiver in the sandbox
+    // actually does: ingest handlers upsert, keyed on the sender's identifier. A BOD
+    // announcing Add for a row the receiver already holds would be describing an
+    // operation nobody performs, and since no handler reads the action code, nothing
+    // would catch the lie. Replace states the real contract -- "this is the current
+    // truth for this key" -- and makes republication idempotent by construction.
+    protected SyncBodBase() : this(ActionCodes.Replace)
     {
     }
 

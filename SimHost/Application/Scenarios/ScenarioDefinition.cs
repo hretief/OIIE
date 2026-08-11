@@ -1,4 +1,5 @@
 using System.Globalization;
+using SimHost.Domain.Sandbox;
 
 namespace SimHost.Application.Scenarios;
 
@@ -10,10 +11,38 @@ namespace SimHost.Application.Scenarios;
 /// </summary>
 public sealed class ScenarioDefinition
 {
-    /// <summary>File stem and identity, e.g. uc01-handover.</summary>
+    /// <summary>File stem and identity, e.g. sc01-design-release.</summary>
     public string Id { get; init; } = string.Empty;
 
     public string? Name { get; init; }
+
+    /// <summary>
+    /// The OpenO&amp;M scenario number this file realises, e.g. 1 for the ENG to
+    /// REG-LOCATION publish.
+    ///
+    /// Scenario number rather than use case number is the primary identity because the
+    /// scenario is what actually runs: a numbered exchange between two named systems.
+    /// Use cases group scenarios by business intent and several collapse onto the same
+    /// exchange, so naming a file after one says less about what it does.
+    /// </summary>
+    public int? Scenario { get; init; }
+
+    /// <summary>
+    /// The OpenO&amp;M use case this scenario belongs to, e.g. UC01. Cross-reference
+    /// only — carried so the sandbox stays legible to readers who know the use case
+    /// catalogue, never used to select or order a run.
+    /// </summary>
+    public string? UseCase { get; init; }
+
+    /// <summary>
+    /// Scenario ids that must have run before this one can succeed.
+    ///
+    /// Some scenarios consume state that another produces — SC02 republishes what SC01
+    /// put into REG-LOCATION — and without a declared prerequisite the dependent run
+    /// fails deep in its assertions, reporting an empty queue rather than the missing
+    /// upstream run. Declaring it lets the failure name the actual cause.
+    /// </summary>
+    public IReadOnlyList<string> Requires { get; init; } = [];
 
     /// <summary>Participants the scenario touches. Validated against the registry at load.</summary>
     public IReadOnlyList<string> Participants { get; init; } = [];
@@ -91,6 +120,18 @@ public sealed class ScenarioItem
     /// same assertion with a wait tolerates the dispatcher not having caught up.
     /// </summary>
     public TimeSpan? Within { get; init; }
+
+    /// <summary>
+    /// The worst severity this assertion may report — the <c>on_failure</c> key.
+    ///
+    /// Defaults to <see cref="FindingSeverity.Fail"/>, because an assertion that
+    /// cannot fail is not an assertion. <see cref="FindingSeverity.Concern"/> is for
+    /// the case where the condition is genuinely optional in a correct run: an
+    /// observation worth recording and reading, but not evidence of a defect. It
+    /// downgrades the verdict only — the assertion is still evaluated, and what was
+    /// observed is still reported.
+    /// </summary>
+    public FindingSeverity OnFailure { get; init; } = FindingSeverity.Fail;
 
     /// <summary>
     /// Everything else on the item, verbatim. Both an action's <c>args</c> map and an

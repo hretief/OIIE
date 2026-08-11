@@ -49,10 +49,33 @@ public sealed class ScenarioCatalog(
         return definition;
     }
 
-    public IReadOnlyList<string> Validate(ScenarioDefinition definition) =>
-        ScenarioLoader.Validate(
+    public IReadOnlyList<string> Validate(ScenarioDefinition definition)
+    {
+        var errors = ScenarioLoader.Validate(
             definition,
             participants.All.Select(p => p.ParticipantId).ToHashSet(StringComparer.OrdinalIgnoreCase),
             actions.Names,
-            assertions.Names);
+            assertions.Names).ToList();
+
+        // A prerequisite naming a scenario that does not exist is a typo that would
+        // otherwise surface as a passing run: nothing checks it, so the dependency is
+        // silently unenforced. Checked here rather than in the loader because only the
+        // catalogue knows what other files are on disk.
+        if (definition.Requires.Count > 0)
+        {
+            var known = LoadAll()
+                .Select(d => d.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var required in definition.Requires)
+            {
+                if (!known.Contains(required))
+                {
+                    errors.Add($"requires: '{required}' is not a scenario in {Root}");
+                }
+            }
+        }
+
+        return errors;
+    }
 }

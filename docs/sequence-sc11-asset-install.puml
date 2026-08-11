@@ -1,4 +1,4 @@
-@startuml uc05-asset-install
+@startuml sc11-asset-install
 title Use Case 5, Scenario 11 — asset installation and removal updates\nMMS publishes to O&M systems
 
 skinparam responseMessageBelowArrow true

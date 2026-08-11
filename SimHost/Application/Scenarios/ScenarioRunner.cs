@@ -107,6 +107,9 @@ public sealed class ScenarioRunner(
 
             var ordinal = 0;
 
+            var stepOutputs = new Dictionary<string, IReadOnlyDictionary<string, string?>>(
+                StringComparer.OrdinalIgnoreCase);
+
             foreach (var item in scenario.Items)
             {
                 ct.ThrowIfCancellationRequested();
@@ -119,7 +122,7 @@ public sealed class ScenarioRunner(
 
                 ordinal = item.Ordinal;
 
-                var step = await ExecuteAsync(db, run, item, ct);
+                var step = await ExecuteAsync(db, run, item, stepOutputs, ct);
 
                 if (step.Outcome == FindingSeverity.Fail)
                 {
@@ -238,7 +241,11 @@ public sealed class ScenarioRunner(
     }
 
     private async Task<ScenarioStepRun> ExecuteAsync(
-        SandboxDbContext db, ScenarioRun run, ScenarioItem item, CancellationToken ct)
+        SandboxDbContext db,
+        ScenarioRun run,
+        ScenarioItem item,
+        Dictionary<string, IReadOnlyDictionary<string, string?>> stepOutputs,
+        CancellationToken ct)
     {
         var step = new ScenarioStepRun
         {
@@ -258,10 +265,15 @@ public sealed class ScenarioRunner(
         try
         {
             var result = await actions.Get(item.Action!)
-                .ExecuteAsync(new ScenarioActionContext(item), ct);
+                .ExecuteAsync(new ScenarioActionContext(item, stepOutputs), ct);
 
             step.ResultJson = Serialize(new { result.Summary, result.Payload });
             step.Outcome = FindingSeverity.Pass;
+
+            if (item.StepId is { } stepId && result.Payload is { } payload)
+            {
+                stepOutputs[stepId] = Flatten(payload);
+            }
 
             logger.LogInformation(
                 "Scenario {ScenarioId} step {Ordinal} {Action}: {Summary} ({Elapsed}ms)",
@@ -307,6 +319,15 @@ public sealed class ScenarioRunner(
             result.Owner = outcome.Owner;
             result.Observed = outcome.Observed;
             result.Suggests = outcome.Suggests;
+
+            // An assertion the author marked optional still runs and still reports what
+            // it saw; only the verdict softens. Suppressing the evaluation instead would
+            // hide the observation that makes an intermittent condition diagnosable.
+            if (result.Severity == FindingSeverity.Fail
+                && item.OnFailure == FindingSeverity.Concern)
+            {
+                result.Severity = FindingSeverity.Concern;
+            }
         }
         catch (ScenarioActionException ex)
         {
@@ -362,4 +383,38 @@ public sealed class ScenarioRunner(
     }
 
     private static string Serialize(object? value) => JsonSerializer.Serialize(value, Json);
+
+    /// <summary>
+    /// Reduces an action's payload to the scalar fields a later step can name.
+    ///
+    /// Round-tripping through JSON rather than reflecting over the anonymous type
+    /// keeps this honest: a later step can refer to exactly what the run record shows,
+    /// so what a scenario can read and what an operator can see never diverge. Nested
+    /// objects are skipped rather than flattened, because a path syntax would be a
+    /// second way to express something no action currently produces.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string?> Flatten(object payload)
+    {
+        var flattened = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(payload, Json));
+
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            return flattened;
+        }
+
+        foreach (var property in document.RootElement.EnumerateObject())
+        {
+            flattened[property.Name] = property.Value.ValueKind switch
+            {
+                JsonValueKind.String => property.Value.GetString(),
+                JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False =>
+                    property.Value.ToString(),
+                _ => null
+            };
+        }
+
+        return flattened;
+    }
 }

@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using SimHost.Application.Classification;
 using SimHost.Application.Participants;
 using SimHost.Domain.Common;
+using SimHost.Domain.Eng;
 using SimHost.Infrastructure.Sql;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -16,6 +17,21 @@ public sealed class ClassFixture
 {
     public List<PropertyDefinitionFixture> PropertyDefinitions { get; set; } = [];
     public List<ClassFixtureEntry> Classes { get; set; } = [];
+    public List<RelationshipTypeFixture> RelationshipTypes { get; set; } = [];
+}
+
+/// <summary>
+/// The kinds of design relationship a participant recognises. Reference data like
+/// the classes above, and asymmetric for the same reason: a participant that has
+/// never been told what "Supplies" means should behave like one, not silently
+/// acquire the vocabulary.
+/// </summary>
+public sealed class RelationshipTypeFixture
+{
+    public string Key { get; set; } = string.Empty;
+    public string ForwardRole { get; set; } = string.Empty;
+    public string InverseRole { get; set; } = string.Empty;
+    public string? Description { get; set; }
 }
 
 public sealed class PropertyDefinitionFixture
@@ -191,6 +207,20 @@ public sealed class ClassFixtureLoader(
                 if (existing is null) db.ClassProperties.Add(classProperty);
                 classPropertyCount++;
             }
+        }
+
+        foreach (var entry in fixture.RelationshipTypes)
+        {
+            var existing = await db.Set<TagRelationshipType>()
+                .FirstOrDefaultAsync(t => t.Key == entry.Key, ct);
+
+            var type = existing ?? new TagRelationshipType { Key = entry.Key };
+
+            type.ForwardRole = entry.ForwardRole;
+            type.InverseRole = entry.InverseRole;
+            type.Description = entry.Description;
+
+            if (existing is null) db.Set<TagRelationshipType>().Add(type);
         }
 
         await db.SaveChangesAsync(ct);

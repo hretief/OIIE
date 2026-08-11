@@ -5,7 +5,7 @@ title Use Case 10, Scenarios 4/5 — as-built asset handover\nCONSTRUCT → REG-
 ' documents. It was never Use Case 5: that use case is triggered by a completed
 ' maintenance work order, not by construction sign-off, and it owns Scenarios 10
 ' and 11. Scenario 5 belongs here, under Use Case 10.
-' The real Use Case 5 flow is in sequence-uc05-asset-install.puml.
+' The real Use Case 5 flow is in sequence-sc11-asset-install.puml.
 
 skinparam responseMessageBelowArrow true
 skinparam sequenceMessageAlign left

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using SimHost.Application.Participants;
 using SimHost.Domain.Common;
 using SimHost.Domain.Sandbox;
@@ -13,6 +14,11 @@ namespace SimHost.Application.Scenarios;
 /// something in the context of the step that provoked it: "MMS never received" is a
 /// different defect after approve_stewardship than after create_tag.
 /// </summary>
+/// <param name="Bods">
+/// The BODs this step put on the wire, so the payload can be read from the step that
+/// caused it. Empty for steps that only touched local state — most actions never
+/// publish, and an empty list says so more honestly than a dead link would.
+/// </param>
 public sealed record TimelineStep(
     int Ordinal,
     string? StepId,
@@ -22,7 +28,8 @@ public sealed record TimelineStep(
     string? ResultJson,
     FindingSeverity Outcome,
     string? Error,
-    IReadOnlyList<AssertionResult> Assertions)
+    IReadOnlyList<AssertionResult> Assertions,
+    IReadOnlyList<FlowMessage> Bods)
 {
     /// <summary>Worst outcome among the step and its assertions, for the status dot.</summary>
     public FindingSeverity Severity =>
@@ -56,7 +63,8 @@ public sealed record FlowMessage(
     ProcessingStatus ProcessingStatus,
     DateTimeOffset OccurredAt,
     Guid MessageId,
-    string RecordedBy)
+    string RecordedBy,
+    string CorrelationId)
 {
     public bool IsValid =>
         string.Equals(ValidationStatus, "Valid", StringComparison.OrdinalIgnoreCase);
@@ -123,11 +131,14 @@ public sealed class RunTimelineService(
             .GroupBy(a => a.Ordinal)
             .ToDictionary(g => g.Key, g => (IReadOnlyList<AssertionResult>)[.. g]);
 
+        var flow = await ReadFlowAsync(runId, ct);
+
         var timeline = steps
             .Select(s => new TimelineStep(
                 s.Ordinal, s.StepId, s.ParticipantId, s.Action,
                 s.ArgsJson, s.ResultJson, s.Outcome, s.Error,
-                byOrdinal.TryGetValue(s.Ordinal, out var found) ? found : []))
+                byOrdinal.TryGetValue(s.Ordinal, out var found) ? found : [],
+                BodsFor(s, flow)))
             .ToList();
 
         // Assertions evaluated before any step ran — the subscription precondition —
@@ -136,10 +147,106 @@ public sealed class RunTimelineService(
         {
             timeline.Insert(0, new TimelineStep(
                 0, null, string.Empty, "preconditions", null, null,
-                FindingSeverity.Pass, null, preconditions));
+                FindingSeverity.Pass, null, preconditions, []));
         }
 
-        return new RunTimeline(run, timeline, await ReadFlowAsync(runId, ct));
+        return new RunTimeline(run, timeline, flow);
+    }
+
+    /// <summary>
+    /// The BODs a step put on the wire.
+    ///
+    /// Correlated on the id the action itself reported where it reported one, because
+    /// that is the only exact answer: the publisher stamps the same correlation id on
+    /// every message it emits for that call. Where an action reports nothing, the step's
+    /// own execution window against the participant it ran at is used instead — coarser,
+    /// since a concurrent background republish could fall inside it, but the alternative
+    /// is showing no BOD at all for the steps that publish most.
+    /// </summary>
+    private static IReadOnlyList<FlowMessage> BodsFor(
+        ScenarioStepRun step, IReadOnlyList<FlowMessage> flow)
+    {
+        if (CorrelationIdOf(step.ResultJson) is { } correlationId)
+        {
+            var matched = flow
+                .Where(f => f.CorrelationId == correlationId)
+                .ToList();
+
+            if (matched.Count > 0)
+            {
+                return matched;
+            }
+        }
+
+        if (string.IsNullOrEmpty(step.ParticipantId))
+        {
+            return [];
+        }
+
+        var finished = step.FinishedUtc ?? DateTimeOffset.UtcNow;
+
+        return
+        [
+            .. flow.Where(f =>
+                f.From == step.ParticipantId
+                && f.OccurredAt >= step.StartedUtc
+                && f.OccurredAt <= finished)
+        ];
+    }
+
+    /// <summary>
+    /// Pulls a correlation id out of an action's result, whatever it chose to call it.
+    ///
+    /// Searches one level into nested objects because the runner wraps every action
+    /// result as <c>{ Summary, Payload }</c>, and the id an action reports lives on its
+    /// own payload rather than on that envelope. Absence is normal: most actions never
+    /// publish and so have none to report.
+    /// </summary>
+    private static string? CorrelationIdOf(string? resultJson)
+    {
+        if (string.IsNullOrWhiteSpace(resultJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(resultJson);
+
+            return Find(document.RootElement, depth: 2);
+        }
+        catch (JsonException)
+        {
+            // A result that is not an object is simply one with no correlation id to find.
+            return null;
+        }
+
+        static string? Find(JsonElement element, int depth)
+        {
+            if (element.ValueKind != JsonValueKind.Object || depth == 0)
+            {
+                return null;
+            }
+
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.Name.Equals("correlationId", StringComparison.OrdinalIgnoreCase)
+                    && property.Value.ValueKind == JsonValueKind.String)
+                {
+                    return property.Value.GetString();
+                }
+            }
+
+            foreach (var property in element.EnumerateObject())
+            {
+                if (Find(property.Value, depth - 1) is { } nested)
+                {
+                    return nested;
+                }
+            }
+
+            return null;
+        }
     }
 
     private async Task<IReadOnlyList<FlowMessage>> ReadFlowAsync(
@@ -220,5 +327,5 @@ public sealed class RunTimelineService(
         string? from, string? to, MessageRecord message, string recordedBy) =>
         new(from, to, message.ChannelUri, message.Verb, message.Noun, message.BodId,
             message.ValidationStatus, message.ProcessingStatus, message.OccurredAt,
-            message.MessageId, recordedBy);
+            message.MessageId, recordedBy, message.CorrelationId);
 }

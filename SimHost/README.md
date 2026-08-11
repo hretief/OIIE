@@ -105,22 +105,32 @@ survived the reload; equal counts mean a fixture leaked.
 
 ## Scenarios
 
-`Scenarios/*.yaml`, run from the UI or over HTTP.
+`Scenarios/*.yaml`, run from the UI or over HTTP. Files are named for the OpenO&M
+scenario they realise; the use case each belongs to is recorded in the file's
+`useCase:` field as a cross-reference.
 
-- `uc01-handover.yaml` — the full ENG → REG-LOCATION → MMS handover with CIR
-  registration and resolution.
-- `uc02-greenfield.yaml` — allocator behaviour on an empty store. Re-run safe:
-  it asserts relative code sequences rather than literal `P-001`, so it does not
+- `sc01-design-release.yaml` — Scenario 1 (UC01): ENG releases a named version and
+  the tag lands in REG-LOCATION's stewardship queue. It stops there. REG-LOCATION is
+  a release gate, so the scenario closes by asserting that nothing reached MMS —
+  early design data is a proposal, not something operations should be planning
+  against.
+- `sc02-operations-release.yaml` — Scenario 2 (UC01): a steward approves the
+  proposal, which is what actually releases it to MMS, followed by CIR registration
+  and resolution. Requires `sc01-design-release` and does not reset, because it
+  consumes the queue that scenario leaves behind. Run on its own it fails on its
+  first assertion rather than silently approving nothing.
+- `sc01-greenfield-allocation.yaml` — Scenario 1 (UC02): the same publish, but with
+  the code allocated by the identity service rather than authored in the file. Re-run
+  safe: it asserts relative code sequences rather than literal `P-001`, so it does not
   depend on being the first run against the database.
-- `uc05-asset-install.yaml` — Use Case 5 via Scenario 11: MMS publishes asset
-  install and removal events to OM-RELIABILITY. Runs the uc01 handover first,
-  because Use Case 5 assumes the functional location already exists rather than
-  creating it.
+- `sc11-asset-install.yaml` — Scenario 11 (UC05): MMS publishes asset install and
+  removal events to OM-RELIABILITY. Performs the handover inline first, because the
+  scenario assumes the functional location already exists rather than creating it.
 
 Assertions carry a severity. `bod_valid` failing is a defect;
 `classification_degraded` firing at REG-LOCATION is the scenario working.
 
-Two things `uc05` asserts that are easy to lose in a refactor. Publication is
+Two things `sc11-asset-install` asserts that are easy to lose in a refactor. Publication is
 triggered by planner **sign-off**, not by completion, so the scenario asserts
 `message_not_received` while the order sits completed. And the receiver stores
 both the install and the removal rather than overwriting a "currently installed"

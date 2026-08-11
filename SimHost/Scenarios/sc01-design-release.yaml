@@ -1,0 +1,149 @@
+# Scenario 1 - publish engineering design data from ENG to REG-LOCATION.
+#
+# OpenO&M use case: UC01 (engineering handover). The use case describes the whole
+# journey from design to operations; scenario 1 is only its first leg, and stopping
+# here is the point.
+#
+# ENG releases a named version and the tag travels to REG-LOCATION, where it lands in
+# the stewardship queue as a proposal. It goes no further. Design data at this stage
+# is a proposal about a plant that may not be built as drawn, and pushing it into MMS
+# would put speculative rows into the system of record that maintenance planners work
+# from. REG-LOCATION is the release gate: a steward's approval, not an engineer's
+# publish, is what admits a tag to operations. That approval is scenario 2.
+#
+# So the closing assertions here are negative ones. They are the whole reason the
+# scenario is separate: a run that quietly delivered to MMS would still satisfy every
+# positive assertion above, and only 'nothing reached MMS' can detect the gate
+# leaking.
+#
+# Identifiers only appear where this file chooses them. TIC-106 is authored here;
+# LOC-nnnnnn is assigned by REG-LOCATION, so assertions select on provenance columns
+# rather than on values that cannot be known before the run.
+id: sc01-design-release
+name: Design release to the location registry
+scenario: 1
+useCase: UC01
+
+participants:
+  - eng
+  - reg-location
+  # Declared only so the gate can be tested against it. Nothing in this scenario
+  # asks MMS to do anything -- it is here to be shown to have received nothing.
+  - mms
+
+setup:
+  # Reset first: a stewardship queue left over from a previous run would let scenario 2
+  # approve something this run never authored.
+  reset: true
+  channels:
+    - uri: /OIIE-SANDBOX/Enterprise/Site/Eng
+      type: Publication
+      subscribers:
+        - reg-location
+    # Declared even though nothing should arrive on it. The 'no message reached MMS'
+    # assertion below can only be trusted if MMS was genuinely subscribed and listening
+    # -- otherwise it passes because nobody was home, which is not the same as the gate
+    # holding.
+    - uri: /OIIE-SANDBOX/Enterprise/Site/OandM
+      type: Publication
+      subscribers:
+        - mms
+
+steps:
+  # -- ENG authors and releases -----------------------------------------------
+  - id: author-tag
+    at: eng
+    action: create_tag
+    args:
+      tagNumber: TIC-106
+      serviceDescription: Top temperature control
+      unitNumber: "101"
+      classKey: rdl:TemperatureIndicatingController
+      rangeMinimum: 0
+      rangeMaximum: 250
+      controlAction: Reverse
+
+  - at: eng
+    assert: store_contains
+    entity: Tag
+    where: "TagNumber = 'TIC-106'"
+
+  # The trigger for this scenario: promoting a named version is the engineering act
+  # that says a design is ready to be seen outside ENG.
+  - id: release
+    at: eng
+    action: promote_named_version
+    args:
+      name: sc01 design release
+
+  # Posted, not merely queued. The two are indistinguishable from the receiver's
+  # side and have entirely different owners.
+  - at: eng
+    assert: outbox_state
+    state: Posted
+    verb: Sync
+    noun: Segments
+    within: 60s
+
+  # -- REG-LOCATION receives and holds ------------------------------------------
+  - at: reg-location
+    assert: message_received
+    channel: /OIIE-SANDBOX/Enterprise/Site/Eng
+    verb: Sync
+    noun: Segments
+    within: 60s
+
+  - at: reg-location
+    assert: bod_valid
+
+  # Arrival is not acceptance. This is the gate itself: the tag is now a proposal
+  # awaiting a steward, and 'Proposed' is what distinguishes held from released.
+  #
+  # State is stored as a string, not the enum's ordinal, so 'Proposed' is the
+  # comparison that actually matches a queued row.
+  - at: reg-location
+    assert: store_contains
+    entity: StewardshipItem
+    where: "SourceIdentifier = 'TIC-106' AND State = 'Proposed'"
+    within: 30s
+
+  # No Location row yet. Approval is what creates one, and approval has not happened,
+  # so a Location here would mean the queue was bypassed.
+  - at: reg-location
+    assert: store_not_contains
+    entity: Location
+    where: "SourceIdentifier = 'TIC-106'"
+
+  # -- The gate holds -----------------------------------------------------------
+  # Nothing reached MMS. This is the assertion the scenario exists for: early design
+  # data stopping at the registry rather than flowing through to operations.
+  #
+  # Asserted at MMS rather than on REG-LOCATION's outbox because the outbox assertion
+  # answers "did at least N items reach this state" and cannot express absence. The
+  # receiving end can, and it is also the stronger claim: it holds regardless of how
+  # the publication was or was not attempted.
+  - at: mms
+    assert: message_not_received
+    channel: /OIIE-SANDBOX/Enterprise/Site/OandM
+    verb: Sync
+    noun: Segments
+
+  - at: mms
+    assert: store_not_contains
+    entity: FunctionalLocationRecord
+    where: "ForeignSourceId = 'REG-LOCATION'"
+
+  # -- CIR registration ---------------------------------------------------------
+  # Both participants that hold the identity register it. MMS is absent because MMS
+  # has nothing to register yet -- it has never seen this tag.
+  - id: register-eng
+    at: eng
+    action: register_cir
+
+  # Written under args because a bare 'id' at item level names the step, not the
+  # identifier being looked up.
+  - at: eng
+    assert: cir_registered
+    within: 60s
+    args:
+      id: TIC-106

@@ -1,3 +1,5 @@
+using System.Globalization;
+using SimHost.Domain.Sandbox;
 using YamlDotNet.RepresentationModel;
 
 namespace SimHost.Application.Scenarios;
@@ -27,14 +29,14 @@ public sealed class ScenarioLoadException : Exception
 ///
 /// Uses the representation model rather than object deserialisation for two reasons:
 /// an item's shape is known only by which key is present, and every node carries a
-/// source line — so a mistake is reported as "uc01-handover.yaml line 27" rather than
+/// source line — so a mistake is reported as "sc01-design-release.yaml line 27" rather than
 /// as a deserialisation error naming a C# property the author never saw.
 /// </summary>
 public sealed class ScenarioLoader
 {
     private static readonly HashSet<string> StepKeys = new(StringComparer.OrdinalIgnoreCase)
     {
-        "id", "at", "action", "assert", "args", "within"
+        "id", "at", "action", "assert", "args", "within", "on_failure"
     };
 
     public IReadOnlyList<ScenarioDefinition> LoadAll(string scenariosRoot)
@@ -86,6 +88,28 @@ public sealed class ScenarioLoader
 
         var name = Scalar(root, "name");
 
+        int? scenario = null;
+
+        if (Scalar(root, "scenario") is { } scenarioText)
+        {
+            if (int.TryParse(scenarioText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+            {
+                scenario = parsed;
+            }
+            else
+            {
+                errors.Add($"scenario: '{scenarioText}' is not a scenario number");
+            }
+        }
+
+        var useCase = Scalar(root, "useCase") ?? Scalar(root, "use_case");
+
+        var requires = Sequence(root, "requires")
+            .Select(node => (node as YamlScalarNode)?.Value)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .ToList();
+
         var participants = Sequence(root, "participants")
             .Select(node => (node as YamlScalarNode)?.Value)
             .Where(value => !string.IsNullOrWhiteSpace(value))
@@ -109,6 +133,9 @@ public sealed class ScenarioLoader
         {
             Id = id,
             Name = name,
+            Scenario = scenario,
+            UseCase = useCase,
+            Requires = requires,
             Participants = participants,
             Setup = setup,
             Items = items
@@ -271,6 +298,25 @@ public sealed class ScenarioLoader
                 }
             }
 
+            var onFailure = FindingSeverity.Fail;
+
+            if (Scalar(item, "on_failure") is { } onFailureText)
+            {
+                if (assert is null)
+                {
+                    errors.Add($"line {line}: on_failure applies to an assert, not an action");
+                }
+                else if (string.Equals(onFailureText, "concern", StringComparison.OrdinalIgnoreCase))
+                {
+                    onFailure = FindingSeverity.Concern;
+                }
+                else if (!string.Equals(onFailureText, "fail", StringComparison.OrdinalIgnoreCase))
+                {
+                    errors.Add(
+                        $"line {line}: on_failure '{onFailureText}' is not 'fail' or 'concern'");
+                }
+            }
+
             items.Add(new ScenarioItem
             {
                 Ordinal = ++ordinal,
@@ -280,6 +326,7 @@ public sealed class ScenarioLoader
                 Action = action,
                 Assert = assert,
                 Within = within,
+                OnFailure = onFailure,
                 Args = ReadArgs(item)
             });
         }

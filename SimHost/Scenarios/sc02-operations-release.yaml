@@ -1,0 +1,121 @@
+# Scenario 2 - publish approved location data from REG-LOCATION to O&M.
+#
+# OpenO&M use case: UC01 (engineering handover), second leg.
+#
+# Scenario 1 left a tag sitting in REG-LOCATION's stewardship queue. This scenario
+# starts where that one stopped, with the act that scenario 1 deliberately withheld:
+# a steward approves the proposal. That approval is the trigger here, and it is a
+# different kind of event from the one that triggered scenario 1 -- an engineer
+# promoting a named version is a statement about design maturity, whereas approval is
+# a release decision about what operations is allowed to see.
+#
+# Splitting the two is what makes the gate real. If one file carried the whole flow,
+# 'design data reached MMS' and 'approved data reached MMS' would be the same passing
+# run, and the sandbox could not tell a working gate from an absent one.
+#
+# This scenario does not reset. It consumes what scenario 1 produced, so a reset here
+# would destroy the very queue it needs -- which is why sc01 is declared as a
+# prerequisite rather than left as an unwritten convention.
+id: sc02-operations-release
+name: Approved release to operations
+scenario: 2
+useCase: UC01
+requires:
+  - sc01-design-release
+
+participants:
+  - eng
+  - reg-location
+  - mms
+
+setup:
+  # Deliberately no reset. See the header: the stewardship queue this scenario
+  # approves is scenario 1's output.
+  reset: false
+  channels:
+    - uri: /OIIE-SANDBOX/Enterprise/Site/OandM
+      type: Publication
+      subscribers:
+        - mms
+
+steps:
+  # -- The precondition scenario 1 leaves behind ---------------------------------
+  # Checked first and without a wait. If scenario 1 has not run, this fails
+  # immediately and says so, rather than letting the approval step below report
+  # 'approved 0 items' and leaving the reader to work out why a scenario that
+  # apparently succeeded delivered nothing.
+  - at: reg-location
+    assert: store_contains
+    entity: StewardshipItem
+    where: "SourceIdentifier = 'TIC-106' AND State = 'Proposed'"
+
+  # -- The steward releases ------------------------------------------------------
+  # The trigger for this scenario.
+  - id: approve
+    at: reg-location
+    action: approve_stewardship
+    args:
+      decidedBy: sc02
+
+  # The registry assigns its own key and keeps the origin. Selecting on
+  # SourceIdentifier rather than LocationCode is what makes that testable without
+  # knowing the surrogate in advance.
+  - at: reg-location
+    assert: store_contains
+    entity: Location
+    where: "SourceIdentifier = 'TIC-106' AND LocationCode <> 'TIC-106'"
+    within: 30s
+
+  - at: reg-location
+    assert: outbox_state
+    state: Posted
+    verb: Sync
+    noun: Segments
+    within: 60s
+
+  # -- MMS consumes ---------------------------------------------------------------
+  - at: mms
+    assert: message_received
+    channel: /OIIE-SANDBOX/Enterprise/Site/OandM
+    verb: Sync
+    noun: Segments
+    within: 60s
+
+  - at: mms
+    assert: bod_valid
+
+  # MMS holds a third identifier and, at this point, no idea that it names the same
+  # thing as the other two.
+  #
+  # The wait matters: this row arrives over the bus, so evaluating it instantly races
+  # delivery. Cirid IS NULL stays true until the register_cir steps below, so waiting
+  # cannot mask a premature link.
+  - at: mms
+    assert: store_contains
+    entity: FunctionalLocationRecord
+    where: "ForeignSourceId = 'REG-LOCATION' AND Cirid IS NULL"
+    within: 60s
+
+  # -- CIR registration and resolution --------------------------------------------
+  - id: register-reg-location
+    at: reg-location
+    action: register_cir
+
+  - id: register-mms
+    at: mms
+    action: register_cir
+
+  # The handover has only succeeded once MMS can turn an identifier it never issued
+  # into the shared identity. Asked from MMS's point of view, because that is how a
+  # participant actually asks: it holds a foreign identifier and wants to know what it
+  # names.
+  #
+  # This asserts the registry rather than a local column: nothing writes Cirid back
+  # onto FunctionalLocationRecord yet, so asserting that column would report a missing
+  # write-back as a CIR failure.
+  - at: mms
+    assert: cir_registered
+    within: 60s
+    args:
+      source: eng
+      id: TIC-106

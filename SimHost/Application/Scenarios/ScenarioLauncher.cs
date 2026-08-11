@@ -19,17 +19,32 @@ public sealed class ScenarioLauncher(
     ScenarioCatalog catalog,
     ScenarioRunner runner,
     ISandboxDbContextFactory sandbox,
+    SandboxResetService resets,
     ILogger<ScenarioLauncher> logger)
 {
     /// <summary>
     /// Creates the run row, schedules execution, and returns the id to navigate to.
     /// </summary>
+    /// <param name="baseUrl">
+    /// This deployment's own address, used to honour <c>setup.reset</c>. The reset runs
+    /// over HTTP against the admin endpoint that defines what a reset means.
+    /// </param>
     /// <exception cref="ScenarioLoadException">The scenario file has errors.</exception>
-    public async Task<Guid> StartAsync(string scenarioId, CancellationToken ct = default)
+    /// <exception cref="InvalidOperationException">A declared reset could not be run.</exception>
+    public async Task<Guid> StartAsync(
+        string scenarioId, string baseUrl, CancellationToken ct = default)
     {
         // Validated on this thread so an unusable scenario surfaces as an error on the
         // button rather than as a run that appears and immediately aborts.
         var definition = catalog.Require(scenarioId);
+
+        // Before the run row exists, because a reset purges run history and would
+        // otherwise delete the row this run is about to write into.
+        if (await resets.ApplyAsync(definition, baseUrl, ct) is { Succeeded: false } failed)
+        {
+            throw new InvalidOperationException(
+                $"{definition.Id} requires a reset, which failed: {failed.Summary} {failed.Detail}");
+        }
 
         var run = new ScenarioRun
         {

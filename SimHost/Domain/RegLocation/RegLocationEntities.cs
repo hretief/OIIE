@@ -59,6 +59,55 @@ public class LocationParent
 }
 
 /// <summary>
+/// A directed logical relationship between two locations in the authoritative model,
+/// e.g. a power supply supplies a pump.
+///
+/// Endpoints are held as REG-LOCATION's own location codes rather than the sender's
+/// identifiers, following <see cref="LocationParent"/>: the registry states the
+/// relationship in its own vocabulary, as it does for everything else it accepts.
+/// A connection is therefore only storable once both ends exist here, which is why
+/// an edge naming an unknown end is rejected and reported rather than parked.
+///
+/// The mesh that carried the edge is not retained. CCOM has no envelope for a
+/// free-standing connection, so the sender must wrap edges in a network to publish
+/// them at all; that container is a property of the wire format, and keeping it here
+/// would import a structure the registry does not otherwise model.
+/// </summary>
+public class LocationConnection
+{
+    public long Id { get; set; }
+
+    /// <summary>
+    /// The edge's identity as asserted by the originator, adopted rather than
+    /// reminted for the same reason <see cref="Location.FederationId"/> is.
+    /// </summary>
+    public Guid FederationId { get; set; }
+
+    /// <summary>Source: the supplier in a Supplies edge.</summary>
+    public string FromLocationCode { get; set; } = string.Empty;
+
+    /// <summary>Sink: the supplied in a Supplies edge.</summary>
+    public string ToLocationCode { get; set; } = string.Empty;
+
+    /// <summary>The kind of relationship, e.g. eng:Supplies.</summary>
+    public string TypeKey { get; set; } = string.Empty;
+
+    /// <summary>Reading from source to sink, as named by the sender, e.g. "Supplies".</summary>
+    public string? ForwardRole { get; set; }
+
+    /// <summary>Reading from sink to source, e.g. "Supplied By".</summary>
+    public string? InverseRole { get; set; }
+
+    public int? Order { get; set; }
+
+    public string SourceParticipant { get; set; } = string.Empty;
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
 /// A proposed change awaiting a steward.
 ///
 /// REG-LOCATION is a governance gate rather than a relay: arrival is not

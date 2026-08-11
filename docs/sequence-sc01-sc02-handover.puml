@@ -1,4 +1,4 @@
-@startuml uc01-handover
+@startuml sc01-sc02-handover
 title Scenario uc01 — information handover\nENG → REG-LOCATION → MMS, with CIR identity resolution
 
 skinparam responseMessageBelowArrow true

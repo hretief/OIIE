@@ -116,6 +116,8 @@ builder.Services.AddSingleton<SimHost.Application.Scenarios.ScenarioRunContext>(
 // The action vocabulary. Each action wraps a service the admin endpoints already
 // call, so a scenario drives the participants the way an operator would.
 builder.Services.AddSingleton<IScenarioAction, CreateTagAction>();
+builder.Services.AddSingleton<IScenarioAction, RelateTagsAction>();
+builder.Services.AddSingleton<IScenarioAction, PublishRelationshipsAction>();
 builder.Services.AddSingleton<IScenarioAction, PromoteNamedVersionAction>();
 builder.Services.AddSingleton<IScenarioAction, ApproveStewardshipAction>();
 builder.Services.AddSingleton<IScenarioAction, RegisterEquipmentAction>();
@@ -163,10 +165,12 @@ builder.Services.AddSingleton<ClassFixtureLoader>();
 builder.Services.AddSingleton<ClassificationRefresher>();
 
 builder.Services.AddSingleton<IBodBuilder, SyncSegmentsBuilder>();
+builder.Services.AddSingleton<IBodBuilder, SyncSegmentConnectionsBuilder>();
 builder.Services.AddSingleton<EngService>();
 
 builder.Services.AddSingleton<IBodBuilder, RegLocationSegmentsBuilder>();
 builder.Services.AddSingleton<IBodHandler, SyncSegmentsHandler>();
+builder.Services.AddSingleton<IBodHandler, SyncSegmentConnectionsHandler>();
 builder.Services.AddSingleton<RegLocationService>();
 
 builder.Services.AddSingleton<IBodHandler, MmsSegmentsHandler>();
@@ -1557,6 +1561,9 @@ app.MapGet("/admin/scenarios", (ScenarioCatalog catalog) =>
             {
                 definition.Id,
                 definition.Name,
+                definition.Scenario,
+                definition.UseCase,
+                definition.Requires,
                 definition.Participants,
                 steps = definition.Items.Count(i => !i.IsAssertion),
                 assertions = definition.Items.Count(i => i.IsAssertion),
@@ -1618,6 +1625,8 @@ app.MapPost("/admin/scenarios/{scenarioId}/run", async (
     string scenarioId,
     ScenarioCatalog catalog,
     ScenarioRunner runner,
+    SandboxResetService resets,
+    HttpRequest request,
     string? mode,
     int? seed,
     CancellationToken ct) =>
@@ -1644,6 +1653,19 @@ app.MapPost("/admin/scenarios/{scenarioId}/run", async (
             error = $"'{mode}' is not a run mode.",
             expected = Enum.GetNames<ScenarioRunMode>()
         });
+    }
+
+    // Honoured here rather than inside the runner, because a reset purges run history:
+    // the runner has already created the row it writes its steps into by the time it
+    // could act on this. Failing the request outright, since a scenario that asked for
+    // a clean environment and did not get one reports on the leftovers instead.
+    var baseUrl = $"{request.Scheme}://{request.Host}";
+
+    if (await resets.ApplyAsync(definition, baseUrl, ct) is { Succeeded: false } failed)
+    {
+        return Results.Json(
+            new { scenarioId, error = failed.Summary, detail = failed.Detail },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 
     var summary = await runner.RunAsync(definition, runMode, seed ?? 0, ct: ct);

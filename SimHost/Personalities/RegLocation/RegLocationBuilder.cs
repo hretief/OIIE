@@ -42,7 +42,7 @@ public sealed class RegLocationSegmentsBuilder(CcomAttributeMapperFactory mapper
             .OrderBy(l => l.LocationCode)
             .ToListAsync(ct);
 
-        var bod = new SyncSegments(ActionCodes.Add);
+        var bod = new SyncSegments(ActionCodes.Replace);
 
         bod.ApplicationArea.BODID = item.CorrelationId;
         bod.ApplicationArea.Sender = new Sender

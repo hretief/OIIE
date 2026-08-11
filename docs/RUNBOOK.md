@@ -62,6 +62,63 @@ GET  /admin/eng/messages     two rows, one correlationId
 `/admin/reset` recreates the channels, so `/admin/isbm/channels/ensure` is only
 needed on a genuinely fresh provider.
 
+## Running scenarios
+
+Scenarios are named after the OIIE scenario they realise; the use case is
+cross-reference metadata in the file header, not part of the name.
+
+| Scenario | Trigger | Reaches |
+|---|---|---|
+| `sc01-design-release` | ENG releases a named version | REG-LOCATION only |
+| `sc02-operations-release` | a steward approves at REG-LOCATION | MMS |
+| `sc01-greenfield-allocation` | ENG publishes without an authored identity | REG-LOCATION |
+| `sc11-asset-install` | MMS publishes an install or removal event | OM-RELIABILITY |
+
+Run order matters, and the engine enforces it rather than papering over it:
+
+```
+sc01-design-release        run first
+sc02-operations-release    requires sc01; fails if the tags are not in REG-LOCATION
+sc11-asset-install         resets, then provisions the location inline before
+                           publishing the install and removal events
+```
+
+REG-LOCATION is a release gate, not a relay. `sc01` deliberately asserts that
+*nothing* reached MMS; if that assertion passes trivially, suspect the gate has
+been bypassed rather than that the scenario is weak.
+
+A scenario declaring `setup.reset: true` now resets the sandbox itself before the
+run row is created, and reopens the subscriptions its participants declare. That
+matters because a reset closes sessions: without the reopen, the run's own
+subscription precondition would abort it. `sc01-design-release` therefore passes
+twice in a row with no manual reset in between. `sc02-operations-release` sets
+`reset: false` precisely because it consumes the queue `sc01` leaves behind.
+
+A reset also purges run history. Running a resetting scenario after a
+non-resetting one deletes the earlier run's evidence, and `/admin/scenarios/runs/{id}`
+then answers `404` for a run that genuinely completed. Read a run's result before
+starting the next scenario, or sequence the resetting scenarios first.
+
+An approval step that approves zero items is a failure, not a no-op. A scenario
+that "passed" while approving nothing was previously indistinguishable from one
+that worked.
+
+### Inspecting a run
+
+`/runs` lists runs; `/runs/{id}` opens one. The **Results** tab lists each step
+with the BODs it emitted, and each links through to the message detail page which
+renders the BOD XML and the correlated source, result and audit records. Use that
+before reaching for the database: the payload body shown there is the one that
+actually crossed the wire, retrieved from the payload store.
+
+| Symptom | Check |
+|---|---|
+| A step shows no BODs | Either it emitted none, or its result envelope carried the correlation id somewhere the timeline does not look. Compare against the **Message flow** tab, which is built from the participant stores independently |
+| A scenario aborts before its first step | The subscription precondition. Declared subscriptions were not open — usually a reset that did not reopen them |
+| `sc02` fails on its stewardship precondition | `sc01` has not run, or its queue was consumed by an earlier `sc02` |
+| `sc11` reports MMS holds no functional location | Its inline handover did not complete. The scenario provisions the location itself; if that failed, the later steps have nothing to attach to |
+
+
 ## From cold
 
 ```

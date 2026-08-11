@@ -65,3 +65,22 @@ classes:
     properties:
       - definition: rdl:SafetyIntegrityLevel
         requirement: Required
+
+# The kinds of design relationship ENG can assert between tags.
+#
+# Each edge is stored once, in the forward direction, and read from the other end
+# through inverseRole - so "BBFQ0032 supplies P-101" and "P-101 is supplied by
+# BBFQ0032" are one row, not two that could drift apart.
+relationshipTypes:
+  - key: eng:Supplies
+    forwardRole: Supplies
+    inverseRole: Supplied By
+    description: The source provides power or medium to the sink.
+
+  # Process flow, which is not the same statement as supply. Two isolation valves in
+  # series are both on the same line and neither powers the other, so relating them
+  # with eng:Supplies would read as a claim about energy that the design does not make.
+  - key: eng:FeedsInto
+    forwardRole: Feeds Into
+    inverseRole: Fed From
+    description: Process medium flows from the source to the sink.

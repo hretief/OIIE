@@ -319,3 +319,148 @@ public class EventType : CcomBase
 
     public bool ShouldSerializeUUID() => UUID != Guid.Empty;
 }
+
+/// <summary>
+/// Reference-data type of a connection — the kind of relationship an edge asserts,
+/// e.g. Supplies. Extends BaseType, so the role name travels as ShortName and the
+/// inverse reading as Description.
+/// </summary>
+public class ConnectionType : Entity
+{
+    public ConnectionType()
+    {
+    }
+
+    public ConnectionType(XElement element) : base(element)
+    {
+        ShortName = element.Child(nameof(ShortName)).SafeValue();
+        FullName = element.Child(nameof(FullName)).SafeValue();
+        Description = element.Child(nameof(Description)).SafeValue();
+    }
+
+    [XmlElement(Order = 4)]
+    public string? ShortName { get; set; }
+
+    [XmlElement(Order = 5)]
+    public string? FullName { get; set; }
+
+    [XmlElement(Order = 6)]
+    public string? Description { get; set; }
+
+    public override string ToString() => $"{ShortName} ({IDInInfoSource})";
+}
+
+/// <summary>Reference-data type of a mesh.</summary>
+public class MeshType : Entity
+{
+    public MeshType()
+    {
+    }
+
+    public MeshType(XElement element) : base(element)
+    {
+        ShortName = element.Child(nameof(ShortName)).SafeValue();
+        FullName = element.Child(nameof(FullName)).SafeValue();
+        Description = element.Child(nameof(Description)).SafeValue();
+    }
+
+    [XmlElement(Order = 4)]
+    public string? ShortName { get; set; }
+
+    [XmlElement(Order = 5)]
+    public string? FullName { get; set; }
+
+    [XmlElement(Order = 6)]
+    public string? Description { get; set; }
+
+    public override string ToString() => $"{ShortName} ({IDInInfoSource})";
+}
+
+/// <summary>
+/// A directed edge between two segments, e.g. a power supply supplies a pump.
+///
+/// From is the source and To the sink; the reverse reading is a property of the
+/// Type, not a second connection. The schema sequence is Type, Network, From, To,
+/// Order and is not negotiable — the Asset noun above carries a comment about the
+/// same hazard.
+/// </summary>
+public class SegmentConnection : Entity
+{
+    public SegmentConnection()
+    {
+    }
+
+    public SegmentConnection(XElement element) : base(element)
+    {
+        Type = GetChild(nameof(Type), e => new ConnectionType(e));
+        From = GetChild(nameof(From), e => new Segment(e));
+        To = GetChild(nameof(To), e => new Segment(e));
+        Order = element.Child(nameof(Order)).SafeValue();
+    }
+
+    [XmlElement(Order = 4)]
+    public ConnectionType? Type { get; set; }
+
+    // Network, at order 5, is deliberately not modelled. It is a back-reference to
+    // the mesh that owns this connection, and the mesh already carries the
+    // connection: emitting both would state the relationship twice in one document.
+
+    [XmlElement(Order = 6)]
+    public Segment? From { get; set; }
+
+    [XmlElement(Order = 7)]
+    public Segment? To { get; set; }
+
+    [XmlElement(Order = 8)]
+    public string? Order { get; set; }
+
+    public override string ToString() => $"{From?.ShortName} -> {To?.ShortName}";
+}
+
+/// <summary>
+/// A network of segments with directed connections.
+///
+/// CCOM has no envelope for a free-standing SegmentConnection: every BOD that
+/// carries connections requires a mesh to hold them. The Sandbox therefore treats
+/// this as a transport container rather than a modelled concept — ENG stores edges
+/// with no notion of a network, and REG-LOCATION discards the mesh on ingest.
+///
+/// Note the containment semantics if that ever changes: soft-deleting a mesh implies
+/// soft-deleting its connections, though not the segments at either end.
+/// </summary>
+public class SegmentMesh : Entity
+{
+    public SegmentMesh()
+    {
+    }
+
+    public SegmentMesh(XElement element) : base(element)
+    {
+        ShortName = element.Child(nameof(ShortName)).SafeValue();
+        FullName = element.Child(nameof(FullName)).SafeValue();
+        Description = element.Child(nameof(Description)).SafeValue();
+        Connection = GetChildren(nameof(Connection), e => new SegmentConnection(e));
+        Type = GetChild(nameof(Type), e => new MeshType(e));
+    }
+
+    [XmlElement(Order = 4)]
+    public string? ShortName { get; set; }
+
+    [XmlElement(Order = 5)]
+    public string? FullName { get; set; }
+
+    [XmlElement(Order = 6)]
+    public string? Description { get; set; }
+
+    // Connection is inherited from SegmentNetwork and Type is added by SegmentMesh,
+    // so the base type's members precede the subtype's: Connection before Type.
+    [XmlElement("Connection", Order = 7)]
+    public List<SegmentConnection> Connection { get; set; } = [];
+
+    [XmlElement(Order = 8)]
+    public MeshType? Type { get; set; }
+
+    public bool ShouldSerializeConnection() => Connection.Count > 0;
+
+    public override string ToString() => $"{ShortName} ({Connection.Count} connections)";
+}

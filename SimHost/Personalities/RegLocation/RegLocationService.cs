@@ -245,6 +245,175 @@ public sealed class SyncSegmentsHandler(
     }
 }
 
+/// <summary>
+/// Ingests SyncSegmentMeshConnections into REG-LOCATION's authoritative model.
+///
+/// Unlike segments, connections do not queue for stewardship. The steward's decision
+/// is about whether a thing belongs in the registry; an edge between two locations
+/// already approved adds no new thing to decide about, and holding it for a second
+/// approval would mean the registry knew both ends were real yet declined to say how
+/// they relate.
+///
+/// An edge naming an end the registry does not hold is rejected and reported rather
+/// than parked. Parking would mean carrying a queue of edges waiting for locations
+/// that may never arrive, and reporting is what makes a genuine sender error visible
+/// instead of silently pending.
+/// </summary>
+public sealed class SyncSegmentConnectionsHandler(
+    ILogger<SyncSegmentConnectionsHandler> logger) : IBodHandler
+{
+    public (string Verb, string Noun) Handles => ("Sync", "SegmentMeshConnections");
+
+    public string? ParticipantId => RegLocationService.ParticipantId;
+
+    public async Task<BodHandlingResult> HandleAsync(
+        ParticipantContext participant,
+        ParticipantDbContext db,
+        BodEnvelope envelope,
+        Guid messageId,
+        CancellationToken ct)
+    {
+        var meshes = envelope.NounsAs(e => new SegmentMesh(e));
+
+        // The mesh is unwrapped and discarded: it is the wire envelope CCOM requires
+        // for connections, not something the registry models.
+        var connections = meshes.SelectMany(m => m.Connection).ToList();
+
+        if (connections.Count == 0)
+        {
+            return BodHandlingResult.Rejected("The BOD carried no connections.");
+        }
+
+        var sourceParticipant = envelope.SenderLogicalId ?? "unknown";
+        var applied = 0;
+        var unresolved = new List<string>();
+
+        foreach (var connection in connections)
+        {
+            var fromCode = await ResolveAsync(db, connection.From, ct);
+            var toCode = await ResolveAsync(db, connection.To, ct);
+
+            if (fromCode is null || toCode is null)
+            {
+                // Named by the sender's identifier, because that is the only vocabulary
+                // in which the sender can act on the report.
+                unresolved.Add(
+                    $"{connection.From?.IDInInfoSource ?? "?"} -> {connection.To?.IDInInfoSource ?? "?"}");
+                continue;
+            }
+
+            var federationId = connection.UUID;
+
+            var existing = federationId != Guid.Empty
+                ? await db.Set<LocationConnection>()
+                    .FirstOrDefaultAsync(c => c.FederationId == federationId, ct)
+                : await db.Set<LocationConnection>().FirstOrDefaultAsync(
+                    c => c.FromLocationCode == fromCode
+                        && c.ToLocationCode == toCode
+                        && c.TypeKey == connection.Type!.IDInInfoSource, ct);
+
+            var edge = existing ?? new LocationConnection
+            {
+                FederationId = federationId,
+                SourceParticipant = sourceParticipant
+            };
+
+            edge.FromLocationCode = fromCode;
+            edge.ToLocationCode = toCode;
+            edge.TypeKey = connection.Type?.IDInInfoSource ?? string.Empty;
+            // The sender's own reading of the edge, kept so the registry can render it
+            // from either end without holding the sender's relationship vocabulary.
+            edge.ForwardRole = connection.Type?.ShortName;
+            edge.InverseRole = connection.Type?.Description;
+            edge.Order = int.TryParse(connection.Order, out var order) ? order : null;
+            edge.UpdatedAt = DateTimeOffset.UtcNow;
+
+            if (existing is null)
+            {
+                db.Set<LocationConnection>().Add(edge);
+            }
+
+            db.Provenance.Add(new ProvenanceEntry
+            {
+                MessageId = messageId,
+                EntityType = nameof(LocationConnection),
+                EntityKey = $"{fromCode}->{toCode}",
+                Action = existing is null ? ProvenanceAction.Created : ProvenanceAction.Updated,
+                Actor = sourceParticipant,
+                ChangeSummary = JsonSerializer.Serialize(new
+                {
+                    from = connection.From?.IDInInfoSource,
+                    to = connection.To?.IDInInfoSource,
+                    typeKey = edge.TypeKey,
+                    edge.ForwardRole,
+                    edge.InverseRole
+                })
+            });
+
+            applied++;
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        if (unresolved.Count > 0)
+        {
+            logger.LogWarning(
+                "REG-LOCATION rejected {Count} connection(s) naming unknown locations: {Edges} [{CorrelationId}]",
+                unresolved.Count, string.Join("; ", unresolved), envelope.BodId);
+        }
+
+        logger.LogInformation(
+            "REG-LOCATION accepted {Count} connection(s) [{CorrelationId}]",
+            applied, envelope.BodId);
+
+        // Partial acceptance is still a rejection to report: the sender asserted edges
+        // the registry could not store, and a clean result would hide that.
+        return unresolved.Count > 0
+            ? BodHandlingResult.Rejected(
+                $"Accepted {applied} connection(s); rejected {unresolved.Count} naming unknown locations: " +
+                string.Join("; ", unresolved))
+            : BodHandlingResult.Applied(applied, 0, 0);
+    }
+
+    /// <summary>
+    /// The local code for an endpoint the sender named.
+    ///
+    /// Resolved by the asserted identity first and the sender's identifier second:
+    /// the identity is the federation's answer to "same thing", and the identifier
+    /// only works while the sender is the one who registered it.
+    /// </summary>
+    private static async Task<string?> ResolveAsync(
+        ParticipantDbContext db, Segment? endpoint, CancellationToken ct)
+    {
+        if (endpoint is null)
+        {
+            return null;
+        }
+
+        if (endpoint.UUID != Guid.Empty)
+        {
+            var byIdentity = await db.Set<Location>()
+                .FirstOrDefaultAsync(l => l.FederationId == endpoint.UUID, ct);
+
+            if (byIdentity is not null)
+            {
+                return byIdentity.LocationCode;
+            }
+        }
+
+        var identifier = endpoint.IDInInfoSource;
+        if (string.IsNullOrWhiteSpace(identifier))
+        {
+            return null;
+        }
+
+        var bySource = await db.Set<Location>()
+            .FirstOrDefaultAsync(l => l.SourceIdentifier == identifier, ct);
+
+        return bySource?.LocationCode;
+    }
+}
+
 public sealed record ApprovalResult(
     int Approved, int Rejected, IReadOnlyList<string> LocationCodes, string? CorrelationId);
 

@@ -173,9 +173,10 @@ Sandbox/
     om-reliability/
     rdl/                            MIMOSA RDL — class and property definitions
   Scenarios/
-    uc01-handover.yaml
-    uc05-asset-install.yaml
-    uc04-product-pull.yaml
+    sc01-design-release.yaml
+    sc02-operations-release.yaml
+    sc01-greenfield-allocation.yaml
+    sc11-asset-install.yaml
     identity-merge.yaml
     service-directory-bootstrap.yaml
     negative-paths.yaml
@@ -677,7 +678,7 @@ ENG is data-centric: tags are extracted from the model and published independent
 
 **REG-MATERIAL — material master activation, or requisition submission.** The RFI of scenarios 36/37 releases when a buyer submits the request, not while requirements are still being assembled.
 
-**MMS — work order sign-off.** Completion is not the trigger. A technician recording that the work is done is a claim about the field; sign-off by the planner is the maintenance system asserting the configuration has actually changed, and that is the act Scenario 11 publishes. Keeping the two distinct is what lets `uc05` assert that nothing left the building while the order sat completed. Later phases may add work order *status* publication (scenarios 15/16), which is a different feed.
+Keeping the two distinct is what lets `sc11-asset-install` assert that nothing left the building while the order sat completed.
 
 ### 7.3 Auto-release toggle
 
@@ -928,8 +929,17 @@ Class and property definitions are part of the fixture set, and are **distribute
 YAML in `Sandbox/Scenarios/`. Steps are executed against the same service methods as the UI.
 
 ```yaml
-id: uc01-handover
-name: Information handover — ENG to O&M via REG-LOCATION
+id: sc01-design-release
+name: Design release to the location registry
+# The OpenO&M scenario this file realises. Scenario number is the primary identity
+# because it names an exchange between two systems, which is what actually runs.
+scenario: 1
+# Cross-reference only. Several use cases collapse onto the same exchange, so the use
+# case is recorded for readers of the OpenO&M catalogue but never selects a run.
+useCase: UC01
+# Scenarios that must have run first. Declared so a dependent run fails naming the
+# missing prerequisite instead of failing deep in its own assertions.
+requires: [sc01-design-release]
 participants: [eng, reg-location, mms]
 setup:
   reset: true
@@ -986,8 +996,16 @@ steps:
       - { source: mms,          id: "234443" }
 ```
 
-### 11.2 Assertion vocabulary
+A step that carries an `id` publishes its result to the steps that follow it. An
+action argument may then name a step instead of a literal, which is how a scenario
+refers to a value it cannot know in advance — an allocated code, or a minted
+identity. `relate_tags` accepts `fromStep`/`toStep` in place of `from`/`to` for
+exactly this reason: in the greenfield case the tag numbers are issued by the
+identity service during the run, so writing them into the file would assert the very
+thing the scenario exists to test. Naming both a literal and a step for the same end
+is rejected rather than resolved by precedence.
 
+### 11.2 Assertion vocabulary
 | Assertion | Checks |
 |---|---|
 | `message_received` | A message matching channel/verb/noun/topic arrived at a participant within a timeout |
@@ -1013,6 +1031,14 @@ steps:
 | `definition_narrowing_rejected` | An inbound class definition that widens or contradicts an inherited constraint was refused |
 | `validation_finding` | The ENG promotion gate produced an expected finding, blocking release |
 
+Any assertion may carry `on_failure: concern`, which downgrades its verdict from a
+failure to a concern. The assertion is still evaluated and what it observed is still
+reported; only the effect on the run's outcome changes. It is for conditions that are
+genuinely optional in a correct run — for example, a publication that a participant
+legitimately suppresses when it has nothing new to say — and is not a way to quieten
+an assertion that is failing for an unexplained reason. The default is `fail`, and
+anything other than `fail` or `concern` is rejected at load.
+
 ### 11.3 Run modes
 
 - `--mode ci` — headless, seeded deterministic RNG, injected clock, `releaseMode: auto` unless overridden, non-zero exit on assertion failure. JUnit XML output for pipeline reporting.
@@ -1024,8 +1050,10 @@ Identical scenario files, identical service methods, identical assertions.
 
 | Scenario | OIIE mapping | Demonstrates | Phase |
 |---|---|---|---|
-| `uc01-handover` | Scenarios 1, 2 | Pub/sub fan-out; CIR as identity bridge; stewardship gate | 1 |
-| `uc05-asset-install` | Use Case 5, Scenario 11 | MMS as publisher; event timestamp distinct from message time; append-only install/removal history at the receiver; identity unresolved on arrival | 1 |
+| `sc01-design-release` | Scenario 1 (UC01) | Pub/sub fan-out; the stewardship gate holding, asserted by showing nothing reached MMS | 1 |
+| `sc02-operations-release` | Scenario 2 (UC01) | Approval as the release trigger; CIR as identity bridge; scenario prerequisites | 1 |
+| `sc01-greenfield-allocation` | Scenario 1 (UC02) | Identity and code both allocated by the service; re-run safety via relative assertions | 1 |
+| `sc11-asset-install` | Scenario 11 (UC05) | MMS as publisher; event timestamp distinct from message time; append-only install/removal history at the receiver; identity unresolved on arrival | 1 |
 | `identity-merge` | — | M1–M4; `ChangeEntryCIRID`; cross-window causality; stale cache correction | 2 |
 | `rdl-graceful-degradation` | — | Unknown leaf class bound at a known ancestor; leaf properties retained as unmapped; asset still displayed correctly (§6.5.6) | 2 |
 | `rdl-definition-propagation` | Scenarios 34, 35 | RDL publishes the leaf class; receivers bind it; unmapped chips clear and orphaned values slot in with no data re-sent | 2 |
@@ -1035,7 +1063,7 @@ Identical scenario files, identical service methods, identical assertions.
 | `reclassification` | — | Reclassifying an asset orphans rather than deletes non-sanctioned values | 3 |
 | `uc12-rfi-models` | Scenarios 36, 37, 38 | Multi-participant RFI across REG-MATERIAL, REG-PRODUCT, REG-ASSET, REG-LOCATION | 3 |
 | `eng-delta-publish` | Scenario 27, 28 | Incremental publication of 11 changed tags out of 4,000 | 3 |
-| `service-directory-bootstrap` | — | New participant knowing only the Service Directory endpoint issues `GetIsbmService`, receives `ShowIsbmService`, self-configures, joins `uc01` mid-flight | 5 |
+self-configures, joins scenario 1 mid-flight | 5 |
 | `negative-paths` | — | Expired publications; abandoned and recovered sessions; filters matching nothing; XSD-invalid BOD rejected with a fault; duplicate delivery; validation gate blocking promotion; reject-back on stewardship | 5 |
 | `notifications` | — | `NotifyListener` push delivery, closing the ISBM conformance skips. Phase 2 rather than 5 because Azure-hosted development makes the callback endpoint addressable from the start (§12.4). | 2 |
 
@@ -1150,7 +1178,7 @@ Consistent with existing practice: tests run immediately after each substantive 
 | Phase | Scope | Exit criteria |
 |---|---|---|
 | **0** | Extract `Oiie.Isbm.Client` from CIR; shared session helper; CIR refactored to consume it | Existing CIR 15/15 integration and 104 unit tests pass unchanged |
-| **1** | SimHost runtime; persistence including the §6.5 tables and chain-resolution engine; outbox/inbox; BOD dispatcher and validator; headless runner; ENG, REG-LOCATION, MMS, **OM-RELIABILITY**; `uc01-handover`, `uc05-asset-install` | `uc01` and `uc05` pass in CI end to end; entities classify and resolve an effective property set, with a minimal fixture hierarchy |
+| **1** | SimHost runtime; persistence including the §6.5 tables and chain-resolution engine; outbox/inbox; BOD dispatcher and validator; headless runner; ENG, REG-LOCATION, MMS, **OM-RELIABILITY**; `sc01-design-release`, `sc02-operations-release`, `sc11-asset-install` | scenarios 1, 2 and 11 pass in CI end to end; entities classify and resolve an effective property set, with a minimal fixture hierarchy |
 CIR merge tooling; `identity-merge`, `rdl-graceful-degradation`
 | **3** | REG-PRODUCT, REG-MATERIAL; attribute BODs; `uc04-product-pull`, `uc12-rfi-models`, `eng-delta-publish`, `reclassification` | All phase-3 scenarios pass in CI |
 | **4** | Full UI: domain screens, BOD renderer, identity panel, control tower, cluster graph, CIR explorer, kiosk mode, SignalR; snapshot/restore | SC-2 and SC-4 met; demo rehearsed end to end |

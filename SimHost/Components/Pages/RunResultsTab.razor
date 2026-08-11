@@ -42,6 +42,35 @@
             <div class="detail"><pre class="mono">@result</pre></div>
         }
 
+        @* The BODs this step put on the wire. Shown regardless of detail because the
+           payload is usually the first thing wanted when a step is questioned, and the
+           step is where the reader already is. *@
+        @if (step.Bods.Count > 0)
+        {
+            <div class="detail">
+                <div class="small muted">
+                    BOD@(step.Bods.Count == 1 ? string.Empty : "s") carried by this step:
+                </div>
+
+                @foreach (var bod in step.Bods)
+                {
+                    <div class="small">
+                        <a class="flow-link"
+                           href="/runs/@RunId/messages/@bod.RecordedBy/@bod.MessageId">
+                            @bod.Verb @bod.Noun
+                        </a>
+                        <span class="muted">
+                            @(bod.From ?? "—") &rarr; @(bod.To ?? "nobody")
+                        </span>
+                        @if (!bod.IsValid)
+                        {
+                            <span class="sev sev-fail">· invalid</span>
+                        }
+                    </div>
+                }
+            </div>
+        }
+
         @foreach (var assertion in step.Assertions)
         {
             var severity = assertion.Severity.ToString().ToLowerInvariant();
@@ -106,6 +135,9 @@
 @code {
     [Parameter, EditorRequired]
     public IReadOnlyList<TimelineStep> Steps { get; set; } = [];
+
+    [Parameter, EditorRequired]
+    public Guid RunId { get; set; }
 
     [Parameter]
     public bool Detail { get; set; }

@@ -13,6 +13,11 @@ artifacts/
 # Test result files produced by dotnet test --results-directory
 TestResults/
 
+# Console output from a locally launched SimHost. Written beside the solution
+# when the host is started detached for manual testing.
+simhost.log
+simhost.err.log
+
 # Raw agent session transcripts. These are verbatim terminal output, so they
 # capture whatever was on screen -- including secrets that were being redacted
 # at the time. One already tripped GitHub push protection: the log of the

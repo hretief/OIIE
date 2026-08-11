@@ -1,4 +1,4 @@
-@startuml uc02-greenfield
+@startuml sc01-greenfield-allocation
 title Scenario uc02 — greenfield identity allocation\nA designer asks for a valve and is given both an identity and a code
 
 skinparam responseMessageBelowArrow true
