@@ -14,157 +14,64 @@
 # exists to improve on, and leaving it visible is more honest than simulating a
 # confirmation nothing observed.
 #
-# This scenario is predicated on MMS already holding functional locations, so it
-# performs the scenario 1 and 2 flow inline before it can raise a work order against
-# anything.
+# This scenario is predicated on MMS already holding the functional location it
+# installs against. It does not create one. Authoring an engineering tag, releasing a
+# named version and approving a stewardship proposal are the engineering handover --
+# scenarios 1 and 2 -- and a maintenance process has no business performing them. A
+# single file that did both would also make the two failure modes indistinguishable:
+# a broken install flow and a broken handover would look identical in the results.
+#
+# So the handover is declared as a prerequisite and asserted as a precondition. If MMS
+# does not already hold P-101, this scenario fails immediately and says exactly that,
+# rather than provisioning what it needs and reporting success for a dependency it
+# never really had.
 id: sc11-asset-install
 name: Asset installation and removal updates
 scenario: 11
 useCase: UC05
+requires:
+  - sc02-operations-release
 
 participants:
-  - eng
-  - reg-location
   - mms
   - om-reliability
 
 setup:
-  reset: true
+  # Deliberately no reset. The functional location this scenario installs against is
+  # scenario 2's output, and resetting would destroy it -- which is the same reason
+  # scenario 2 does not reset scenario 1's queue.
+  reset: false
   channels:
-    - uri: /OIIE-SANDBOX/Enterprise/Site/Eng
-      type: Publication
-      subscribers:
-        - reg-location
-    - uri: /OIIE-SANDBOX/Enterprise/Site/OandM
-      type: Publication
-      subscribers:
-        - mms
-
     # ISO18435 D1.3 - operational events, kept apart from the D0.2 engineering
-    # provisioning path above. Scenario 11 names a different channel level for a
-    # reason: an install event and a design change are different information
-    # domains, and one channel carrying both would make the distinction unavailable
-    # to any subscriber that cared.
+    # provisioning path that scenarios 1 and 2 use. Scenario 11 names a different
+    # channel level for a reason: an install event and a design change are different
+    # information domains, and one channel carrying both would make the distinction
+    # unavailable to any subscriber that cared.
     - uri: /OIIE-SANDBOX/Enterprise/Site/OandM-Events
       type: Publication
       subscribers:
         - om-reliability
 
 steps:
-  # -- Precondition: UC1 populates MMS with a functional location ---------------
+  # -- Precondition: the handover has already happened ---------------------------
   #
-  # Without this MMS has nowhere to install anything. The use case states the
-  # dependency explicitly, so it is executed rather than assumed.
-  - id: author-tag
-    at: eng
-    action: create_tag
-    args:
-      tagNumber: P-101
-      serviceDescription: Feed pump
-      unitNumber: "101"
-      classKey: rdl:Instrument
-      controlAction: Reverse
-
-  # The pump does not stand alone: it is fed by a power supply, and that fact is
-  # part of the design rather than a note attached to it. Both ends must exist
-  # before the edge can be asserted, so the supply is authored first.
-  - id: author-supply
-    at: eng
-    action: create_tag
-    args:
-      tagNumber: BBFQ0032
-      serviceDescription: Feed pump power supply
-      unitNumber: "101"
-      classKey: rdl:Equipment
-
-  - id: relate-supply
-    at: eng
-    action: relate_tags
-    args:
-      from: BBFQ0032
-      to: P-101
-      type: eng:Supplies
-
-  - id: release
-    at: eng
-    action: promote_named_version
-    args:
-      name: sc11 precondition
-
-  - at: reg-location
-    assert: message_received
-    channel: /OIIE-SANDBOX/Enterprise/Site/Eng
-    verb: Sync
-    noun: Segments
-    within: 60s
-
-  # Arrival is not the same as processing. message_received proves the BOD reached the
-  # inbox; the proposal only appears once the pump has drained it. Approving between
-  # those two moments releases an empty queue, which used to pass silently and then
-  # surface much later as a missing location at MMS.
-  - at: reg-location
-    assert: store_contains
-    entity: StewardshipItem
-    where: "SourceIdentifier = 'P-101' AND State = 'Proposed'"
-    within: 60s
-
-  - id: approve
-    at: reg-location
-    action: approve_stewardship
-    args:
-      decidedBy: sc11
-
-  # Only now can the relationship travel. REG-LOCATION states edges between its own
-  # location codes, so both ends had to clear the stewardship gate first; publishing
-  # this with the segments above would have produced an edge naming two locations
-  # that did not yet exist, which the registry rejects by design.
-  - id: publish-relationships
-    at: eng
-    action: publish_relationships
-
-  - at: reg-location
-    assert: message_received
-    channel: /OIIE-SANDBOX/Enterprise/Site/Eng
-    verb: Sync
-    noun: SegmentMeshConnections
-    within: 60s
-
-  # The edge survived the hop, restated in the registry's own vocabulary: endpoints
-  # are LOC- codes, not ENG tag numbers, and the inverse reading came across so the
-  # registry can describe the edge from the pump's end too.
-  - at: reg-location
-    assert: store_contains
-    entity: LocationConnection
-    where: "TypeKey = 'eng:Supplies' AND ForwardRole = 'Supplies' AND InverseRole = 'Supplied By' AND FromLocationCode LIKE 'LOC-%' AND ToLocationCode LIKE 'LOC-%' AND FromLocationCode <> ToLocationCode"
-    within: 60s
-
-  # Whether a message crosses to MMS here depends on what MMS already holds. UC1 may
-  # have provisioned this same location moments ago, in which case REG-LOCATION has
-  # nothing new to say and stays quiet, which is correct behaviour rather than a
-  # delivery fault. The store assertion below is the one that must hold either way:
-  # what matters to this use case is that MMS knows the location, not that it learned
-  # it during this particular run.
-  - at: mms
-    assert: message_received
-    channel: /OIIE-SANDBOX/Enterprise/Site/OandM
-    verb: Sync
-    noun: Segments
-    within: 60s
-    on_failure: concern
-
-  # MMS now holds the location under its own numeric key. The work order below
-  # names it by the foreign identifier, because nothing outside MMS knows the
-  # number it minted.
-  #
-  # Selected on P-101 specifically, and on the same three columns the work order
-  # resolves against. Asserting only on ForeignSourceId would be satisfied by any
-  # location REG-LOCATION had ever sent, so a leftover row from an earlier scenario
-  # would pass here and the run would still fail at raise_work_order.
+  # Checked first and without a wait. Nothing in this scenario can create this row,
+  # so waiting for it would only delay the same failure. The work order below
+  # resolves the location on these same columns, so this asserts precisely what it
+  # will need rather than the weaker 'REG-LOCATION sent something once'.
   - at: mms
     assert: store_contains
     entity: FunctionalLocationRecord
     where: "ForeignSourceId = 'REG-LOCATION' AND (ForeignIdInSource = 'P-101' OR Designation = 'P-101' OR EquipmentNumber = 'P-101')"
-    within: 60s
+
+  # The topology came with it. A reliability analyst reading an install event against
+  # this pump needs to know what feeds it, and that edge is part of what scenario 2
+  # released -- so its absence means the handover was incomplete, not that this
+  # scenario has anything to fix.
+  - at: mms
+    assert: store_contains
+    entity: LocationRelationshipRecord
+    where: "TypeKey = 'eng:Supplies'"
 
   # -- The serialised asset ------------------------------------------------------
   #

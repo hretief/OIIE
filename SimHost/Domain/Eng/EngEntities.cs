@@ -5,6 +5,37 @@ public enum TagMaturity { WorkInProgress, Shared, Published }
 public enum NamedVersionState { Draft, Validated, Published }
 
 /// <summary>
+/// A digital twin: the plant a design belongs to.
+///
+/// ENG is one tool serving several projects, and a tag number is only unique within
+/// the plant it names. Two twins may each hold a TIC-106 and mean different
+/// instruments, so the twin is what makes the number unambiguous — which is why it
+/// scopes the uniqueness rules rather than sitting beside them as a label.
+///
+/// Held as a row rather than a bare column so a twin has somewhere to record what it
+/// is. A UUID appearing in a foreign key with nothing to resolve it against would be
+/// unreadable in the store browser and unverifiable on input.
+/// </summary>
+public class ITwin
+{
+    /// <summary>
+    /// The twin's identity, chosen by whoever created it rather than minted here.
+    /// An iTwin generally exists in a system outside this sandbox, so adopting the
+    /// identifier is correct where minting a second one would not be.
+    /// </summary>
+    public Guid Id { get; set; }
+
+    /// <summary>Short human key, e.g. ACME-U101.</summary>
+    public string Code { get; set; } = string.Empty;
+
+    public string Name { get; set; } = string.Empty;
+
+    public string? Description { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
 /// ENG's system of record. Deliberately unlike CCOM: columns are named for what an
 /// engineering system calls them, and nothing here is a Segment, an IDInSource, or
 /// a CodeType. The mapper from Tag to SyncSegments is the interoperability work,
@@ -14,6 +45,13 @@ public enum NamedVersionState { Draft, Validated, Published }
 public class Tag
 {
     public long Id { get; set; }
+
+    /// <summary>
+    /// The twin this tag belongs to. Part of what makes <see cref="TagNumber"/>
+    /// unique, rather than descriptive metadata: without it, a second project
+    /// reusing a tag number would collide with the first or silently overwrite it.
+    /// </summary>
+    public Guid ITwinId { get; set; }
 
     /// <summary>
     /// The identity, minted here because ENG is the design tool and the entity comes
@@ -74,6 +112,12 @@ public class NamedVersion
 {
     public long Id { get; set; }
 
+    /// <summary>
+    /// The twin being released. A release is an act about one plant, so promoting in
+    /// one twin must not gather up another's work-in-progress tags.
+    /// </summary>
+    public Guid ITwinId { get; set; }
+
     /// <summary>e.g. "Rev C — Unit 101 reroute". Travels in the BOD as the sender reference.</summary>
     public string Name { get; set; } = string.Empty;
 
@@ -126,6 +170,14 @@ public class TagRelationshipType
 public class TagRelationship
 {
     public long Id { get; set; }
+
+    /// <summary>
+    /// The twin the edge was asserted in. Strictly redundant — both endpoints are
+    /// tag ids, which are already twin-specific — but carried so the edge can be
+    /// filtered without joining to its ends, which is what the query filter and the
+    /// relationship publication both need.
+    /// </summary>
+    public Guid ITwinId { get; set; }
 
     /// <summary>
     /// The edge's own identity, minted here because the relationship is itself an

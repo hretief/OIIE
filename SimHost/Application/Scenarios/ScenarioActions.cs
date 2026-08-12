@@ -91,6 +91,28 @@ public class ScenarioActionContext(
             : throw new ScenarioActionException(
                 $"{Item.Describe()}: argument '{key}' is '{text}', which is not a number.");
     }
+
+    /// <summary>
+    /// The iTwin a step names, or null to let the participant use its default.
+    ///
+    /// Optional so that a scenario about message flow does not have to state a plant
+    /// it has no opinion about. A scenario that genuinely tests twin isolation names
+    /// two, and then the argument is the whole point.
+    /// </summary>
+    public Guid? GetTwin(string key = "iTwin")
+    {
+        var text = GetString(key);
+
+        if (text is null)
+        {
+            return null;
+        }
+
+        return Guid.TryParse(text, out var parsed)
+            ? parsed
+            : throw new ScenarioActionException(
+                $"{Item.Describe()}: argument '{key}' is '{text}', which is not a UUID.");
+    }
 }
 
 /// <summary>
@@ -166,6 +188,7 @@ public sealed class CreateTagAction(EngService eng) : IScenarioAction
             context.GetDecimal("rangeMaximum"),
             context.GetString("controlAction"),
             context.GetString("codePrefix"),
+            context.GetTwin(),
             ct);
 
         return new ScenarioActionResult(
@@ -206,6 +229,7 @@ public sealed class RelateTagsAction(EngService eng) : IScenarioAction
             to,
             context.RequireString("type"),
             (int?)context.GetDecimal("order"),
+            context.GetTwin(),
             ct);
 
         return new ScenarioActionResult(
@@ -262,6 +286,7 @@ public sealed class PromoteNamedVersionAction(
             context.RequireString("name"),
             publisher.ChannelUri,
             publisher.Topics.FirstOrDefault(),
+            context.GetTwin(),
             ct);
 
         var summary = result.Released
@@ -292,6 +317,7 @@ public sealed class PublishRelationshipsAction(
         var result = await eng.PublishRelationshipsAsync(
             publisher.ChannelUri,
             publisher.Topics.FirstOrDefault(),
+            context.GetTwin(),
             ct);
 
         return new ScenarioActionResult(

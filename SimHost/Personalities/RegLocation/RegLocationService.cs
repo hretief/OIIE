@@ -248,16 +248,23 @@ public sealed class SyncSegmentsHandler(
 /// <summary>
 /// Ingests SyncSegmentMeshConnections into REG-LOCATION's authoritative model.
 ///
-/// Unlike segments, connections do not queue for stewardship. The steward's decision
-/// is about whether a thing belongs in the registry; an edge between two locations
+/// Connections do not queue for stewardship of their own. The steward's decision is
+/// about whether a thing belongs in the registry; an edge between two locations
 /// already approved adds no new thing to decide about, and holding it for a second
 /// approval would mean the registry knew both ends were real yet declined to say how
 /// they relate.
 ///
-/// An edge naming an end the registry does not hold is rejected and reported rather
-/// than parked. Parking would mean carrying a queue of edges waiting for locations
-/// that may never arrive, and reporting is what makes a genuine sender error visible
-/// instead of silently pending.
+/// But an edge is published alongside the segments it connects, so it routinely
+/// arrives while both ends are still proposals. That edge is retained unresolved
+/// rather than rejected: the sender has asserted the relationship and cannot observe
+/// the approval that would make it storable, so rejecting it would make the sender
+/// responsible for a republication it has no way to know is needed. The endpoints
+/// are resolved to location codes when the steward approves, which is the moment the
+/// codes first exist.
+///
+/// What is still rejected is an edge naming an end the registry has never heard of
+/// in any state — not a proposal, not a location. That is a genuine sender error and
+/// stays visible as one.
 /// </summary>
 public sealed class SyncSegmentConnectionsHandler(
     ILogger<SyncSegmentConnectionsHandler> logger) : IBodHandler
@@ -286,19 +293,30 @@ public sealed class SyncSegmentConnectionsHandler(
 
         var sourceParticipant = envelope.SenderLogicalId ?? "unknown";
         var applied = 0;
-        var unresolved = new List<string>();
+        var pending = 0;
+        var unknown = new List<string>();
 
         foreach (var connection in connections)
         {
+            var fromIdentifier = connection.From?.IDInInfoSource;
+            var toIdentifier = connection.To?.IDInInfoSource;
+
+            if (string.IsNullOrWhiteSpace(fromIdentifier) || string.IsNullOrWhiteSpace(toIdentifier))
+            {
+                unknown.Add($"{fromIdentifier ?? "?"} -> {toIdentifier ?? "?"}");
+                continue;
+            }
+
             var fromCode = await ResolveAsync(db, connection.From, ct);
             var toCode = await ResolveAsync(db, connection.To, ct);
 
-            if (fromCode is null || toCode is null)
+            // Approved already, or still a proposal, or genuinely unheard of. Only the
+            // last is the sender's mistake; the middle one is the ordinary case of an
+            // edge travelling with the segments it connects.
+            if (fromCode is null && !await IsKnownAsync(db, fromIdentifier, ct)
+                || toCode is null && !await IsKnownAsync(db, toIdentifier, ct))
             {
-                // Named by the sender's identifier, because that is the only vocabulary
-                // in which the sender can act on the report.
-                unresolved.Add(
-                    $"{connection.From?.IDInInfoSource ?? "?"} -> {connection.To?.IDInInfoSource ?? "?"}");
+                unknown.Add($"{fromIdentifier} -> {toIdentifier}");
                 continue;
             }
 
@@ -308,8 +326,9 @@ public sealed class SyncSegmentConnectionsHandler(
                 ? await db.Set<LocationConnection>()
                     .FirstOrDefaultAsync(c => c.FederationId == federationId, ct)
                 : await db.Set<LocationConnection>().FirstOrDefaultAsync(
-                    c => c.FromLocationCode == fromCode
-                        && c.ToLocationCode == toCode
+                    c => c.SourceParticipant == sourceParticipant
+                        && c.FromSourceIdentifier == fromIdentifier
+                        && c.ToSourceIdentifier == toIdentifier
                         && c.TypeKey == connection.Type!.IDInInfoSource, ct);
 
             var edge = existing ?? new LocationConnection
@@ -318,8 +337,11 @@ public sealed class SyncSegmentConnectionsHandler(
                 SourceParticipant = sourceParticipant
             };
 
+            edge.FromSourceIdentifier = fromIdentifier;
+            edge.ToSourceIdentifier = toIdentifier;
             edge.FromLocationCode = fromCode;
             edge.ToLocationCode = toCode;
+            edge.IsResolved = fromCode is not null && toCode is not null;
             edge.TypeKey = connection.Type?.IDInInfoSource ?? string.Empty;
             // The sender's own reading of the edge, kept so the registry can render it
             // from either end without holding the sender's relationship vocabulary.
@@ -337,7 +359,7 @@ public sealed class SyncSegmentConnectionsHandler(
             {
                 MessageId = messageId,
                 EntityType = nameof(LocationConnection),
-                EntityKey = $"{fromCode}->{toCode}",
+                EntityKey = edge.IsResolved ? $"{fromCode}->{toCode}" : $"{fromIdentifier}->{toIdentifier}",
                 Action = existing is null ? ProvenanceAction.Created : ProvenanceAction.Updated,
                 Actor = sourceParticipant,
                 ChangeSummary = JsonSerializer.Serialize(new
@@ -351,29 +373,49 @@ public sealed class SyncSegmentConnectionsHandler(
             });
 
             applied++;
+
+            if (!edge.IsResolved)
+            {
+                pending++;
+            }
         }
 
         await db.SaveChangesAsync(ct);
 
-        if (unresolved.Count > 0)
+        if (unknown.Count > 0)
         {
             logger.LogWarning(
-                "REG-LOCATION rejected {Count} connection(s) naming unknown locations: {Edges} [{CorrelationId}]",
-                unresolved.Count, string.Join("; ", unresolved), envelope.BodId);
+                "REG-LOCATION rejected {Count} connection(s) naming locations it has never seen: {Edges} [{CorrelationId}]",
+                unknown.Count, string.Join("; ", unknown), envelope.BodId);
         }
 
         logger.LogInformation(
-            "REG-LOCATION accepted {Count} connection(s) [{CorrelationId}]",
-            applied, envelope.BodId);
+            "REG-LOCATION accepted {Count} connection(s), {Pending} awaiting approval of their endpoints [{CorrelationId}]",
+            applied, pending, envelope.BodId);
 
         // Partial acceptance is still a rejection to report: the sender asserted edges
-        // the registry could not store, and a clean result would hide that.
-        return unresolved.Count > 0
+        // the registry could not store at all, and a clean result would hide that.
+        // Edges merely waiting on approval are not in that set — they were stored.
+        return unknown.Count > 0
             ? BodHandlingResult.Rejected(
-                $"Accepted {applied} connection(s); rejected {unresolved.Count} naming unknown locations: " +
-                string.Join("; ", unresolved))
+                $"Accepted {applied} connection(s); rejected {unknown.Count} naming unknown locations: " +
+                string.Join("; ", unknown))
             : BodHandlingResult.Applied(applied, 0, 0);
     }
+
+    /// <summary>
+    /// Whether the registry has heard of this identifier at all, in any state.
+    ///
+    /// Separate from <see cref="ResolveAsync"/> because the two answer different
+    /// questions: that one asks "can I state an edge about this yet", this one asks
+    /// "is the sender talking about something real". A proposal answers no to the
+    /// first and yes to the second, and conflating them is what made an edge
+    /// published with its own segments look like a sender error.
+    /// </summary>
+    private static async Task<bool> IsKnownAsync(
+        ParticipantDbContext db, string identifier, CancellationToken ct) =>
+        await db.Set<StewardshipItem>().AnyAsync(s => s.SourceIdentifier == identifier, ct)
+        || await db.Set<Location>().AnyAsync(l => l.SourceIdentifier == identifier, ct);
 
     /// <summary>
     /// The local code for an endpoint the sender named.
@@ -551,6 +593,12 @@ public sealed class RegLocationService(
             codes.Add(code);
         }
 
+        // Edges that arrived before their endpoints were approved can now be stated in
+        // the registry's own vocabulary. Done after the loop rather than inside it
+        // because an edge needs both ends, and the second end may be approved in this
+        // same batch.
+        var resolvedEdges = await ResolvePendingConnectionsAsync(db, ct);
+
         // Approval and republication intent commit together, as everywhere else.
         db.Outbox.Add(new OutboxItem
         {
@@ -569,11 +617,35 @@ public sealed class RegLocationService(
             ScenarioRunId = runContext.CurrentRunId
         });
 
+        // The edges follow as a second publication, after the segments and never
+        // merged with them. A receiver cannot store an edge whose ends it has not yet
+        // been told about, so the ordering that applied between ENG and the registry
+        // applies again between the registry and O&M.
+        if (resolvedEdges.Count > 0)
+        {
+            db.Outbox.Add(new OutboxItem
+            {
+                ContainerType = "StewardshipApproval",
+                ContainerKey = $"{decidedBy}@{DateTimeOffset.UtcNow:yyyy-MM-ddTHH:mm:ssZ}",
+                EntityType = nameof(LocationConnection),
+                EntityKeys = JsonSerializer.Serialize(resolvedEdges.Select(e => e.FederationId.ToString())),
+                ChangeKind = ChangeKind.Add,
+                Verb = "Sync",
+                Noun = "SegmentMeshConnections",
+                Pattern = MessagePattern.Publication,
+                ChannelUri = channelUri,
+                Topic = topic,
+                CorrelationId = correlationId,
+                State = OutboxState.Pending,
+                ScenarioRunId = runContext.CurrentRunId
+            });
+        }
+
         await db.SaveChangesAsync(ct);
 
         logger.LogInformation(
-            "REG-LOCATION approved {Count} location(s), republishing [{CorrelationId}]",
-            codes.Count, correlationId);
+            "REG-LOCATION approved {Count} location(s) and resolved {Edges} connection(s), republishing [{CorrelationId}]",
+            codes.Count, resolvedEdges.Count, correlationId);
 
         return new ApprovalResult(codes.Count, 0, codes, correlationId);
     }
@@ -607,6 +679,60 @@ public sealed class RegLocationService(
 
         await db.SaveChangesAsync(ct);
         return new ApprovalResult(0, proposals.Count, [], null);
+    }
+
+    /// <summary>
+    /// Fills in the location codes for edges whose endpoints have now been approved.
+    ///
+    /// Returns only the edges resolved by this call, so the caller republishes what
+    /// actually changed rather than every edge the registry holds. An edge with one
+    /// end still proposed stays pending and is picked up by whichever approval
+    /// completes it.
+    /// </summary>
+    private static async Task<List<LocationConnection>> ResolvePendingConnectionsAsync(
+        ParticipantDbContext db, CancellationToken ct)
+    {
+        var pending = await db.Set<LocationConnection>()
+            .Where(c => !c.IsResolved)
+            .OrderBy(c => c.Id)
+            .ToListAsync(ct);
+
+        if (pending.Count == 0)
+        {
+            return [];
+        }
+
+        // Locations approved moments ago are still pending in the change tracker: the
+        // approval and this resolution commit together, so a database query would miss
+        // exactly the endpoints this call exists to match. Local rows are therefore
+        // searched first and the store only consulted for locations approved earlier.
+        var resolved = new List<LocationConnection>();
+
+        async Task<Location?> EndpointAsync(string sourceIdentifier) =>
+            db.Set<Location>().Local
+                .FirstOrDefault(l => l.SourceIdentifier == sourceIdentifier)
+            ?? await db.Set<Location>()
+                .FirstOrDefaultAsync(l => l.SourceIdentifier == sourceIdentifier, ct);
+
+        foreach (var edge in pending)
+        {
+            var from = await EndpointAsync(edge.FromSourceIdentifier);
+            var to = await EndpointAsync(edge.ToSourceIdentifier);
+
+            if (from is null || to is null)
+            {
+                continue;
+            }
+
+            edge.FromLocationCode = from.LocationCode;
+            edge.ToLocationCode = to.LocationCode;
+            edge.IsResolved = true;
+            edge.UpdatedAt = DateTimeOffset.UtcNow;
+
+            resolved.Add(edge);
+        }
+
+        return resolved;
     }
 
     /// <summary>

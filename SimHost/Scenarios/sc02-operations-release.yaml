@@ -2,12 +2,18 @@
 #
 # OpenO&M use case: UC01 (engineering handover), second leg.
 #
-# Scenario 1 left a tag sitting in REG-LOCATION's stewardship queue. This scenario
-# starts where that one stopped, with the act that scenario 1 deliberately withheld:
-# a steward approves the proposal. That approval is the trigger here, and it is a
-# different kind of event from the one that triggered scenario 1 -- an engineer
-# promoting a named version is a statement about design maturity, whereas approval is
-# a release decision about what operations is allowed to see.
+# Scenario 1 left a tag sitting in REG-LOCATION's stewardship queue, and an edge
+# retained beside it that could not yet be stated in the registry's own vocabulary.
+# This scenario starts where that one stopped, with the act that scenario 1
+# deliberately withheld: a steward approves the proposal. That approval is the trigger
+# here, and it is a different kind of event from the one that triggered scenario 1 --
+# an engineer promoting a named version is a statement about design maturity, whereas
+# approval is a release decision about what operations is allowed to see.
+#
+# Approval does two things, and both are asserted below. It mints location codes, and
+# by doing so it makes the retained edge expressible: an edge that arrived naming ENG
+# tag numbers can now be restated between LOC- codes and sent onward. That is why the
+# relationship reaches operations here and not in scenario 1.
 #
 # Splitting the two is what makes the gate real. If one file carried the whole flow,
 # 'design data reached MMS' and 'approved data reached MMS' would be the same passing
@@ -49,6 +55,13 @@ steps:
     entity: StewardshipItem
     where: "SourceIdentifier = 'TIC-106' AND State = 'Proposed'"
 
+  # The retained edge is the second half of what scenario 1 leaves behind, and the
+  # part this scenario is here to resolve.
+  - at: reg-location
+    assert: store_contains
+    entity: LocationConnection
+    where: "TypeKey = 'eng:Supplies' AND IsResolved = 0"
+
   # -- The steward releases ------------------------------------------------------
   # The trigger for this scenario.
   - id: approve
@@ -73,6 +86,23 @@ steps:
     noun: Segments
     within: 60s
 
+  # Approval resolved the retained edge. Endpoints are now the registry's own codes,
+  # both readings survived, and the two ends are distinct -- an edge that resolved
+  # both ends to the same code would mean the endpoint lookup collapsed rather than
+  # matched.
+  - at: reg-location
+    assert: store_contains
+    entity: LocationConnection
+    where: "TypeKey = 'eng:Supplies' AND IsResolved = 1 AND ForwardRole = 'Supplies' AND InverseRole = 'Supplied By' AND FromLocationCode LIKE 'LOC-%' AND ToLocationCode LIKE 'LOC-%' AND FromLocationCode <> ToLocationCode"
+    within: 60s
+
+  - at: reg-location
+    assert: outbox_state
+    state: Posted
+    verb: Sync
+    noun: SegmentMeshConnections
+    within: 60s
+
   # -- MMS consumes ---------------------------------------------------------------
   - at: mms
     assert: message_received
@@ -94,6 +124,36 @@ steps:
     assert: store_contains
     entity: FunctionalLocationRecord
     where: "ForeignSourceId = 'REG-LOCATION' AND Cirid IS NULL"
+    within: 60s
+
+  # -- The topology arrives with the locations --------------------------------------
+  # Ordered after the segments deliberately: the edge names locations, and a planner
+  # reading it needs those locations to be there. MMS stores it either way, but this
+  # scenario asserts the case where the handover is coherent.
+  - at: mms
+    assert: message_received
+    channel: /OIIE-SANDBOX/Enterprise/Site/OandM
+    verb: Sync
+    noun: SegmentMeshConnections
+    within: 60s
+
+  # MMS holds the edge in the registry's vocabulary, not its own. It originated
+  # neither end and has no standing to restate the relationship, so LOC- codes are
+  # what it stores -- which is also what makes the row joinable back to
+  # FunctionalLocationRecord.ForeignIdInSource.
+  - at: mms
+    assert: store_contains
+    entity: LocationRelationshipRecord
+    where: "TypeKey = 'eng:Supplies' AND ForwardRole = 'Supplies' AND InverseRole = 'Supplied By' AND FromLocationId LIKE 'LOC-%' AND ToLocationId LIKE 'LOC-%'"
+    within: 60s
+
+  # The pump specifically. Scenario 11 raises work orders against it, and asserting
+  # only 'some location arrived' would let that scenario fail later with a much less
+  # informative message.
+  - at: mms
+    assert: store_contains
+    entity: FunctionalLocationRecord
+    where: "ForeignSourceId = 'REG-LOCATION' AND (ForeignIdInSource = 'P-101' OR Designation = 'P-101' OR EquipmentNumber = 'P-101')"
     within: 60s
 
   # -- CIR registration and resolution --------------------------------------------

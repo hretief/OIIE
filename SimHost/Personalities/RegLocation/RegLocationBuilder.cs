@@ -172,3 +172,126 @@ public sealed class RegLocationSegmentsBuilder(CcomAttributeMapperFactory mapper
             .Select(d => d.DefinitionKey)
             .FirstOrDefault() ?? definitionId.ToString();
 }
+
+/// <summary>
+/// Republishes approved connections to the O&amp;M channel.
+///
+/// The registry restates the edge in its own vocabulary, exactly as it does for the
+/// segments: endpoints travel as LOC- codes rather than the ENG tag numbers the edge
+/// arrived with. That is the whole reason the edge waited for approval — before it,
+/// there were no codes to state it in.
+///
+/// Like ENG's builder, this mints one implicit mesh per publication because CCOM has
+/// no envelope for a free-standing connection, and sends endpoints as references
+/// only. The receiver was told about them by the Sync/Segments message that preceded
+/// this one, and restating their content here would give it two sources for the same
+/// facts.
+/// </summary>
+public sealed class RegLocationConnectionsBuilder : IBodBuilder
+{
+    public (string Verb, string Noun) Handles => ("Sync", "SegmentMeshConnections");
+
+    /// <summary>Only REG-LOCATION uses this builder; ENG has its own.</summary>
+    public string? ParticipantId => RegLocationService.ParticipantId;
+
+    public async Task<XDocument> BuildAsync(
+        ParticipantContext participant,
+        ParticipantDbContext db,
+        OutboxItem item,
+        CancellationToken ct)
+    {
+        var keys = (JsonSerializer.Deserialize<List<string>>(item.EntityKeys) ?? [])
+            .Select(k => Guid.TryParse(k, out var id) ? id : Guid.Empty)
+            .Where(id => id != Guid.Empty)
+            .ToList();
+
+        // Resolved only. An edge that lost an endpoint between approval and dispatch
+        // would otherwise be published naming a code that is no longer there.
+        var edges = await db.Set<LocationConnection>()
+            .Where(c => keys.Contains(c.FederationId) && c.IsResolved)
+            .OrderBy(c => c.Id)
+            .ToListAsync(ct);
+
+        var endpointCodes = edges
+            .SelectMany(e => new[] { e.FromLocationCode, e.ToLocationCode })
+            .Where(c => c is { Length: > 0 })
+            .Distinct()
+            .ToList();
+
+        var locations = await db.Set<Location>()
+            .Where(l => endpointCodes.Contains(l.LocationCode))
+            .ToDictionaryAsync(l => l.LocationCode, ct);
+
+        var bod = new SyncSegmentMeshConnections(
+            item.ChangeKind == ChangeKind.Delete ? ActionCodes.Delete : ActionCodes.Replace);
+
+        bod.ApplicationArea.BODID = item.CorrelationId;
+        bod.ApplicationArea.Sender = new Sender
+        {
+            LogicalID = participant.Config.LogicalId,
+            ComponentID = "SimHost",
+            ReferenceID = item.ContainerKey
+        };
+
+        var infoSource = new InfoSource
+        {
+            UUID = CcomUuid.ForInfoSource(participant.Config.SourceId),
+            ShortName = participant.Config.SourceId
+        };
+
+        var mesh = new SegmentMesh
+        {
+            UUID = CcomUuid.FromKey("SegmentMesh", $"{participant.Config.SourceId}\u001f{item.ContainerKey}"),
+            IDInInfoSource = item.ContainerKey,
+            InfoSource = infoSource,
+            ShortName = item.ContainerKey,
+            Description = "Approved relationships released together."
+        };
+
+        foreach (var edge in edges)
+        {
+            if (!locations.TryGetValue(edge.FromLocationCode!, out var from) ||
+                !locations.TryGetValue(edge.ToLocationCode!, out var to))
+            {
+                continue;
+            }
+
+            mesh.Connection.Add(new SegmentConnection
+            {
+                // The edge's identity as adopted from ENG, not reminted. This is the
+                // same relationship, restated by a second holder.
+                UUID = edge.FederationId,
+                IDInInfoSource = edge.FederationId.ToString(),
+                InfoSource = infoSource,
+                Type = new ConnectionType
+                {
+                    UUID = CcomUuid.ForReferenceData(participant.Config.SourceId, edge.TypeKey),
+                    IDInInfoSource = edge.TypeKey,
+                    InfoSource = infoSource,
+                    ShortName = edge.ForwardRole ?? edge.TypeKey,
+                    Description = edge.InverseRole
+                },
+                From = Reference(from, infoSource),
+                To = Reference(to, infoSource),
+                Order = edge.Order?.ToString()
+            });
+        }
+
+        bod.With(mesh);
+
+        return bod.CreateDocument();
+    }
+
+    /// <summary>
+    /// A location as an endpoint: enough to resolve it, and nothing more.
+    /// </summary>
+    private static Segment Reference(Location location, InfoSource infoSource) => new()
+    {
+        UUID = location.FederationId,
+        IDInInfoSource = location.LocationCode is { Length: > 0 }
+            ? location.LocationCode
+            : location.FederationId.ToString(),
+        InfoSource = infoSource,
+        ShortName = location.LocationCode
+    };
+}

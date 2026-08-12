@@ -62,11 +62,17 @@ public class LocationParent
 /// A directed logical relationship between two locations in the authoritative model,
 /// e.g. a power supply supplies a pump.
 ///
-/// Endpoints are held as REG-LOCATION's own location codes rather than the sender's
-/// identifiers, following <see cref="LocationParent"/>: the registry states the
-/// relationship in its own vocabulary, as it does for everything else it accepts.
-/// A connection is therefore only storable once both ends exist here, which is why
-/// an edge naming an unknown end is rejected and reported rather than parked.
+/// Endpoints are held twice: as the sender's identifiers, always, and as
+/// REG-LOCATION's own location codes once both ends have cleared the gate. The
+/// registry states relationships in its own vocabulary like everything else it
+/// accepts, but it cannot do so before approval has minted the codes to state them
+/// in — and an edge published alongside its endpoints necessarily arrives first.
+///
+/// So an edge naming ends that are still proposals is retained unresolved rather
+/// than rejected. Rejecting it would make the sender responsible for republishing
+/// after an approval it cannot observe, and would lose the fact that the
+/// relationship was asserted at all. <see cref="IsResolved"/> is what distinguishes
+/// an edge waiting for its endpoints from one the registry can act on.
 ///
 /// The mesh that carried the edge is not retained. CCOM has no envelope for a
 /// free-standing connection, so the sender must wrap edges in a network to publish
@@ -83,11 +89,33 @@ public class LocationConnection
     /// </summary>
     public Guid FederationId { get; set; }
 
-    /// <summary>Source: the supplier in a Supplies edge.</summary>
-    public string FromLocationCode { get; set; } = string.Empty;
+    /// <summary>Source: the supplier in a Supplies edge. Null until both ends are approved.</summary>
+    public string? FromLocationCode { get; set; }
 
-    /// <summary>Sink: the supplied in a Supplies edge.</summary>
-    public string ToLocationCode { get; set; } = string.Empty;
+    /// <summary>Sink: the supplied in a Supplies edge. Null until both ends are approved.</summary>
+    public string? ToLocationCode { get; set; }
+
+    /// <summary>
+    /// The sender's identifier for the source end, e.g. BBFQ0032.
+    ///
+    /// Kept permanently rather than only until resolution. It is how the edge is
+    /// matched to a proposal at approval time, and afterwards it is the record of
+    /// what the sender actually asserted — the same reason a proposal keeps its
+    /// SourceIdentifier after a Location exists.
+    /// </summary>
+    public string FromSourceIdentifier { get; set; } = string.Empty;
+
+    /// <summary>The sender's identifier for the sink end, e.g. P-101.</summary>
+    public string ToSourceIdentifier { get; set; } = string.Empty;
+
+    /// <summary>
+    /// True once both endpoints have been approved and the codes above are filled in.
+    ///
+    /// Stored rather than derived from the codes being non-null so that the
+    /// distinction survives in queries and in the repository browser, where "waiting
+    /// for its endpoints" and "malformed" would otherwise look identical.
+    /// </summary>
+    public bool IsResolved { get; set; }
 
     /// <summary>The kind of relationship, e.g. eng:Supplies.</summary>
     public string TypeKey { get; set; } = string.Empty;

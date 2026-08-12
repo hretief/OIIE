@@ -40,12 +40,82 @@ public sealed class EngService(
     public const string ParticipantId = "eng";
 
     /// <summary>
+    /// The twin used when a caller names none.
+    ///
+    /// A fixed, well-known identity rather than a per-run one, so that a scenario
+    /// which never mentions a twin behaves exactly as it did before the dimension
+    /// existed. It is a real row like any other -- not a null or sentinel -- because
+    /// a tag belonging to no plant is not a state worth being able to represent.
+    /// </summary>
+    public static readonly Guid DefaultTwinId = new("0198f000-0000-7000-8000-00000000e461");
+
+    private const string DefaultTwinCode = "ACME-SANDBOX";
+
+    /// <summary>
+    /// Ensures the default twin exists, so the first write does not fail a foreign
+    /// key on a plant nobody was asked to create. Idempotent: reset drops the table,
+    /// and every entry point calls this before scoping to a twin.
+    /// </summary>
+    public async Task<ITwin> EnsureTwinAsync(
+        Guid twinId, string? code = null, string? name = null, string? description = null,
+        CancellationToken ct = default)
+    {
+        await using var db = factory.Create(ParticipantId);
+
+        var existing = await db.ITwins.FirstOrDefaultAsync(t => t.Id == twinId, ct);
+
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var twin = new ITwin
+        {
+            Id = twinId,
+            Code = code ?? (twinId == DefaultTwinId ? DefaultTwinCode : twinId.ToString()),
+            Name = name ?? (twinId == DefaultTwinId ? "ACME sandbox plant" : "Unnamed twin"),
+            Description = description
+        };
+
+        db.ITwins.Add(twin);
+        await db.SaveChangesAsync(ct);
+
+        logger.LogInformation("ENG registered iTwin {Code} ({TwinId})", twin.Code, twin.Id);
+
+        return twin;
+    }
+
+    /// <summary>The twins ENG holds designs for.</summary>
+    public async Task<List<ITwin>> ListTwinsAsync(CancellationToken ct = default)
+    {
+        await using var db = factory.Create(ParticipantId);
+        return await db.ITwins.OrderBy(t => t.Code).ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// The tags in one twin. Scoped by the context rather than by a Where here, so
+    /// the filter cannot be forgotten as this grows a search or a paging argument.
+    /// </summary>
+    public async Task<List<Tag>> ListTagsAsync(Guid twinId, CancellationToken ct = default)
+    {
+        await using var db = factory.Create(ParticipantId, twinId);
+
+        return await db.Set<Tag>()
+            .OrderBy(t => t.TagNumber)
+            .ToListAsync(ct);
+    }
+
+    /// <summary>
     /// Adds or edits a tag.
     ///
     /// Either <paramref name="tagNumber"/> or <paramref name="codePrefix"/> must be
     /// given. Supplying the number is the ordinary editing path; supplying only a
     /// prefix is the greenfield one — the designer knows they need a valve and asks
     /// the identity service what the next one is called.
+    ///
+    /// <paramref name="twinId"/> names the plant being designed. It is what makes the
+    /// tag number unambiguous: the same TIC-106 in two twins is two instruments, and
+    /// the upsert below must not treat one as an edit of the other.
     /// </summary>
     public async Task<Tag> AddTagAsync(
         string? tagNumber,
@@ -56,6 +126,7 @@ public sealed class EngService(
         decimal? rangeMaximum = null,
         string? controlAction = null,
         string? codePrefix = null,
+        Guid? twinId = null,
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(tagNumber) && string.IsNullOrWhiteSpace(codePrefix))
@@ -65,17 +136,21 @@ public sealed class EngService(
                 "allocate the next one in a series.", nameof(tagNumber));
         }
 
-        await using var db = factory.Create(ParticipantId);
+        var twin = twinId ?? DefaultTwinId;
+        await EnsureTwinAsync(twin, ct: ct);
+
+        await using var db = factory.Create(ParticipantId, twin);
 
         // Greenfield: nothing exists yet, so the identity service allocates both the
         // identity and the code. This is the one path where ENG does not know what the
         // tag is called until it has asked.
         if (string.IsNullOrWhiteSpace(tagNumber))
         {
-            var allocated = await identities.AllocateAsync(db, ParticipantId, codePrefix!, ct);
+            var allocated = await identities.AllocateAsync(db, ParticipantId, codePrefix!, twin, ct);
 
             var minted = new Tag
             {
+                ITwinId = twin,
                 TagNumber = allocated.Code,
                 FederationId = allocated.FederationId
             };
@@ -115,6 +190,10 @@ public sealed class EngService(
         // engineering work, and insert-only would make the second edit of any tag an
         // error. It also means a tag already Published returns to WorkInProgress,
         // which is correct: a changed tag has not been released in its new form.
+        //
+        // The lookup is twin-scoped by the context's query filter, so an identical tag
+        // number in another plant is invisible here rather than being edited by
+        // mistake.
         var existing = await db.Set<Tag>().FirstOrDefaultAsync(t => t.TagNumber == tagNumber, ct);
 
         // ENG is the design tool, so a tag it has not seen before is a tag coming into
@@ -123,6 +202,7 @@ public sealed class EngService(
         // adding a range is an edit to the same entity, not a new one.
         var tag = existing ?? new Tag
         {
+            ITwinId = twin,
             TagNumber = tagNumber,
             FederationId = identities.Mint()
         };
@@ -133,7 +213,7 @@ public sealed class EngService(
             // than being assumed to be it. Downstream systems will hold other codes
             // for the same thing, and none of them is more the identity than this one.
             db.Codes.Add(identities.RegisterCode(
-                tag.FederationId, ParticipantId, tagNumber));
+                tag.FederationId, ParticipantId, tagNumber, twin));
         }
 
         Apply(tag, serviceDescription, unitNumber, classKey,
@@ -201,6 +281,7 @@ public sealed class EngService(
         string toTagNumber,
         string typeKey,
         int? order = null,
+        Guid? twinId = null,
         CancellationToken ct = default)
     {
         if (string.Equals(fromTagNumber, toTagNumber, StringComparison.OrdinalIgnoreCase))
@@ -209,13 +290,17 @@ public sealed class EngService(
                 $"A tag cannot be related to itself ({fromTagNumber}).", nameof(toTagNumber));
         }
 
-        await using var db = factory.Create(ParticipantId);
+        var twin = twinId ?? DefaultTwinId;
+        await using var db = factory.Create(ParticipantId, twin);
 
         var relationshipType = await db.Set<TagRelationshipType>()
             .FirstOrDefaultAsync(t => t.Key == typeKey, ct)
             ?? throw new ArgumentException(
                 $"Unknown relationship type '{typeKey}'.", nameof(typeKey));
 
+        // Both lookups are twin-scoped, so relating to a tag number that exists only
+        // in another plant fails as a missing end rather than silently drawing an edge
+        // across two projects.
         var from = await db.Set<Tag>().FirstOrDefaultAsync(t => t.TagNumber == fromTagNumber, ct)
             ?? throw new ArgumentException(
                 $"No tag '{fromTagNumber}' to relate from.", nameof(fromTagNumber));
@@ -229,6 +314,7 @@ public sealed class EngService(
 
         var relationship = existing ?? new TagRelationship
         {
+            ITwinId = twin,
             FederationId = identities.Mint(),
             FromTagId = from.Id,
             ToTagId = to.Id,
@@ -271,17 +357,29 @@ public sealed class EngService(
     /// <summary>
     /// Promotes a named version. The validation gate is mechanical rather than
     /// gestural: every rule below is checkable, and a finding blocks release.
+    ///
+    /// Scoped to one twin: a release is an act about a single plant, so promoting in
+    /// one must not gather up another's work-in-progress tags and publish them.
     /// </summary>
     public async Task<PromotionResult> PromoteAsync(
-        string versionName, string channelUri, string? topic, CancellationToken ct = default)
+        string versionName, string channelUri, string? topic,
+        Guid? twinId = null, CancellationToken ct = default)
     {
-        await using var db = factory.Create(ParticipantId);
+        var twin = twinId ?? DefaultTwinId;
+        await using var db = factory.Create(ParticipantId, twin);
 
+        // Twin-scoped by the query filter, so this is every unpublished tag in this
+        // plant rather than in the schema.
         var pending = await db.Set<Tag>()
             .Where(t => t.Maturity != TagMaturity.Published)
             .ToListAsync(ct);
 
-        var version = new NamedVersion { Name = versionName, State = NamedVersionState.Draft };
+        var version = new NamedVersion
+        {
+            ITwinId = twin,
+            Name = versionName,
+            State = NamedVersionState.Draft
+        };
         db.Set<NamedVersion>().Add(version);
         await db.SaveChangesAsync(ct);
 
@@ -324,6 +422,7 @@ public sealed class EngService(
             ContainerType = nameof(NamedVersion),
             ContainerKey = versionName,
             EntityType = nameof(Tag),
+            ITwinId = twin,
             EntityKeys = JsonSerializer.Serialize(pending.Select(t => t.TagNumber)),
             ChangeKind = ChangeKind.Add,
             Verb = "Sync",
@@ -359,9 +458,10 @@ public sealed class EngService(
     /// a partial edge to repair later; it is one the receiver would have to reject.
     /// </summary>
     public async Task<RelationshipPublicationResult> PublishRelationshipsAsync(
-        string channelUri, string? topic, CancellationToken ct = default)
+        string channelUri, string? topic, Guid? twinId = null, CancellationToken ct = default)
     {
-        await using var db = factory.Create(ParticipantId);
+        var twin = twinId ?? DefaultTwinId;
+        await using var db = factory.Create(ParticipantId, twin);
 
         var publishedIds = await db.Set<Tag>()
             .Where(t => t.Maturity == TagMaturity.Published)
@@ -385,6 +485,7 @@ public sealed class EngService(
             ContainerType = nameof(TagRelationship),
             ContainerKey = "eng:DesignRelationships",
             EntityType = nameof(TagRelationship),
+            ITwinId = twin,
             EntityKeys = JsonSerializer.Serialize(edges.Select(r => r.FederationId.ToString())),
             ChangeKind = ChangeKind.Add,
             Verb = "Sync",

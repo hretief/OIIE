@@ -79,20 +79,30 @@ Run order matters, and the engine enforces it rather than papering over it:
 ```
 sc01-design-release        run first
 sc02-operations-release    requires sc01; fails if the tags are not in REG-LOCATION
-sc11-asset-install         resets, then provisions the location inline before
-                           publishing the install and removal events
+sc11-asset-install         requires sc02; fails immediately if MMS does not already
+                           hold P-101, because a maintenance process does not
+                           perform its own engineering handover
 ```
 
 REG-LOCATION is a release gate, not a relay. `sc01` deliberately asserts that
 *nothing* reached MMS; if that assertion passes trivially, suspect the gate has
 been bypassed rather than that the scenario is weak.
 
+Relationships travel on the same two legs as the segments they join. `sc01`
+publishes the edge to REG-LOCATION, which retains it *unresolved* — it is held
+against the sender's tag numbers because the registry has no codes of its own to
+state it with until the endpoints are approved. `sc02`'s approval mints those
+codes, resolves the edge, and republishes it to MMS. An edge sitting at
+`IsResolved = 0` after `sc02` means the endpoint lookup failed, not that the edge
+was rejected.
+
 A scenario declaring `setup.reset: true` now resets the sandbox itself before the
 run row is created, and reopens the subscriptions its participants declare. That
 matters because a reset closes sessions: without the reopen, the run's own
 subscription precondition would abort it. `sc01-design-release` therefore passes
-twice in a row with no manual reset in between. `sc02-operations-release` sets
-`reset: false` precisely because it consumes the queue `sc01` leaves behind.
+twice in a row with no manual reset in between. `sc02-operations-release` and
+`sc11-asset-install` set `reset: false` precisely because each consumes what the
+previous one leaves behind.
 
 A reset also purges run history. Running a resetting scenario after a
 non-resetting one deletes the earlier run's evidence, and `/admin/scenarios/runs/{id}`
@@ -133,6 +143,43 @@ Then the session sequence above.
 `/admin/schema/init` short-circuits on a sentinel table and will not add new ones.
 Use `/admin/reset`, or `/admin/schema/reset` if ISBM state is known clean.
 
+A change that adds a **table or a column** needs `/admin/reset/day-zero`. The other
+resets clear rows within the shape that is already there; only day zero rebuilds the
+shape. Skipping it after a schema change fails at the first query against the new
+column rather than at reset, so the error surfaces a long way from its cause.
+
+## iTwins
+
+ENG scopes its design data by iTwin, so a tag number is unique *within a plant*
+rather than globally. Two twins can each hold their own `TIC-500` and they are two
+different instruments.
+
+```
+GET  /admin/eng/twins              list
+POST /admin/eng/twins              register { iTwinId, code, name, description }
+GET  /admin/eng/tags?iTwinId=...   read one twin
+```
+
+The twin is taken from the request body, or from an `x-itwin-id` header, or — when
+neither is given — from ENG's default twin. That fallback is why every route that
+predates the twin dimension still behaves as it did.
+
+Two properties of the model are deliberate and easy to undo by accident:
+
+- **`FederationId` stays globally unique.** It is minted per tag and is what MMS and
+  CIR correlate on, so scoping it by twin would break identity resolution across
+  participants.
+- **Isolation is enforced by EF global query filters, not by a `WHERE` clause per
+  query.** The filter must reference the context *property*, not a captured field:
+  the compiled model is cached per schema, so a captured field freezes the first
+  instance's twin into every later context.
+
+The leak worth guarding is promotion, which selects every unpublished tag it can
+see. Unscoped, it sweeps another plant's design into the release and publishes it.
+Bruno requests 27-28 assert exactly that.
+
+Only ENG is twin-scoped today. REG-LOCATION, MMS and OM-RELIABILITY are not.
+
 ## When something is wrong
 
 | Symptom | Check |
@@ -147,6 +194,8 @@ Use `/admin/reset`, or `/admin/schema/reset` if ISBM state is known clean.
 | CIR call times out | Work in this order. **(1)** `GET /admin/cir/last?participantId=eng` — durable evidence of the last exchange, safe to call repeatedly. **(2)** `POST /admin/cir/await-response` — re-reads the still-open consumer session; if the response appears, the CIR did reply and only the wait window was short. **(3)** `POST {cir}/api/isbm/drain` — if that completes the exchange, the message path is fine and the CIR's `IsbmPoll` timer is not running: check the plan is `B1`+ with Always On and that App Insights shows `IsbmPoll` requests. **(4)** only then `GET /admin/cir/diagnose`, which *consumes* from the queue and destroys the evidence |
 | A consumer looks healthy but consumes nothing | Its session predates the last channel deletion. Channels take their sessions with them, and a poll loop that swallows session faults will not notice |
 | `NotValidated` | No XSD held for that namespace. `Schemas/ccom` is empty by design |
+| A tag is missing from `/admin/eng/tags` | Almost always the wrong twin, not a lost row. A request naming no twin reads ENG's default, so a tag created under `x-itwin-id` will not appear in it. `GET /admin/eng/twins` lists what exists |
+| Invalid column name `ITwinId` | The schema predates the twin columns. `/admin/reset` will not add them — use `/admin/reset/day-zero` |
 | A participant's **Repository contents** expander reports a table unreadable | A grant, not a UI fault. The browser reads as that participant's own contained user, so it shows exactly what the participant can see. Compare against `provision.ps1` for that schema before assuming the page is broken |
 
 ## State that outlives `/admin/reset`

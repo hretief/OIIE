@@ -142,7 +142,18 @@ public sealed class OutboxDispatcher : BackgroundService
                 ?? throw new InvalidOperationException(
                     $"No BOD builder registered for {item.Verb}{item.Noun}.");
 
-            var document = await builder.BuildAsync(participant, db, item, ct);
+            // The builder reads through a context scoped to the item's twin, so entity
+            // keys resolve within the plant they were published from -- two twins may
+            // use the same key and the builder has no way to tell them apart.
+            //
+            // Only the builder gets the scoped context. Outbox state stays on `db`,
+            // which is tracking `item`; saving it through a second context would
+            // silently persist nothing.
+            await using var reads = item.ITwinId == Guid.Empty
+                ? null
+                : _dbFactory.Create(participant.ParticipantId, item.ITwinId);
+
+            var document = await builder.BuildAsync(participant, reads ?? db, item, ct);
             var xml = document.ToString(System.Xml.Linq.SaveOptions.DisableFormatting);
 
             var client = _isbm.For(participant.ParticipantId);

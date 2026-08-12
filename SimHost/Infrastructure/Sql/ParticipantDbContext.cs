@@ -19,14 +19,28 @@ namespace SimHost.Infrastructure.Sql;
 public class ParticipantDbContext : DbContext
 {
     private readonly string _schema;
+    private readonly Guid? _twinId;
 
-    public ParticipantDbContext(DbContextOptions<ParticipantDbContext> options, string schema)
+    public ParticipantDbContext(
+        DbContextOptions<ParticipantDbContext> options, string schema, Guid? twinId = null)
         : base(options)
     {
         _schema = schema;
+        _twinId = twinId;
     }
 
     public string Schema => _schema;
+
+    /// <summary>
+    /// The twin this context is scoped to, or null for an unscoped one.
+    ///
+    /// Null is not a default so much as a distinct mode: the outbox dispatcher, the
+    /// reset endpoint and schema initialisation all operate across every twin, and a
+    /// filter would hide rows they exist to act on.
+    /// </summary>
+    public Guid? ITwinId => _twinId;
+
+    public DbSet<ITwin> ITwins => Set<ITwin>();
 
     public DbSet<MessageRecord> Messages => Set<MessageRecord>();
     public DbSet<CodeAssignment> Codes => Set<CodeAssignment>();
@@ -46,6 +60,41 @@ public class ParticipantDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(_schema);
+
+        modelBuilder.Entity<ITwin>(entity =>
+        {
+            entity.ToTable("ITwin");
+
+            // The identity is adopted, not generated: an iTwin is created outside this
+            // sandbox and minting a second identifier for it would defeat the purpose.
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedNever();
+
+            entity.Property(e => e.Code).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.Description).HasMaxLength(400);
+            entity.HasIndex(e => e.Code).IsUnique();
+        });
+
+        // Twin isolation, applied to the model rather than left to each query.
+        //
+        // ENG has several read paths that legitimately select everything they find --
+        // promotion gathers work-in-progress tags, the builders gather what a version
+        // published -- and a scope those queries have to remember is a scope that will
+        // eventually be forgotten. One missed WHERE would put another project's tags
+        // into a release, and it would publish cleanly.
+        //
+        // ITwinId is read from the context property, never captured into the lambda:
+        // the compiled model is cached and shared across instances, so a captured
+        // field would freeze the first context's twin into every later one.
+        modelBuilder.Entity<Tag>()
+            .HasQueryFilter(e => ITwinId == null || e.ITwinId == ITwinId);
+
+        modelBuilder.Entity<NamedVersion>()
+            .HasQueryFilter(e => ITwinId == null || e.ITwinId == ITwinId);
+
+        modelBuilder.Entity<TagRelationship>()
+            .HasQueryFilter(e => ITwinId == null || e.ITwinId == ITwinId);
 
         modelBuilder.Entity<MessageRecord>(entity =>
         {
@@ -126,6 +175,11 @@ public class ParticipantDbContext : DbContext
             // The reverse lookup that matters operationally: someone types a legacy
             // code and needs the identity behind it.
             entity.HasIndex(e => new { e.ParticipantId, e.Code });
+
+            // The allocator reads its high-water mark through this: a code series
+            // belongs to one twin, so the next P- in one project must not be decided
+            // by what another project has already issued.
+            entity.HasIndex(e => new { e.ITwinId, e.ParticipantId, e.CodePrefix });
         });
 
         modelBuilder.Entity<OutboxItem>(entity =>
@@ -327,6 +381,28 @@ public class ParticipantDbContext : DbContext
             entity.HasIndex(e => e.FederationId).IsUnique();
         });
 
+        modelBuilder.Entity<LocationRelationshipRecord>(entity =>
+        {
+            entity.ToTable("LocationRelationshipRecord");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.FromLocationId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.ToLocationId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.TypeKey).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.ForwardRole).HasMaxLength(128);
+            entity.Property(e => e.InverseRole).HasMaxLength(128);
+            entity.Property(e => e.ForeignSourceId).HasMaxLength(64);
+            entity.HasIndex(e => new { e.FromLocationId, e.ToLocationId, e.TypeKey }).IsUnique();
+            entity.HasIndex(e => e.FromLocationId);
+            entity.HasIndex(e => e.ToLocationId);
+
+            // Same exemption as FunctionalLocationRecord: MMS adopts identity rather
+            // than minting it, so a sender that asserted none leaves this empty and
+            // more than one such row must remain possible.
+            entity.HasIndex(e => e.FederationId)
+                .IsUnique()
+                .HasFilter("[FederationId] <> '00000000-0000-0000-0000-000000000000'");
+        });
+
         modelBuilder.Entity<WorkOrder>(entity =>
         {
             entity.ToTable("WorkOrder");
@@ -410,16 +486,24 @@ public class ParticipantDbContext : DbContext
         {
             entity.ToTable("LocationConnection");
             entity.HasKey(e => e.Id);
-            entity.Property(e => e.FromLocationCode).HasMaxLength(64).IsRequired();
-            entity.Property(e => e.ToLocationCode).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.FromLocationCode).HasMaxLength(64);
+            entity.Property(e => e.ToLocationCode).HasMaxLength(64);
+            entity.Property(e => e.FromSourceIdentifier).HasMaxLength(128).IsRequired();
+            entity.Property(e => e.ToSourceIdentifier).HasMaxLength(128).IsRequired();
             entity.Property(e => e.TypeKey).HasMaxLength(200).IsRequired();
             entity.Property(e => e.ForwardRole).HasMaxLength(128);
             entity.Property(e => e.InverseRole).HasMaxLength(128);
             entity.Property(e => e.SourceParticipant).HasMaxLength(64).IsRequired();
             entity.HasIndex(e => e.FederationId).IsUnique();
-            entity.HasIndex(e => new { e.FromLocationCode, e.ToLocationCode, e.TypeKey }).IsUnique();
+
+            // Keyed on what the sender said, not on the codes: the codes are null
+            // until approval, so a unique index over them would let every unresolved
+            // edge collide with every other one on (null, null, type).
+            entity.HasIndex(e => new { e.SourceParticipant, e.FromSourceIdentifier, e.ToSourceIdentifier, e.TypeKey })
+                .IsUnique();
             entity.HasIndex(e => e.FromLocationCode);
             entity.HasIndex(e => e.ToLocationCode);
+            entity.HasIndex(e => e.IsResolved);
         });
 
         modelBuilder.Entity<StewardshipItem>(entity =>
@@ -458,8 +542,17 @@ public class ParticipantDbContext : DbContext
             entity.Property(e => e.RangeMaximum).HasPrecision(38, 10);
             entity.Property(e => e.ControlAction).HasMaxLength(64);
             entity.Property(e => e.Maturity).HasConversion<string>().HasMaxLength(24);
-            entity.HasIndex(e => e.TagNumber).IsUnique();
+
+            // Scoped by twin, not global. A tag number identifies an instrument within
+            // one plant; two projects may legitimately each have a TIC-106, and a global
+            // constraint would make the second project's design an error.
+            entity.HasIndex(e => new { e.ITwinId, e.TagNumber }).IsUnique();
             entity.HasIndex(e => e.Maturity);
+
+            // Deliberately NOT scoped by twin. FederationId is minted per tag, so two
+            // twins' tags already differ here, and this is the column MMS and CIR
+            // correlate on. Scoping it would imply the same identity may recur across
+            // twins, which is the opposite of what it means.
             entity.HasIndex(e => e.FederationId).IsUnique();
         });
 
@@ -471,6 +564,7 @@ public class ParticipantDbContext : DbContext
             entity.Property(e => e.State).HasConversion<string>().HasMaxLength(16);
             entity.Property(e => e.Scope).HasMaxLength(200);
             entity.Property(e => e.CreatedBy).HasMaxLength(128).IsRequired();
+            entity.HasIndex(e => e.ITwinId);
         });
 
         modelBuilder.Entity<ValidationFinding>(entity =>
@@ -503,7 +597,12 @@ public class ParticipantDbContext : DbContext
 
             // One assertion per direction per kind. Re-sending the same edge is a
             // restatement, not a second relationship.
+            //
+            // No twin needed in this key: both endpoints are tag ids, which are
+            // already unique to one twin, so an edge cannot span two of them.
             entity.HasIndex(e => new { e.FromTagId, e.ToTagId, e.TypeKey }).IsUnique();
+
+            entity.HasIndex(e => e.ITwinId);
 
             // Reading an edge from its sink end is the "Supplied By" direction, and
             // is as common as reading it from its source, so both ends are indexed.

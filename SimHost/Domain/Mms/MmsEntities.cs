@@ -149,3 +149,50 @@ public class WorkOrder
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
+
+/// <summary>
+/// A relationship between two functional locations, as told to MMS by the registry.
+///
+/// MMS holds this because a maintenance planner needs to know what feeds what: a
+/// pump losing its power supply is a different job from a pump with a failed
+/// bearing, and without the edge the two are indistinguishable in the work order.
+///
+/// Endpoints are held as the registry's codes rather than resolved to MMS's own
+/// equipment numbers. MMS did not originate either end and has no authority to
+/// restate the relationship in its own vocabulary; the codes are what it was told,
+/// and <see cref="FunctionalLocationRecord.ForeignIdInSource"/> is how they join to
+/// anything local. Storing an edge whose ends MMS cannot yet see is therefore
+/// normal, not an error.
+/// </summary>
+public class LocationRelationshipRecord
+{
+    public long Id { get; set; }
+
+    /// <summary>
+    /// The edge's identity as adopted from the sender, never reminted — the same
+    /// rule that governs <see cref="FunctionalLocationRecord.FederationId"/>.
+    /// </summary>
+    public Guid FederationId { get; set; }
+
+    /// <summary>The registry's code for the source end, e.g. LOC-000002.</summary>
+    public string FromLocationId { get; set; } = string.Empty;
+
+    /// <summary>The registry's code for the sink end.</summary>
+    public string ToLocationId { get; set; } = string.Empty;
+
+    /// <summary>The kind of relationship, e.g. eng:Supplies.</summary>
+    public string TypeKey { get; set; } = string.Empty;
+
+    /// <summary>Reading from source to sink, e.g. "Supplies".</summary>
+    public string? ForwardRole { get; set; }
+
+    /// <summary>Reading from sink to source, e.g. "Supplied By".</summary>
+    public string? InverseRole { get; set; }
+
+    /// <summary>The system that stated the relationship, e.g. REG-LOCATION.</summary>
+    public string? ForeignSourceId { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}

@@ -56,9 +56,13 @@ public interface ITagIdentityService
     /// The code is allocated rather than supplied because "next available" is a claim
     /// only something holding the series can make. A designer typing P-101 into a form
     /// is guessing, and two designers guessing concurrently both guess the same.
+    ///
+    /// The series belongs to one twin. Two projects each running a P- series are
+    /// numbering different pumps, so one must not decide where the other starts.
     /// </summary>
     Task<AllocatedIdentity> AllocateAsync(
-        ParticipantDbContext db, string participantId, string prefix, CancellationToken ct = default);
+        ParticipantDbContext db, string participantId, string prefix,
+        Guid twinId = default, CancellationToken ct = default);
 
     /// <summary>
     /// Records that <paramref name="participantId"/> knows the entity identified by
@@ -70,7 +74,7 @@ public interface ITagIdentityService
     /// something still relates the two. Returns the assignment so callers can persist
     /// it.
     /// </summary>
-    CodeAssignment RegisterCode(Guid federationId, string participantId, string code);
+    CodeAssignment RegisterCode(Guid federationId, string participantId, string code, Guid twinId = default);
 }
 
 /// <inheritdoc cref="ITagIdentityService"/>
@@ -88,7 +92,8 @@ public sealed class EmulatedTagIdentityService : ITagIdentityService
         Guid.CreateVersion7();
 
     public async Task<AllocatedIdentity> AllocateAsync(
-        ParticipantDbContext db, string participantId, string prefix, CancellationToken ct = default)
+        ParticipantDbContext db, string participantId, string prefix,
+        Guid twinId = default, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(participantId);
         ArgumentException.ThrowIfNullOrWhiteSpace(prefix);
@@ -97,8 +102,13 @@ public sealed class EmulatedTagIdentityService : ITagIdentityService
         // issued. Deliberately not a count: codes are never deleted, but a retired
         // assignment must not free its number for reissue — the whole point of
         // retiring rather than deleting is that the old code still resolves.
+        //
+        // Filtered by twin as well as participant, so a second project's series starts
+        // at 001 rather than continuing the first project's numbering.
         var highest = await db.Codes
-            .Where(c => c.ParticipantId == participantId && c.CodePrefix == prefix)
+            .Where(c => c.ParticipantId == participantId
+                && c.ITwinId == twinId
+                && c.CodePrefix == prefix)
             .Select(c => c.CodeSequence)
             .MaxAsync(ct) ?? 0;
 
@@ -111,6 +121,7 @@ public sealed class EmulatedTagIdentityService : ITagIdentityService
         {
             FederationId = federationId,
             ParticipantId = participantId,
+            ITwinId = twinId,
             Code = code,
             CodePrefix = prefix,
             CodeSequence = next,
@@ -120,7 +131,8 @@ public sealed class EmulatedTagIdentityService : ITagIdentityService
         return new AllocatedIdentity(federationId, code, assignment);
     }
 
-    public CodeAssignment RegisterCode(Guid federationId, string participantId, string code)
+    public CodeAssignment RegisterCode(
+        Guid federationId, string participantId, string code, Guid twinId = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(participantId);
         ArgumentException.ThrowIfNullOrWhiteSpace(code);
@@ -138,6 +150,7 @@ public sealed class EmulatedTagIdentityService : ITagIdentityService
         {
             FederationId = federationId,
             ParticipantId = participantId,
+            ITwinId = twinId,
             Code = code.Trim(),
             AssignedAt = DateTimeOffset.UtcNow
         };

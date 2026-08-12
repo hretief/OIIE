@@ -6,7 +6,15 @@ namespace SimHost.Infrastructure.Sql;
 
 public interface IParticipantDbContextFactory
 {
-    ParticipantDbContext Create(string participantId);
+    /// <summary>
+    /// Opens a context for a participant, optionally scoped to one iTwin.
+    ///
+    /// Omitting the twin yields an unscoped context that sees every twin's rows.
+    /// That is what the outbox dispatcher, the reset endpoint and schema
+    /// initialisation need: they act on the schema as a whole, and a filter would
+    /// hide exactly the rows they exist to process.
+    /// </summary>
+    ParticipantDbContext Create(string participantId, Guid? twinId = null);
 }
 
 /// <summary>
@@ -26,7 +34,7 @@ public sealed class ParticipantDbContextFactory : IParticipantDbContextFactory
         _connectionStrings = connectionStrings;
     }
 
-    public ParticipantDbContext Create(string participantId)
+    public ParticipantDbContext Create(string participantId, Guid? twinId = null)
     {
         var participant = _registry.Get(participantId);
 
@@ -40,6 +48,6 @@ public sealed class ParticipantDbContextFactory : IParticipantDbContextFactory
             .ReplaceService<IModelCacheKeyFactory, SchemaAwareModelCacheKeyFactory>()
             .Options;
 
-        return new ParticipantDbContext(options, participant.Schema);
+        return new ParticipantDbContext(options, participant.Schema, twinId);
     }
 }

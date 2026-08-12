@@ -15,6 +15,14 @@ public class OutboxItem
 
     public string EntityType { get; set; } = string.Empty;
 
+    /// <summary>
+    /// The twin whose data this publication describes, where the participant scopes
+    /// its data that way. Carried on the item because the BOD is built later, by a
+    /// background dispatcher that has no other way to know which plant the entity
+    /// keys below belong to — and two twins may use the same key.
+    /// </summary>
+    public Guid ITwinId { get; set; }
+
     /// <summary>JSON array — a release event typically publishes many nouns in one BOD.</summary>
     public string EntityKeys { get; set; } = "[]";
 

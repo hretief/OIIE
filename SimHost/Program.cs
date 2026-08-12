@@ -169,11 +169,13 @@ builder.Services.AddSingleton<IBodBuilder, SyncSegmentConnectionsBuilder>();
 builder.Services.AddSingleton<EngService>();
 
 builder.Services.AddSingleton<IBodBuilder, RegLocationSegmentsBuilder>();
+builder.Services.AddSingleton<IBodBuilder, RegLocationConnectionsBuilder>();
 builder.Services.AddSingleton<IBodHandler, SyncSegmentsHandler>();
 builder.Services.AddSingleton<IBodHandler, SyncSegmentConnectionsHandler>();
 builder.Services.AddSingleton<RegLocationService>();
 
 builder.Services.AddSingleton<IBodHandler, MmsSegmentsHandler>();
+builder.Services.AddSingleton<IBodHandler, MmsSegmentConnectionsHandler>();
 
 // OIIE Scenario 11. MMS publishes asset install/removal events for the first time —
 // through phase 1 it only consumed — and OM-RELIABILITY is the "O&M Systems" actor
@@ -1798,34 +1800,107 @@ app.MapGet("/admin/scenarios/runs/{runId:guid}", async (
     });
 });
 
+// The twins ENG holds designs for. Registering one is optional: naming an unknown
+// twin on a write creates it, because refusing would make callers perform a
+// two-step ceremony to say something they already said.
+app.MapGet("/admin/eng/twins", async (EngService eng, CancellationToken ct) =>
+    Results.Ok(await eng.ListTwinsAsync(ct)));
+
+app.MapPost("/admin/eng/twins", async (
+    EngService eng, RegisterTwinRequest request, CancellationToken ct) =>
+{
+    if (request.ITwinId == Guid.Empty)
+    {
+        return Results.BadRequest(new { error = "iTwinId is required and cannot be empty." });
+    }
+
+    var twin = await eng.EnsureTwinAsync(
+        request.ITwinId, request.Code, request.Name, request.Description, ct);
+
+    return Results.Ok(twin);
+});
+
+// The twin a request works in.
+//
+// Body first, then header, then ENG's default. The header exists so a client can set
+// the twin once for a session rather than repeating it in every payload; the body
+// wins because a request that names a twin explicitly means it.
+static Guid? ResolveTwin(Guid? fromBody, HttpRequest http)
+{
+    if (fromBody is { } body && body != Guid.Empty)
+    {
+        return body;
+    }
+
+    var header = http.Headers["x-itwin-id"].FirstOrDefault();
+
+    return Guid.TryParse(header, out var parsed) && parsed != Guid.Empty ? parsed : null;
+}
+
+// ENG's tags, scoped to one twin. Without the scope this would report every plant's
+// design as though it were one model, which is the confusion the twin exists to end.
+app.MapGet("/admin/eng/tags", async (
+    EngService eng, HttpRequest http, Guid? iTwinId, CancellationToken ct) =>
+{
+    var twin = ResolveTwin(iTwinId, http) ?? EngService.DefaultTwinId;
+    var tags = await eng.ListTagsAsync(twin, ct);
+
+    return Results.Ok(new
+    {
+        iTwinId = twin,
+        count = tags.Count,
+        tags = tags.Select(t => new
+        {
+            t.Id,
+            t.TagNumber,
+            federationId = t.FederationId,
+            t.ServiceDescription,
+            t.UnitNumber,
+            t.ClassKey,
+            t.RangeMinimum,
+            t.RangeMaximum,
+            t.ControlAction,
+            t.PidReference,
+            maturity = t.Maturity.ToString(),
+            t.PublishedInVersionId,
+            t.UpdatedAt
+        })
+    });
+});
+
 app.MapPost("/admin/eng/tags", async (
-    EngService eng, AddTagRequest request, CancellationToken ct) =>
+    EngService eng, HttpRequest http, AddTagRequest request, CancellationToken ct) =>
 {
     var tag = await eng.AddTagAsync(
         request.TagNumber, request.ServiceDescription, request.UnitNumber, request.ClassKey,
-        request.RangeMinimum, request.RangeMaximum, request.ControlAction, request.CodePrefix, ct);
+        request.RangeMinimum, request.RangeMaximum, request.ControlAction, request.CodePrefix,
+        ResolveTwin(request.ITwinId, http), ct);
 
     // The identity is returned because in the allocation case the caller did not
-    // choose either value and has no other way to learn what it was given.
+    // choose either value and has no other way to learn what it was given. The twin
+    // is returned for the same reason: it may have come from a header or a default.
     return Results.Ok(new
     {
         tag.Id,
         tag.TagNumber,
         federationId = tag.FederationId,
+        iTwinId = tag.ITwinId,
         maturity = tag.Maturity.ToString()
     });
 });
 
 // The release event. Only a passing validation gate writes outbox rows.
 app.MapPost("/admin/eng/promote", async (
-    EngService eng, ParticipantRegistry registry, PromoteRequest request, CancellationToken ct) =>
+    EngService eng, ParticipantRegistry registry, HttpRequest http,
+    PromoteRequest request, CancellationToken ct) =>
 {
     var publisher = registry.Get("eng").Config.Channels
         .FirstOrDefault(c => c.Role == ChannelRole.Publisher)
         ?? throw new InvalidOperationException("ENG has no publisher channel configured.");
 
     var result = await eng.PromoteAsync(
-        request.Name, publisher.ChannelUri, publisher.Topics.FirstOrDefault(), ct);
+        request.Name, publisher.ChannelUri, publisher.Topics.FirstOrDefault(),
+        ResolveTwin(request.ITwinId, http), ct);
 
     return result.Released ? Results.Ok(result) : Results.UnprocessableEntity(result);
 });
@@ -2087,8 +2162,15 @@ internal sealed record AddTagRequest(
     decimal? RangeMinimum = null,
     decimal? RangeMaximum = null,
     string? ControlAction = null,
-    string? CodePrefix = null);
+    string? CodePrefix = null,
+    Guid? ITwinId = null);
 
-internal sealed record PromoteRequest(string Name);
+internal sealed record RegisterTwinRequest(
+    Guid ITwinId,
+    string? Code = null,
+    string? Name = null,
+    string? Description = null);
+
+internal sealed record PromoteRequest(string Name, Guid? ITwinId = null);
 
 internal sealed record RejectRequest(string Reason);

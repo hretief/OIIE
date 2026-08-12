@@ -16,9 +16,17 @@
 # positive assertion above, and only 'nothing reached MMS' can detect the gate
 # leaking.
 #
-# Identifiers only appear where this file chooses them. TIC-106 is authored here;
-# LOC-nnnnnn is assigned by REG-LOCATION, so assertions select on provenance columns
-# rather than on values that cannot be known before the run.
+# Relationships travel on this leg too, not on a later one. An edge is design data in
+# exactly the same sense as the tags it joins: engineering asserts that the supply
+# feeds the pump at the moment it draws them that way, and holding the edge back until
+# something downstream needs it would mean the registry's copy of the design was
+# missing a part of the design. The registry retains an edge whose endpoints are still
+# proposals, unresolved, and resolves it when they are approved -- so an edge arriving
+# before its endpoints clear the gate is normal here rather than an error.
+#
+# Identifiers only appear where this file chooses them. TIC-106, P-101 and BBFQ0032
+# are authored here; LOC-nnnnnn is assigned by REG-LOCATION, so assertions select on
+# provenance columns rather than on values that cannot be known before the run.
 id: sc01-design-release
 name: Design release to the location registry
 scenario: 1
@@ -68,6 +76,43 @@ steps:
     entity: Tag
     where: "TagNumber = 'TIC-106'"
 
+  # The pump and its power supply. These are authored here rather than in the
+  # scenario that eventually installs an asset against the pump: scenario 11 is a
+  # maintenance process and has no business creating engineering design data. It
+  # depends on the pump existing in MMS, and this is the leg where that begins.
+  - id: author-pump
+    at: eng
+    action: create_tag
+    args:
+      tagNumber: P-101
+      serviceDescription: Feed pump
+      unitNumber: "101"
+      classKey: rdl:Instrument
+      controlAction: Reverse
+
+  # Both ends must exist before the edge can be asserted, so the supply is authored
+  # before the relationship that names it.
+  - id: author-supply
+    at: eng
+    action: create_tag
+    args:
+      tagNumber: BBFQ0032
+      serviceDescription: Feed pump power supply
+      unitNumber: "101"
+      classKey: rdl:Equipment
+
+  # The pump does not stand alone: it is fed by the supply, and that is part of the
+  # design rather than a note attached to it. Direction is explicit -- the supplier
+  # is the source -- and the reverse reading comes from the type, not from a second
+  # edge pointing the other way.
+  - id: relate-supply
+    at: eng
+    action: relate_tags
+    args:
+      from: BBFQ0032
+      to: P-101
+      type: eng:Supplies
+
   # The trigger for this scenario: promoting a named version is the engineering act
   # that says a design is ready to be seen outside ENG.
   - id: release
@@ -107,12 +152,53 @@ steps:
     where: "SourceIdentifier = 'TIC-106' AND State = 'Proposed'"
     within: 30s
 
+  - at: reg-location
+    assert: store_contains
+    entity: StewardshipItem
+    where: "SourceIdentifier = 'P-101' AND State = 'Proposed'"
+    within: 30s
+
   # No Location row yet. Approval is what creates one, and approval has not happened,
   # so a Location here would mean the queue was bypassed.
   - at: reg-location
     assert: store_not_contains
     entity: Location
     where: "SourceIdentifier = 'TIC-106'"
+
+  # -- The relationship follows the tags ------------------------------------------
+  # Published after the segments so the registry has already seen both endpoints as
+  # proposals. It is not gated on approval: the registry retains the edge naming the
+  # sender's identifiers and resolves it to its own codes when the gate opens.
+  - id: publish-relationships
+    at: eng
+    action: publish_relationships
+
+  - at: reg-location
+    assert: message_received
+    channel: /OIIE-SANDBOX/Enterprise/Site/Eng
+    verb: Sync
+    noun: SegmentMeshConnections
+    within: 60s
+
+  - at: reg-location
+    assert: bod_valid
+
+  # Retained, and retained unresolved. The edge is held against the identifiers ENG
+  # used, because the registry has no codes of its own to state it with until the
+  # proposals are approved. IsResolved = 0 is the assertion that distinguishes
+  # 'waiting for the gate' from 'silently discarded', which is what the earlier
+  # reject-on-arrival behaviour did.
+  - at: reg-location
+    assert: store_contains
+    entity: LocationConnection
+    where: "TypeKey = 'eng:Supplies' AND FromSourceIdentifier = 'BBFQ0032' AND ToSourceIdentifier = 'P-101' AND IsResolved = 0"
+    within: 60s
+
+  # No codes yet, for the same reason there is no Location yet.
+  - at: reg-location
+    assert: store_not_contains
+    entity: LocationConnection
+    where: "FromLocationCode IS NOT NULL OR ToLocationCode IS NOT NULL"
 
   # -- The gate holds -----------------------------------------------------------
   # Nothing reached MMS. This is the assertion the scenario exists for: early design
@@ -128,10 +214,24 @@ steps:
     verb: Sync
     noun: Segments
 
+  # The gate holds for relationships on the same terms as for segments. Without this,
+  # the edge could reach operations while the locations it names did not, leaving MMS
+  # holding a relationship between two things it has never heard of.
+  - at: mms
+    assert: message_not_received
+    channel: /OIIE-SANDBOX/Enterprise/Site/OandM
+    verb: Sync
+    noun: SegmentMeshConnections
+
   - at: mms
     assert: store_not_contains
     entity: FunctionalLocationRecord
     where: "ForeignSourceId = 'REG-LOCATION'"
+
+  - at: mms
+    assert: store_not_contains
+    entity: LocationRelationshipRecord
+    where: "TypeKey = 'eng:Supplies'"
 
   # -- CIR registration ---------------------------------------------------------
   # Both participants that hold the identity register it. MMS is absent because MMS

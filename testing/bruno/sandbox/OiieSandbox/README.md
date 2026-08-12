@@ -55,6 +55,16 @@ bru run 20-eng-twins-list.bru 21-eng-twin-a-register.bru 22-eng-twin-b-register.
 
 Expect 9 requests and 11 tests passing.
 
+Do **not** reach for `bru run . --tests-only` to shorten that. It runs only the
+requests that carry tests, skipping 21-24, so 27 promotes a twin that was never
+registered and returns 422. The setup requests are the fixture; naming them is the
+point.
+
+Running the whole collection with `bru run .` is fine, but note it includes
+`04-full-reset` — so anything you want to keep, and any scenario state the run
+depends on, is gone. Re-run the scenarios afterwards if the environment is meant to
+be left in a post-handover state.
+
 Re-runnable without a reset: registering a twin is idempotent, and adding a tag is
 an upsert. Only 27 is order-dependent — a second run finds Plant A's tag already
 published and releases nothing, so reset (or a fresh tag number) before repeating

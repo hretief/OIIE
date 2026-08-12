@@ -2,7 +2,6 @@
 @using SimHost.Application.Scenarios
 @using SimHost.Domain.Common
 @inject MessageTransformService Transforms
-@inject NavigationManager Nav
 
 @*
     How one source record became a BOD, and what that BOD produced downstream.
@@ -16,7 +15,13 @@
 <PageTitle>Message · OIIE Sandbox</PageTitle>
 
 <div class="toolbar">
-    <button class="btn" @onclick="@(() => Nav.NavigateTo($"/runs/{RunId}"))">&larr; Back to run</button>
+    @*
+        A link rather than a button with an onclick handler. This page is statically
+        rendered and has nothing else interactive on it, so a handler would never be
+        wired up and the button would silently do nothing. Navigation is what an
+        anchor is for; using one keeps the page off the circuit entirely.
+    *@
+    <a class="btn" href="@($"/runs/{RunId}")">&larr; Back to run</a>
 </div>
 
 @if (_loading)

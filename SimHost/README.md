@@ -103,6 +103,34 @@ Reset output reports class and property counts per participant. Seeing
 REG-LOCATION at 3 property definitions and MMS at 0 confirms the asymmetry
 survived the reload; equal counts mean a fixture leaked.
 
+## iTwins
+
+ENG holds its design data per iTwin, so a tag number identifies an instrument
+*within a plant* rather than across the estate. Two twins can each hold a
+`TIC-500` and they remain two distinct tags with distinct identities.
+
+```
+GET  /admin/eng/twins
+POST /admin/eng/twins              { iTwinId, code, name, description }
+GET  /admin/eng/tags?iTwinId=...
+```
+
+The twin comes from the request body, an `x-itwin-id` header, or ENG's default
+twin when neither is supplied — which is why the routes that predate the twin
+dimension, and the scenarios that drive them, are unchanged.
+
+Isolation is enforced by EF global query filters rather than by remembering a
+`WHERE` clause at each call site, so a read cannot accidentally cross plants.
+`FederationId` is deliberately left globally unique: it is minted per tag and is
+the correlator MMS and CIR resolve on, so scoping it by twin would break identity
+resolution between participants.
+
+Only ENG is twin-scoped. REG-LOCATION, MMS and OM-RELIABILITY are not, and the
+handover scenarios run entirely in the default twin.
+
+The isolation behaviour is exercised by Bruno requests 20-28 under
+`testing/bruno/sandbox/OiieSandbox`, not by a YAML scenario.
+
 ## Scenarios
 
 `Scenarios/*.yaml`, run from the UI or over HTTP. Files are named for the OpenO&M
@@ -113,10 +141,14 @@ scenario they realise; the use case each belongs to is recorded in the file's
   the tag lands in REG-LOCATION's stewardship queue. It stops there. REG-LOCATION is
   a release gate, so the scenario closes by asserting that nothing reached MMS —
   early design data is a proposal, not something operations should be planning
-  against.
+  against. Design relationships travel on this leg too and are retained *unresolved*,
+  against the sender's tag numbers, because the registry has no codes of its own to
+  state them with until the endpoints are approved.
 - `sc02-operations-release.yaml` — Scenario 2 (UC01): a steward approves the
   proposal, which is what actually releases it to MMS, followed by CIR registration
-  and resolution. Requires `sc01-design-release` and does not reset, because it
+  and resolution. Approval also resolves the retained relationships to the registry's
+  own codes and republishes them, so the topology reaches operations with the
+  locations it names. Requires `sc01-design-release` and does not reset, because it
   consumes the queue that scenario leaves behind. Run on its own it fails on its
   first assertion rather than silently approving nothing.
 - `sc01-greenfield-allocation.yaml` — Scenario 1 (UC02): the same publish, but with
@@ -124,8 +156,10 @@ scenario they realise; the use case each belongs to is recorded in the file's
   safe: it asserts relative code sequences rather than literal `P-001`, so it does not
   depend on being the first run against the database.
 - `sc11-asset-install.yaml` — Scenario 11 (UC05): MMS publishes asset install and
-  removal events to OM-RELIABILITY. Performs the handover inline first, because the
-  scenario assumes the functional location already exists rather than creating it.
+  removal events to OM-RELIABILITY. Requires `sc02-operations-release` and does not
+  reset. It does not perform the handover itself: authoring a tag and approving a
+  proposal are engineering acts, and a maintenance process has no business doing
+  them. Run without the handover, it fails on its first assertion with no wait.
 
 Assertions carry a severity. `bod_valid` failing is a defect;
 `classification_degraded` firing at REG-LOCATION is the scenario working.

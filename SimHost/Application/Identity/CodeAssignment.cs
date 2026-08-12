@@ -23,6 +23,14 @@ public class CodeAssignment
     /// <summary>The participant that issued and uses this code.</summary>
     public string ParticipantId { get; set; } = string.Empty;
 
+    /// <summary>
+    /// The twin the code belongs to, where the participant scopes its data that way.
+    /// A code series runs per plant: P-101 in one project and P-101 in another are
+    /// different pumps, so the allocator must not treat one as having consumed the
+    /// other's number. Empty for participants that hold no twin dimension.
+    /// </summary>
+    public Guid ITwinId { get; set; }
+
     public string Code { get; set; } = string.Empty;
 
     /// <summary>
