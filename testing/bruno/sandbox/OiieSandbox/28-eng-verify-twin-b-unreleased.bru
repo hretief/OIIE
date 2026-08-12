@@ -1,0 +1,35 @@
+meta {
+  name: ENG - verify iTwin B unreleased
+  type: http
+  seq: 28
+}
+
+get {
+  url: {{baseUrl}}/admin/eng/tags?iTwinId={{twinB}}
+  body: none
+  auth: none
+}
+
+params:query {
+  iTwinId: {{twinB}}
+}
+
+tests {
+  test("Plant B's tag was not published by Plant A's release", function() {
+    const tag = res.body.tags.find(t => t.tagNumber === "TIC-500");
+    expect(tag.maturity).to.equal("WorkInProgress");
+  });
+
+  test("and was not stamped with Plant A's version", function() {
+    const tag = res.body.tags.find(t => t.tagNumber === "TIC-500");
+    expect(tag.publishedInVersionId).to.equal(null);
+  });
+}
+
+docs {
+  The confirmation half of 27.
+
+  Asserted from Plant B's side because that is where the damage would show: a tag
+  the operator never released, marked Published and carrying another plant's
+  version id, having already gone out on the wire.
+}

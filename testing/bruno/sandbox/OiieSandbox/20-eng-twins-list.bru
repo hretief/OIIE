@@ -1,0 +1,18 @@
+meta {
+  name: ENG - list iTwins
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/admin/eng/twins
+  body: none
+  auth: none
+}
+
+docs {
+  The plants ENG holds designs for.
+
+  Expect at least ACME-SANDBOX, the default twin. It is created on the first write
+  that names no twin, so a freshly reset sandbox may show it only after 06 has run.
+}

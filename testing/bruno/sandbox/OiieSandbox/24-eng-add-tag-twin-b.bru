@@ -1,0 +1,47 @@
+meta {
+  name: ENG - add TIC-500 to iTwin B
+  type: http
+  seq: 24
+}
+
+post {
+  url: {{baseUrl}}/admin/eng/tags
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "tagNumber": "TIC-500",
+    "serviceDescription": "Plant B controller",
+    "unitNumber": "202",
+    "classKey": "rdl:Instrument",
+    "iTwinId": "{{twinB}}"
+  }
+}
+
+tests {
+  test("the same tag number is accepted in a second twin", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("it is a different row, not an edit of Plant A's", function() {
+    expect(res.body.id).to.not.equal(Number(bru.getVar("twinATagId")));
+  });
+
+  test("it is a different entity, with its own identity", function() {
+    // FederationId is deliberately NOT twin-scoped: it is minted per tag and is
+    // what MMS and CIR correlate on. Two twins' tags must never share one.
+    expect(res.body.federationId).to.not.equal(bru.getVar("twinAFederationId"));
+  });
+}
+
+docs {
+  The point of the whole sequence.
+
+  Before iTwin scoping this request either violated the unique index on TagNumber
+  or upserted Plant A's tag, replacing its description with Plant B's. Now it is a
+  second instrument that happens to share a label.
+
+  Run 23 first: the assertions compare against what it captured.
+}

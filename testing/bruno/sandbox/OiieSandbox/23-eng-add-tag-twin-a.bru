@@ -1,0 +1,36 @@
+meta {
+  name: ENG - add TIC-500 to iTwin A
+  type: http
+  seq: 23
+}
+
+post {
+  url: {{baseUrl}}/admin/eng/tags
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "tagNumber": "TIC-500",
+    "serviceDescription": "Plant A controller",
+    "unitNumber": "101",
+    "classKey": "rdl:Instrument",
+    "iTwinId": "{{twinA}}"
+  }
+}
+
+script:post-response {
+  bru.setVar("twinATagId", res.body.id);
+  bru.setVar("twinAFederationId", res.body.federationId);
+}
+
+docs {
+  The first of two tags sharing a number.
+
+  Note the response echoes iTwinId: the twin may have come from the body, from an
+  x-itwin-id header, or from ENG's default, and the caller should not have to
+  guess which applied.
+
+  The id and federationId are captured so 24 can be compared against them.
+}

@@ -1,0 +1,41 @@
+meta {
+  name: ENG - list tags in iTwin A
+  type: http
+  seq: 25
+}
+
+get {
+  url: {{baseUrl}}/admin/eng/tags?iTwinId={{twinA}}
+  body: none
+  auth: none
+}
+
+params:query {
+  iTwinId: {{twinA}}
+}
+
+tests {
+  test("only Plant A's tags are visible", function() {
+    const numbers = res.body.tags.map(t => t.tagNumber);
+    expect(numbers).to.include("TIC-500");
+  });
+
+  test("it is Plant A's TIC-500, not Plant B's", function() {
+    const tag = res.body.tags.find(t => t.tagNumber === "TIC-500");
+    expect(tag.serviceDescription).to.equal("Plant A controller");
+  });
+
+  test("the default twin's tags are not mixed in", function() {
+    const numbers = res.body.tags.map(t => t.tagNumber);
+    expect(numbers).to.not.include("TIC-106");
+  });
+}
+
+docs {
+  Reads are scoped by a global query filter on the context rather than by a WHERE
+  in each query, so the isolation cannot be forgotten as this endpoint grows a
+  search or paging argument.
+
+  The last assertion is the one that matters: TIC-106 exists in the default twin,
+  so seeing it here would mean the filter is not applying.
+}

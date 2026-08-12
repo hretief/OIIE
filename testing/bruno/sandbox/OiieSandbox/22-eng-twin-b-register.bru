@@ -1,0 +1,26 @@
+meta {
+  name: ENG - register iTwin B
+  type: http
+  seq: 22
+}
+
+post {
+  url: {{baseUrl}}/admin/eng/twins
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "iTwinId": "{{twinB}}",
+    "code": "PLANT-B",
+    "name": "Plant B",
+    "description": "Second plant, reusing Plant A's tag numbers on purpose."
+  }
+}
+
+docs {
+  The second plant. Its whole purpose is to reuse a tag number that Plant A
+  already has, which before iTwin scoping would have collided on a unique index
+  or silently overwritten the first design.
+}

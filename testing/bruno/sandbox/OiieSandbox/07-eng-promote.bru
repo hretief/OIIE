@@ -20,4 +20,7 @@ docs {
   The release event. Runs the validation gate; only a pass writes outbox rows.
 
   A 422 carries the findings - that is the gate working, not an error.
+
+  Scoped to ENG's default twin, since no iTwinId is given. A release is an act
+  about one plant: it gathers the unpublished tags of that twin and no other.
 }

@@ -1,0 +1,37 @@
+meta {
+  name: ENG - promote iTwin A only
+  type: http
+  seq: 27
+}
+
+post {
+  url: {{baseUrl}}/admin/eng/promote
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Plant A release",
+    "iTwinId": "{{twinA}}"
+  }
+}
+
+tests {
+  test("the release is confined to Plant A", function() {
+    // Plant A holds exactly one unpublished tag at this point. A count above that
+    // would mean promotion had gathered up another plant's work in progress.
+    expect(res.body.tagCount).to.equal(1);
+  });
+}
+
+docs {
+  The leak worth guarding against.
+
+  Promotion selects every unpublished tag it can see, so an unscoped read here
+  would sweep Plant B's design into Plant A's release and publish it. The scope is
+  applied by the context, not by this query, which is what makes that structural
+  rather than remembered.
+
+  Follow with 28 to confirm Plant B was left alone.
+}

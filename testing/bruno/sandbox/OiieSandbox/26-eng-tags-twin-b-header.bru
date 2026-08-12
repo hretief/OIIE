@@ -1,0 +1,39 @@
+meta {
+  name: ENG - list tags in iTwin B (header)
+  type: http
+  seq: 26
+}
+
+get {
+  url: {{baseUrl}}/admin/eng/tags
+  body: none
+  auth: none
+}
+
+headers {
+  x-itwin-id: {{twinB}}
+}
+
+tests {
+  test("the header selects the twin when the query string does not", function() {
+    // The twin is asserted literally rather than through bru.getVar: collection
+    // pre-request vars are substituted into the request, but are not in scope for
+    // the test runtime, so reading it back would compare against undefined.
+    expect(res.body.iTwinId.toLowerCase())
+      .to.equal("22222222-2222-4222-8222-222222222222");
+  });
+
+  test("it is Plant B's TIC-500", function() {
+    const tag = res.body.tags.find(t => t.tagNumber === "TIC-500");
+    expect(tag.serviceDescription).to.equal("Plant B controller");
+  });
+}
+
+docs {
+  The same tag number, a different plant, resolved from a header instead of the
+  query string.
+
+  The header exists so a client can set the twin once for a session rather than
+  repeating it on every call. An explicit body or query value wins over it, on the
+  grounds that a request naming a twin outright means it.
+}

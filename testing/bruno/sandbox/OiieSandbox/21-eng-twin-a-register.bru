@@ -1,0 +1,29 @@
+meta {
+  name: ENG - register iTwin A
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/admin/eng/twins
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "iTwinId": "{{twinA}}",
+    "code": "PLANT-A",
+    "name": "Plant A",
+    "description": "First plant, for the isolation check."
+  }
+}
+
+docs {
+  Registering a twin is optional: naming an unknown one on a write creates it.
+  It is done explicitly here so the twin carries a readable code and name rather
+  than defaulting to its own UUID.
+
+  Idempotent. Re-running returns the existing row rather than failing, so the
+  isolation sequence can be replayed without a reset.
+}

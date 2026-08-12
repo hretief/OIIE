@@ -4,4 +4,23 @@ headers {
 
 vars:pre-request {
   baseUrl: https://oiie-sandbox-demo.azurewebsites.net
+  twinA: 11111111-1111-4111-8111-111111111111
+  twinB: 22222222-2222-4222-8222-222222222222
+}
+
+docs {
+  # OIIE Sandbox
+
+  Admin routes require `x-sandbox-admin-key`, set once here for the whole
+  collection.
+
+  ## iTwins
+
+  ENG scopes its design data by iTwin, so a tag number is only unique within one
+  plant. `twinA` and `twinB` are two fixed twins used by the isolation requests
+  (20-25): they exist so the same TIC-500 can be created in both and shown to be
+  two different instruments rather than one overwriting the other.
+
+  Requests that name no twin fall into ENG's default twin, which is why 06-10
+  still work unchanged.
 }
