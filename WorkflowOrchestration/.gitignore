@@ -4,6 +4,10 @@ build/
 .cache/
 .env*
 .vite/
+# Exported ASP.NET dev certificate used to serve the dev server over HTTPS.
+# Contains a private key and is machine-local; regenerate with
+# `dotnet dev-certs https --export-path .certs/localhost.pem --format Pem --no-password`.
+.certs/
 vite.config.*.timestamp-*
 *.tsbuildinfo
 *-debug.log*

@@ -1,9 +1,28 @@
 import { defineConfig, type HtmlTagDescriptor, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import fs from 'node:fs'
 import path from 'node:path'
 
 import siteConfiguration from './.figma/make/site.json'
+
+// Bentley IMS registers redirect URIs by exact string, and this client is
+// registered against https://localhost:3000. That is not a preference we can
+// override locally: the authorize request is rejected if the redirect_uri does
+// not match character for character, so the dev server has to actually be HTTPS
+// on 3000.
+//
+// The certificate is the ASP.NET development certificate, exported to .certs by
+// `dotnet dev-certs https --export-path .certs/localhost.pem --format Pem
+// --no-password`. Reusing it rather than generating a new one means the browser
+// already trusts it -- an untrusted certificate breaks the OAuth redirect with a
+// interstitial warning rather than a clean error.
+function devServerHttps(): { key: Buffer; cert: Buffer } | undefined {
+  const key = path.resolve(__dirname, '.certs/localhost.key')
+  const cert = path.resolve(__dirname, '.certs/localhost.pem')
+  if (!fs.existsSync(key) || !fs.existsSync(cert)) return undefined
+  return { key: fs.readFileSync(key), cert: fs.readFileSync(cert) }
+}
 
 // Vite config — https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
@@ -31,8 +50,9 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       host: '0.0.0.0',
-      port: parseInt(process.env.PORT || '8443'),
+      port: parseInt(process.env.PORT || '3000'),
       strictPort: true,
+      https: devServerHttps(),
       watch: { ignored: ['**/.figma/**'] },
       proxy: {
         // The sandbox API is a separate process (Oiie.Sandbox.Api, https://localhost:7241
@@ -52,7 +72,7 @@ export default defineConfig(({ mode }) => {
     },
     preview: {
       host: '0.0.0.0',
-      port: parseInt(process.env.PORT || '8443'),
+      port: parseInt(process.env.PORT || '3000'),
     },
   }
 })

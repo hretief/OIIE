@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import * as api from './api'
+import * as auth from './auth'
+import type { CurrentUser } from './auth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -7,6 +9,24 @@ interface ITwin {
   uuid: string
   shortName: string
   fullName: string
+}
+
+// The signed-in identity now comes from Bentley IMS; see auth.ts. CurrentUser is
+// imported rather than declared here so the token is the single source of truth.
+
+// Two initials read better than one in a small circle. IMS display names are
+// not guaranteed to have a surname, hence the filter rather than a split that
+// assumes two parts.
+//
+// An email is handled separately: it is the fallback when IMS supplies no name
+// claim, and splitting it on whitespace would yield a single letter. The local
+// part is split on its usual separators instead, so "hennie.retief@..." gives HR
+// rather than H.
+function initialsOf(name: string): string {
+  const source = name.includes('@')
+    ? name.split('@')[0]!.split(/[._-]+/)
+    : name.split(/\s+/)
+  return source.filter(Boolean).slice(0, 2).map(p => p[0]!.toUpperCase()).join('')
 }
 
 
@@ -312,6 +332,117 @@ function Pill({ label, color }: { label: string; color: string }) {
     <span style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 8px', borderRadius: '3px', background: color + '22', color, fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 600, letterSpacing: '0.08em', lineHeight: '18px' }}>
       {label}
     </span>
+  )
+}
+
+// Signed-in user, top right. Sits inside the 52px header, so the control is
+// sized to fit that band rather than setting its own height.
+//
+// The menu is absolutely positioned against a relative wrapper instead of being
+// portalled: the header is the last thing painted in its stacking context, so a
+// plain z-index is enough and a portal would only add ceremony.
+function UserMenu({ user }: { user: CurrentUser }) {
+  const [open, setOpen] = useState(false)
+  const [hov, setHov] = useState(false)
+  const [logoutHov, setLogoutHov] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
+
+  // Close on outside click and on Escape. Both are registered only while open,
+  // so the app carries no listeners in its resting state.
+  useEffect(() => {
+    if (!open) return
+    function onDown(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const row = (label: string, value: string) => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.1em' }}>{label}</span>
+      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>{value}</span>
+    </div>
+  )
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative', flexShrink: 0 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        onMouseEnter={() => setHov(true)}
+        onMouseLeave={() => setHov(false)}
+        title={user.name}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, background: open || hov ? 'rgba(255,255,255,0.08)' : 'transparent',
+          border: `1px solid ${open ? 'var(--border-mid)' : 'var(--border-subtle)'}`, borderRadius: '4px',
+          padding: '4px 8px 4px 4px', cursor: 'pointer', transition: 'all 0.13s',
+        }}>
+        <span style={{ width: 24, height: 24, borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #10b981)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em', flexShrink: 0 }}>
+          {initialsOf(user.name)}
+        </span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 600, letterSpacing: '0.08em', color: open || hov ? 'var(--text-primary)' : 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+          {user.name.toUpperCase()}
+        </span>
+        <span style={{ fontSize: '8px', color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.13s' }}>▼</span>
+      </button>
+
+      {open && (
+        <div role="menu" style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 260, background: 'var(--bg-surface)', border: '1px solid var(--border-mid)', borderRadius: '6px', boxShadow: '0 10px 30px rgba(0,0,0,0.45)', zIndex: 50, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px', borderBottom: '1px solid var(--border-subtle)' }}>
+            <span style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #10b981)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 700, flexShrink: 0 }}>
+              {initialsOf(user.name)}
+            </span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)' }}>{user.name}</div>
+              {/* Suppressed when the name already is the email: IMS sometimes has
+                  no name claim beyond the address, and repeating it on both lines
+                  reads like a rendering fault. */}
+              {user.email && user.email !== user.name && (
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.email}</div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 11, borderBottom: '1px solid var(--border-subtle)' }}>
+            {row('ORGANIZATION', user.organization)}
+            {row('IMS SUBJECT', user.sub)}
+            {/* IMS does not always issue role claims, so an empty list is a
+                normal outcome rather than a fault; say so instead of showing
+                an unexplained gap. */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.1em' }}>ENTITLEMENTS</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {user.roles.length > 0
+                  ? user.roles.map(r => <Pill key={r} label={r} color="#3b82f6" />)
+                  : <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>none in token</span>}
+              </div>
+            </div>
+          </div>
+
+          {/* Ends the IMS session, not just the local one. Because the app has
+              no offline presence, IMS returns the browser here and the gate
+              immediately sends it back to the Bentley sign-in page. */}
+          <button
+            role="menuitem"
+            onClick={() => auth.logout()}
+            onMouseEnter={() => setLogoutHov(true)}
+            onMouseLeave={() => setLogoutHov(false)}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 9, background: logoutHov ? 'rgba(239,68,68,0.10)' : 'transparent', border: 'none', borderTop: '1px solid var(--border-subtle)', padding: '11px 14px', fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: logoutHov ? '#ef4444' : 'var(--text-secondary)', cursor: 'pointer', textAlign: 'left', transition: 'all 0.13s' }}>
+            <span style={{ fontSize: '12px', lineHeight: 1 }}>⇥</span>
+            LOG OUT
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -1177,7 +1308,122 @@ function AsBuiltTable({ assets, selected, onToggle, onToggleAll, accent, dimBg, 
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
+// A full-screen status panel, used for every pre-authenticated state so the
+// unauthenticated app never flashes a partial workspace.
+function AuthScreen({ title, detail, tone = 'neutral', action }: { title: string; detail: string; tone?: 'neutral' | 'error'; action?: { label: string; onClick: () => void } }) {
+  const accent = tone === 'error' ? '#ef4444' : '#3b82f6'
+  return (
+    <div style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <div style={{ width: 420, maxWidth: '100%', background: 'var(--bg-surface)', border: '1px solid var(--border-mid)', borderRadius: '8px', padding: '28px', textAlign: 'center' }}>
+        <div style={{ width: 26, height: 26, borderRadius: '6px', background: 'linear-gradient(135deg, #3b82f6, #10b981)', margin: '0 auto 18px' }} />
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-primary)', marginBottom: 10 }}>
+          {title}
+        </div>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: tone === 'error' ? accent : 'var(--text-muted)', lineHeight: 1.6, wordBreak: 'break-word' }}>
+          {detail}
+        </div>
+        {action && (
+          <button
+            onClick={action.onClick}
+            style={{ marginTop: 20, background: 'rgba(255,255,255,0.08)', border: '1px solid var(--border-mid)', borderRadius: '4px', padding: '8px 18px', fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-primary)', cursor: 'pointer' }}>
+            {action.label}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The app's own signed-out screen.
+ *
+ * The IMS end-session call is made from here, in a hidden iframe rather than by
+ * navigating: navigating would land on Bentley's signed-off page and strand the
+ * user there, which is the whole problem this screen exists to avoid. The iframe
+ * lets the SSO session be ended properly while the user stays on our page with a
+ * way back in.
+ *
+ * The sign-in link is a real navigation to the app root rather than a call to
+ * login(), so the visitor arrives in a clean document and goes through the
+ * normal gate.
+ */
+function SignedOutScreen() {
+  const [endSessionUrl] = useState(() => auth.takeEndSessionUrl())
+
+  return (
+    <>
+      {endSessionUrl && (
+        <iframe
+          src={endSessionUrl}
+          title="Bentley IMS sign-out"
+          style={{ display: 'none' }}
+        />
+      )}
+      <AuthScreen
+        title="SIGNED OUT"
+        detail="Your Bentley IMS session has ended."
+        action={{ label: 'SIGN IN AGAIN', onClick: () => window.location.assign('/') }}
+      />
+    </>
+  )
+}
+
+/**
+ * Decides whether anything is rendered at all.
+ *
+ * The app has no offline presence: an unauthenticated visitor is sent straight to
+ * the Bentley sign-in page rather than being shown a landing screen. The one
+ * exception is a configuration or sign-in error, which is displayed instead of
+ * redirecting -- bouncing to IMS on a failed sign-in would produce an infinite
+ * redirect loop and no way to read the reason.
+ */
 export default function App() {
+  // Checked before any auth work: this path is the post-logout landing, so it
+  // must not trigger the redirect-to-IMS that the gate applies everywhere else.
+  const signedOut = window.location.pathname === auth.SIGNED_OUT_PATH
+
+  const [state, setState] = useState<auth.AuthState>({ status: 'loading' })
+
+  useEffect(() => {
+    if (signedOut) return
+    let cancelled = false
+    auth.initialize().then(s => { if (!cancelled) setState(s) })
+    return () => { cancelled = true }
+  }, [signedOut])
+
+  useEffect(() => {
+    // Redirect only from the settled unauthenticated state, never from loading,
+    // so a slow token exchange cannot be interrupted by a premature navigation.
+    if (!signedOut && state.status === 'unauthenticated') void auth.login()
+  }, [signedOut, state.status])
+
+  if (signedOut) {
+    return <SignedOutScreen />
+  }
+
+  if (state.status === 'loading') {
+    return <AuthScreen title="WORKFLOW ORCHESTRATOR" detail="Checking your Bentley IMS session…" />
+  }
+
+  if (state.status === 'unauthenticated') {
+    return <AuthScreen title="SIGNING IN" detail="Redirecting to Bentley IMS…" />
+  }
+
+  if (state.status === 'error') {
+    return (
+      <AuthScreen
+        title="SIGN-IN FAILED"
+        detail={state.message}
+        tone="error"
+        action={auth.isConfigured() ? { label: 'TRY AGAIN', onClick: () => void auth.login() } : undefined}
+      />
+    )
+  }
+
+  return <Workspace user={state.user} />
+}
+
+function Workspace({ user }: { user: CurrentUser }) {
   // Twins are fetched, so there is no twin at all until the first response.
   // Null is the honest starting value; the screen renders a loading state
   // rather than pretending a plant is selected.
@@ -1738,9 +1984,14 @@ export default function App() {
           ))}
         </div>
 
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', letterSpacing: '0.06em', maxWidth: 360, textAlign: 'right', lineHeight: 1.4 }}>
-          {WORKFLOW_DESCRIPTION[workflow]}
-        </span>
+        {/* Description and identity share the right-hand block so the header
+            keeps its three-part balance: brand, workflow switch, context. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, justifyContent: 'flex-end' }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', letterSpacing: '0.06em', maxWidth: 360, textAlign: 'right', lineHeight: 1.4 }}>
+            {WORKFLOW_DESCRIPTION[workflow]}
+          </span>
+          <UserMenu user={user} />
+        </div>
       </header>
 
       {/* ── iTwin context bar ──────────────────────────────────────────────── */}
