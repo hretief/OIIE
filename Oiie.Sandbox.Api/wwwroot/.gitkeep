@@ -1,0 +1,5 @@
+Keeps this folder in the repository.
+
+The Workflow Orchestration bundle is copied here at deploy time and is not
+tracked, but the folder must exist: ASP.NET opens the web root during startup
+and throws DirectoryNotFoundException when it is absent.

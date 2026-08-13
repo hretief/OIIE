@@ -13,6 +13,17 @@ obj/
 # Build output from deploy/deploy.ps1
 artifacts/
 
+# The Workflow Orchestration bundle, copied here at deploy time so the API can
+# serve it. Built from WorkflowOrchestration/ rather than authored, so it is
+# generated output like any other.
+#
+# The contents are ignored but the folder itself is kept (via a tracked
+# .gitkeep), because ASP.NET's static web assets manifest opens the web root at
+# startup and throws DirectoryNotFoundException if it is missing — which would
+# make a fresh clone fail to run.
+Oiie.Sandbox.Api/wwwroot/*
+!Oiie.Sandbox.Api/wwwroot/.gitkeep
+
 # Test result files produced by dotnet test --results-directory
 TestResults/
 

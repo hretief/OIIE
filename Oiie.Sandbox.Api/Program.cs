@@ -82,6 +82,17 @@ if (!app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+// The Workflow Orchestration app, served from this host's wwwroot.
+//
+// Same origin as the API it drives, which is the point: no CORS, and no admin
+// key in a browser bundle. A separately hosted app would need both, and that
+// key resets databases and deletes channels -- not something to put somewhere
+// devtools can read it.
+//
+// Absent in development, where Vite serves the app and proxies /admin here.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 // Ahead of the admin guard deliberately. A CORS preflight is an OPTIONS request
 // that carries no headers of its own, so the admin key is absent -- if the guard
 // ran first it would reject the preflight and the real request would never be
@@ -93,6 +104,45 @@ app.UseCors();
 app.UseMiddleware<AdminKeyMiddleware>();
 
 app.MapSandboxAdminEndpoints();
+
+// Anything not matched above is a client-side route, so the app's own shell
+// answers it.
+//
+// Deliberately not a blanket MapFallbackToFile: that also caught /admin and
+// /health, so a mistyped or removed endpoint answered 200 with HTML instead of
+// 404. A caller then sees success and a JSON parse failure rather than "no such
+// endpoint", and test-sandbox.ps1 in particular would report something far less
+// useful than a missing route.
+app.MapFallback(async context =>
+{
+    var path = context.Request.Path;
+
+    if (path.StartsWithSegments("/admin") || path.StartsWithSegments("/health"))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        await context.Response.WriteAsJsonAsync(new
+        {
+            error = "No such endpoint.",
+            path = path.Value
+        });
+
+        return;
+    }
+
+    // No wwwroot in development, where Vite serves the app instead. Answering
+    // 404 is honest there; falling through to a missing file would surface as a
+    // 500 that suggests the API is broken rather than simply not hosting a UI.
+    var shell = Path.Combine(app.Environment.WebRootPath ?? string.Empty, "index.html");
+
+    if (!File.Exists(shell))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    context.Response.ContentType = "text/html";
+    await context.Response.SendFileAsync(shell);
+});
 
 if (SandboxCapabilities.IsIsbmConfigured(app.Services.GetRequiredService<ParticipantRegistry>()))
 {

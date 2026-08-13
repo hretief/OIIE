@@ -65,9 +65,15 @@ param(
 
     [string]$PlanSku = 'B1',
 
-    # Browser origins allowed to call the API, for the React Workflow
-    # Orchestration app once it is hosted somewhere.
+    # Browser origins allowed to call the API. Only needed if the React app is
+    # ever hosted separately; it currently ships inside the API, so same-origin
+    # requests need no policy at all.
     [string[]]$CorsOrigin = @(),
+
+    # Skip building the React app. Useful when Node is unavailable or only the
+    # .NET side changed -- the previously deployed wwwroot then stays as it is,
+    # since zip deploy does not delete.
+    [switch]$SkipWeb,
 
     [switch]$SkipInfrastructure,
     [switch]$SkipVerify
@@ -294,6 +300,55 @@ function Publish-SandboxApp {
     # Developer settings must not ship: they name one developer's database and alias.
     Remove-Item (Join-Path $publishDir 'appsettings.Development.json') -Force -ErrorAction SilentlyContinue
 
+    # The Workflow Orchestration app ships inside the API, served from wwwroot.
+    #
+    # Same origin as the API it drives, so there is no CORS to configure and no
+    # admin key in a browser bundle -- that key resets databases and deletes
+    # channels, so keeping it server-side is the reason for hosting this way
+    # rather than as a separate Static Web App.
+    #
+    # VITE_SANDBOX_API is deliberately left unset: an empty base makes the client
+    # issue same-origin requests, which is exactly right here. Setting it would
+    # pin the bundle to one environment's hostname.
+    if ($Label -eq 'api' -and -not $SkipWeb) {
+        $webRoot = Join-Path $repoRoot 'WorkflowOrchestration'
+
+        if (-not (Test-Path (Join-Path $webRoot 'package.json'))) {
+            Write-Warning "WorkflowOrchestration not found at $webRoot; the API will serve no UI."
+        }
+        else {
+            Write-Host "`n  Building Workflow Orchestration..."
+
+            Push-Location $webRoot
+            try {
+                # npm ci needs a lockfile; fall back to install so a fresh clone
+                # without one still deploys rather than failing here.
+                if (Test-Path 'package-lock.json') { & npm ci --no-audit --no-fund 2>&1 | Out-Null }
+                else { & npm install --no-audit --no-fund 2>&1 | Out-Null }
+
+                if ($LASTEXITCODE -ne 0) { throw 'npm install failed.' }
+
+                & npx vite build 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw 'vite build failed.' }
+            }
+            finally {
+                Pop-Location
+            }
+
+            $dist = Join-Path $webRoot 'dist'
+            if (-not (Test-Path (Join-Path $dist 'index.html'))) {
+                throw 'vite build produced no index.html. The API would serve an empty wwwroot.'
+            }
+
+            $wwwroot = Join-Path $publishDir 'wwwroot'
+            New-Item -ItemType Directory -Path $wwwroot -Force | Out-Null
+            Copy-Item (Join-Path $dist '*') -Destination $wwwroot -Recurse -Force
+
+            $webCount = @(Get-ChildItem $wwwroot -Recurse -File).Count
+            Write-Host "  wwwroot : $webCount file(s)"
+        }
+    }
+
     if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
     Compress-Archive -Path (Join-Path $publishDir '*') -DestinationPath $zipPath
 
@@ -414,6 +469,25 @@ catch {
 Write-Host "`nDeployed API: $apiUrl" -ForegroundColor Green
 if ($Target -eq 'both') {
     Write-Host "Deployed UI : $uiUrl" -ForegroundColor Green
+}
+
+# The React app is served by the API, so a successful API deployment does not by
+# itself mean the UI shipped. Checked separately, because a missing wwwroot
+# returns a clean 404 that nothing else here would notice.
+if (-not $SkipWeb) {
+    try {
+        $shell = Invoke-WebRequest $apiUrl -TimeoutSec 60 -UseBasicParsing
+
+        if ($shell.Content -match '<div id="root">') {
+            Write-Host "Workflow Orchestration: $apiUrl" -ForegroundColor Green
+        }
+        else {
+            Write-Warning "$apiUrl answered, but the response is not the Workflow Orchestration shell."
+        }
+    }
+    catch {
+        Write-Warning "Workflow Orchestration is not being served at $apiUrl : $($_.Exception.Message)"
+    }
 }
 
 if (-not $health.adminKeyRequired) {
