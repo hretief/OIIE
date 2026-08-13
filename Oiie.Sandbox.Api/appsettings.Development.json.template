@@ -1,0 +1,23 @@
+{
+  "_comment": "Copy to appsettings.Development.json and replace {alias} and {storageAccount}. Values are printed by deploy/provision.ps1 at the end of a run.",
+  "Sandbox": {
+    "Environment": "dev",
+    "SqlServer": "acme-sql-server",
+    "Database": "oiie-sandbox-dev-{alias}",
+    "PersonalitiesPath": "PersonalityPacks",
+    "SchemasPath": "../schemas"
+  },
+  "KeyVault": {
+    "Uri": "https://mndot.vault.azure.net/"
+  },
+  "Storage": {
+    "BlobServiceUri": "https://{storageAccount}.blob.core.windows.net",
+    "PayloadContainer": "sandbox-payloads",
+    "Prefix": "dev-{alias}"
+  },
+  "Logging": {
+    "LogLevel": {
+      "SimHost.Infrastructure.Sql": "Debug"
+    }
+  }
+}

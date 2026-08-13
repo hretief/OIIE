@@ -1,5 +1,23 @@
 # Runbook
 
+## Hosts
+
+`{sandbox}` throughout this document is the **Sandbox API** (`Oiie.Sandbox.Api`),
+which owns every `/admin/*` and `/health/*` route and runs the ISBM message pumps.
+Locally that is `https://localhost:7241`.
+
+`SimHost` is the Blazor operator UI (`https://localhost:7180`). It shares the same
+engine in-process but serves no API routes, so its buttons call the Sandbox API over
+HTTP using `Sandbox:ApiBaseUrl`. **The API must be running for the UI's reset and
+scenario-launch actions to work** — that is the one dependency the split introduces.
+
+`WorkflowOrchestration` is the React interactive UI (`http://localhost:8443`, via
+`npm run dev`). It talks only to the Sandbox API, never to SimHost, and Vite proxies
+`/admin` to `https://localhost:7241` so the browser stays on one origin in
+development. Point it elsewhere with `SANDBOX_API`. The two UIs serve different
+audiences: SimHost drives end-to-end automated scenario runs, this one is for
+interactive use.
+
 ## Day zero
 
 Everything back to a clean slate across all three systems. Order matters, and two
@@ -127,6 +145,7 @@ actually crossed the wire, retrieved from the payload store.
 | A scenario aborts before its first step | The subscription precondition. Declared subscriptions were not open — usually a reset that did not reopen them |
 | `sc02` fails on its stewardship precondition | `sc01` has not run, or its queue was consumed by an earlier `sc02` |
 | `sc11` reports MMS holds no functional location | Its inline handover did not complete. The scenario provisions the location itself; if that failed, the later steps have nothing to attach to |
+| `/admin/schema/seed` reports `0 class(es)` for every participant | The fixture path resolved somewhere the packs are not. Personality packs live in `Oiie.Sandbox.Core` and are *linked* into each host's build output, so under `dotnet run` they sit beside the assembly rather than under the content root. `SandboxCoreRegistration.ResolveContentPath` tries the content root and then the output directory — anything resolving `Sandbox:PersonalitiesPath` must go through it. Symptom is doubly confusing because the registry loads correctly at startup, so `/admin/eng/class-catalog` returns classes while seeding reports none |
 
 
 ## From cold

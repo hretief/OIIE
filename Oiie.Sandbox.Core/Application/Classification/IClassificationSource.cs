@@ -13,6 +13,18 @@ public interface IClassificationSource
 
     ClassDefinition? FindClassByKey(string classKey);
 
+    /// <summary>
+    /// Every class this participant holds.
+    ///
+    /// Each repository keeps its own reference data -- ENG works to the full
+    /// library because engineering is where classification originates, while
+    /// REG-LOCATION deliberately holds less. Enumerating is what lets a caller
+    /// offer the classes a participant can actually bind, rather than accepting
+    /// a typed key that turns out to be unmappable only after it has been
+    /// published.
+    /// </summary>
+    IReadOnlyList<ClassDefinition> ListClasses();
+
     PropertyDefinition? GetPropertyDefinition(Guid definitionId);
 
     PropertyDefinition? FindPropertyDefinitionByKey(string definitionKey);
@@ -62,6 +74,11 @@ public sealed class InMemoryClassificationSource : IClassificationSource
 
     public ClassDefinition? FindClassByKey(string classKey) =>
         _classesByKey.TryGetValue(classKey, out var value) ? value : null;
+
+    // Keyed rather than the raw list: _classesByKey already resolves each key to
+    // its highest version, so enumerating it cannot offer a superseded class.
+    public IReadOnlyList<ClassDefinition> ListClasses() =>
+        _classesByKey.Values.OrderBy(c => c.ClassKey, StringComparer.Ordinal).ToList();
 
     public PropertyDefinition? GetPropertyDefinition(Guid definitionId) =>
         _definitionsById.TryGetValue(definitionId, out var value) ? value : null;

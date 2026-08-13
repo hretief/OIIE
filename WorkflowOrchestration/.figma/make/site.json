@@ -1,0 +1,11 @@
+{
+  "title": "Workflow Orchestrator",
+  "description": "Streamline workflows across multiple applications with a user-friendly interface that allows users to navigate predefined steps and manage tasks efficiently.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

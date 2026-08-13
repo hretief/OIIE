@@ -22,7 +22,10 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $SandboxUrl = 'https://localhost:7180',
+    # The Sandbox API, not SimHost. /admin and /health moved to Oiie.Sandbox.Api
+    # when the hosts were split; 7180 is the Blazor UI and serves neither, so
+    # pointing here at it makes every phase below fail on a 404.
+    [string] $SandboxUrl = 'https://localhost:7241',
 
     [string] $ResourceGroup = 'HilmarRetiefRG',
     [string] $CirApp = 'cir-func-44p2f3n6',

@@ -123,29 +123,73 @@ cross-schema grants.
 
 ## Deployed application
 
-| Environment | App Service | URL |
+The sandbox is **two App Services sharing one plan**, not one.
+
+| Environment | API | Blazor UI |
 |---|---|---|
-| dev | `oiie-sandbox-dev` | `https://oiie-sandbox-dev.azurewebsites.net` |
-| CI | `oiie-sandbox-ci` | `https://oiie-sandbox-ci.azurewebsites.net` |
-| demo | `oiie-sandbox-demo` | `https://oiie-sandbox-demo.azurewebsites.net` |
+| dev | `oiie-sandbox-dev` | `oiie-simhost-dev` |
+| CI | `oiie-sandbox-ci` | `oiie-simhost-ci` |
+| demo | `oiie-sandbox-demo` | `oiie-simhost-demo` |
 
-Plan `plan-oiie-sandbox-{env}`, Application Insights `appi-oiie-sandbox-{env}`,
-workspace `log-oiie-sandbox-{env}`.
+Both at `https://{name}.azurewebsites.net`. Plan `plan-oiie-sandbox-{env}`,
+Application Insights `appi-oiie-sandbox-{env}`, workspace `log-oiie-sandbox-{env}`
+— shared, so one correlation id still reconstructs an exchange across both.
 
-`Always On` is required, not optional: the inbox pump and outbox dispatcher are
-hosted services, and an unloaded app stops consuming in a way that looks exactly
-like a provider that has stopped delivering. That rules out the Free and Shared
-tiers.
+| | `oiie-sandbox-{env}` (API) | `oiie-simhost-{env}` (UI) |
+|---|---|---|
+| Project | `Oiie.Sandbox.Api` | `SimHost` |
+| Serves | `/admin/*`, `/health/*` | Blazor Server UI |
+| Message pumps | **yes** | **no** |
+| Always On | required | on (cold start only) |
+| WebSockets | off | required (SignalR circuit) |
+| Health probe | `/health/participants` | `/` |
+| Audience | scripts, scenarios, React app | end-to-end automated testing |
+
+The API keeps the historic `oiie-sandbox-{env}` name deliberately. That value is
+already baked into `Isbm__ListenerBaseUrl`, the CIR's configuration and every
+script holding a sandbox URL; renaming it would break those silently. The UI is
+new as a separate address, so it takes the new name.
+
+**Only the API runs the pumps.** This is enforced in code, not in Bicep:
+`SimHost/Program.cs` calls `AddSandboxCore` but never `AddSandboxMessagePumps`.
+If both hosts pumped, two consumers would race the same ISBM sessions and
+messages would appear to vanish at random. Do not add the pumps to the UI.
+
+`Always On` is required on the API, not optional: the inbox pump and outbox
+dispatcher are hosted services, and an unloaded app stops consuming in a way that
+looks exactly like a provider that has stopped delivering. That rules out the Free
+and Shared tiers. It is also the reason the API is an App Service rather than a
+Function App like the ISBM and CIR providers — the workload is a resident poll
+loop, not a burst of events.
+
+The UI reads participant tables and payload blobs directly through Core, so it is
+not a thin client: it gets the same Key Vault and Storage grants as the API, under
+its own system-assigned identity.
+
+`Sandbox__ApiBaseUrl` on the UI points at the API. Without it the UI falls back to
+its own base address and the reset and scenario-launch buttons 404 against
+themselves.
 
 ## Deployment order
 
 ```powershell
 ./deploy/provision.ps1 -Environment demo -StorageAccount <account>   # data
-./deploy/deploy.ps1    -Environment demo -StorageAccount <account>   # hosting
+./deploy/deploy.ps1    -Environment demo -StorageAccount <account>   # hosting, both apps
 ```
 
+Deploy one app at a time with `-Target`:
+
+```powershell
+./deploy/deploy.ps1 -Environment demo -StorageAccount <account> -Target api
+./deploy/deploy.ps1 -Environment demo -StorageAccount <account> -Target ui
+```
+
+Each target publishes to its own `artifacts/publish-{target}` folder. They are
+kept separate because zip deploy never deletes: publishing one app's output into
+the other's slot would leave both entry points on the server.
+
 Provisioning creates the database, schemas, contained users and secrets.
-Deployment adds the App Service and grants its managed identity **Key Vault
+Deployment adds the App Services and grants **both** managed identities **Key Vault
 Secrets User** and **Storage Blob Data Contributor** — data-plane roles that
 subscription Owner does not confer, and whose absence surfaces as a 403 that reads
 like an application bug.

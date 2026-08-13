@@ -1,0 +1,74 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      The assembly is Oiie.Sandbox.Core but the root namespace stays SimHost.
+      The engine types moved out of the SimHost project wholesale, and their
+      namespaces (SimHost.Application.*, SimHost.Domain.*, SimHost.Infrastructure.*,
+      SimHost.Personalities.*) are referenced from the API host, the Blazor host and
+      the test project. Renaming them would be a rename of every using in the
+      solution for no behavioural gain, so the project name and the namespace root
+      are allowed to differ here deliberately.
+    -->
+    <RootNamespace>SimHost</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    The engine is a library, but it consumes hosting abstractions: IHostedService for
+    the outbox dispatcher and inbox pump, ILogger throughout, IConfiguration for the
+    participant connection strings, and IHttpClientFactory for the ISBM and reset
+    calls. Referencing the shared framework is cheaper and less brittle than tracking
+    the individual Microsoft.Extensions.* package versions.
+  -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <!--
+    These types were previously in scope for free: Microsoft.NET.Sdk.Web injects a
+    wider set of implicit usings than the plain SDK, and the engine sources were
+    written against it. Re-declaring that set here keeps the move to a library a
+    pure relocation, rather than adding a using block to 64 files.
+  -->
+  <ItemGroup>
+    <Using Include="System.Net.Http.Json" />
+    <Using Include="Microsoft.AspNetCore.Builder" />
+    <Using Include="Microsoft.AspNetCore.Hosting" />
+    <Using Include="Microsoft.AspNetCore.Http" />
+    <Using Include="Microsoft.AspNetCore.Routing" />
+    <Using Include="Microsoft.Extensions.Configuration" />
+    <Using Include="Microsoft.Extensions.DependencyInjection" />
+    <Using Include="Microsoft.Extensions.Hosting" />
+    <Using Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.24.0" />
+    <PackageReference Include="Azure.Identity" Version="1.14.2" />
+    <PackageReference Include="Azure.Extensions.AspNetCore.Configuration.Secrets" Version="1.3.2" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Oiie.Ccom\Oiie.Ccom.csproj" />
+    <ProjectReference Include="..\Oiie.Isbm.Client\Oiie.Isbm.Client.csproj" />
+  </ItemGroup>
+
+  <!--
+    Personality packs and scenario definitions are deployed content, not compiled
+    code, and they live here beside the engine that loads them. They are not copied
+    to this library's own output: the loaders resolve them from the *host's*
+    ContentRootPath, so each host links them in from this folder instead. See the
+    Content globs in Oiie.Sandbox.Api and SimHost.
+  -->
+  <ItemGroup>
+    <None Include="PersonalityPacks\**\*.yaml" />
+    <None Include="Scenarios\**\*.yaml" />
+  </ItemGroup>
+
+</Project>

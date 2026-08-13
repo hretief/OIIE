@@ -1,4 +1,6 @@
-namespace SimHost.Middleware;
+using SimHost.Domain.Common;
+
+namespace Oiie.Sandbox.Api.Middleware;
 
 /// <summary>
 /// Requires a shared key on /admin routes.
@@ -18,9 +20,13 @@ namespace SimHost.Middleware;
 /// </summary>
 public sealed class AdminKeyMiddleware(RequestDelegate next, IConfiguration configuration, ILogger<AdminKeyMiddleware> logger)
 {
-    public const string HeaderName = "x-sandbox-admin-key";
+    /// <summary>
+    /// Re-exposed from <see cref="SandboxAdminKey"/> so existing call sites keep
+    /// working; the constant itself belongs to the engine, which also has to send it.
+    /// </summary>
+    public const string HeaderName = SandboxAdminKey.HeaderName;
 
-    private readonly string? _key = configuration["Sandbox:AdminKey"];
+    private readonly string? _key = configuration[SandboxAdminKey.ConfigurationKey];
 
     public async Task InvokeAsync(HttpContext context)
     {
@@ -33,7 +39,7 @@ public sealed class AdminKeyMiddleware(RequestDelegate next, IConfiguration conf
         }
 
         var supplied = context.Request.Headers[HeaderName].FirstOrDefault()
-            ?? context.Request.Query["adminKey"].FirstOrDefault();
+            ?? context.Request.Query[SandboxAdminKey.QueryName].FirstOrDefault();
 
         // Fixed-time comparison. Overkill for a simulator, but a string comparison
         // that short-circuits is a habit worth not forming.

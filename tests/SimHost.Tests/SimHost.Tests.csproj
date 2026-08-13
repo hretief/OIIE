@@ -15,7 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\SimHost\SimHost.csproj" />
+    <ProjectReference Include="..\..\Oiie.Sandbox.Core\Oiie.Sandbox.Core.csproj" />
     <ProjectReference Include="..\..\Oiie.Ccom\Oiie.Ccom.csproj" />
   </ItemGroup>
 

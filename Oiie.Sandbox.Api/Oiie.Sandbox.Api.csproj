@@ -1,18 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
-    <!-- Pinned to 2.x — 3.x is not compatible with the provider deployments. -->
-    <PackageReference Include="Microsoft.ApplicationInsights.AspNetCore" Version="2.22.0" />
+    <ProjectReference Include="..\Oiie.Sandbox.Core\Oiie.Sandbox.Core.csproj" />
   </ItemGroup>
 
-  <!--
-    The engine — participants, personalities, scenarios, storage and messaging — now
-    lives in Oiie.Sandbox.Core and is shared with Oiie.Sandbox.Api. This project is
-    the operator UI and nothing else, so the EF Core, Storage, Key Vault and
-    YamlDotNet references it used to carry went with the engine.
-  -->
   <ItemGroup>
-    <ProjectReference Include="..\Oiie.Sandbox.Core\Oiie.Sandbox.Core.csproj" />
+    <!-- Pinned to 2.x — 3.x is not compatible with the provider deployments. -->
+    <PackageReference Include="Microsoft.ApplicationInsights.AspNetCore" Version="2.22.0" />
   </ItemGroup>
 
   <!--
@@ -20,8 +14,7 @@
     Oiie.Sandbox.Core, but the loaders resolve them from this host's ContentRootPath,
     so they are linked in rather than duplicated on disk. PersonalityPacks/ holds
     personality.yaml and Fixtures/classes.yaml under lowercase participant ids,
-    because the loader resolves them as Path.Combine(root, ParticipantId). The
-    compiled handlers live in the engine under PascalCase type names.
+    because the loader resolves them as Path.Combine(root, ParticipantId).
   -->
   <ItemGroup>
     <Content Include="..\Oiie.Sandbox.Core\PersonalityPacks\**\*.yaml"

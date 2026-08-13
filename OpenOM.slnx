@@ -2,12 +2,14 @@
   <Folder Name="/01-Apps/">
     <Project Path="ISBMProvider/IsbmProvider.csproj" />
     <Project Path="CirProvider/CirProvider.csproj" />
+    <Project Path="Oiie.Sandbox.Api/Oiie.Sandbox.Api.csproj" />
     <Project Path="SimHost/SimHost.csproj" />
   </Folder>
   <Folder Name="/02-Shared/">
     <Project Path="Oiie.Ccom/Oiie.Ccom.csproj" />
     <Project Path="Oiie.Isbm.Abstractions/Oiie.Isbm.Abstractions.csproj" />
     <Project Path="Oiie.Isbm.Client/Oiie.Isbm.Client.csproj" />
+    <Project Path="Oiie.Sandbox.Core/Oiie.Sandbox.Core.csproj" />
   </Folder>
   <Folder Name="/03-Tests/">
     <Project Path="tests/SimHost.Tests/SimHost.Tests.csproj" />

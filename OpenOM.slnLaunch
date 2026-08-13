@@ -1,0 +1,27 @@
+[
+  {
+    "Name": "Sandbox (API + Blazor UI)",
+    "Projects": [
+      {
+        "Path": "Oiie.Sandbox.Api\\Oiie.Sandbox.Api.csproj",
+        "Action": "Start",
+        "DebugTarget": "Oiie.Sandbox.Api"
+      },
+      {
+        "Path": "SimHost\\SimHost.csproj",
+        "Action": "Start",
+        "DebugTarget": "SimHost"
+      }
+    ]
+  },
+  {
+    "Name": "Sandbox API only",
+    "Projects": [
+      {
+        "Path": "Oiie.Sandbox.Api\\Oiie.Sandbox.Api.csproj",
+        "Action": "Start",
+        "DebugTarget": "Oiie.Sandbox.Api"
+      }
+    ]
+  }
+]

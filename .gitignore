@@ -5,7 +5,10 @@ obj/
 
 # Per-developer settings: database name, storage prefix, alias. Copy the template
 # rather than committing one developer's values as everyone's default.
-SimHost/appsettings.Development.json
+#
+# Matched by name rather than by path: the API host was split out of SimHost and
+# arrived with the same file, which a path-specific rule silently failed to cover.
+**/appsettings.Development.json
 
 # Build output from deploy/deploy.ps1
 artifacts/

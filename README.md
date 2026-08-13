@@ -24,9 +24,12 @@ OIIE/
   Oiie.Ccom/                  CCOM domain model and BOD validation
   ISBMProvider/               ── deliverable 1
   CirProvider/                ── deliverable 2
-  SimHost/                    ── deliverable 3
-    PersonalityPacks/         participant config and fixtures, copied to output
-    Components/               Blazor UI for running and inspecting scenarios
+  Oiie.Sandbox.Core/          ── deliverable 3: the engine, shared by both hosts
+    PersonalityPacks/         participant config and fixtures, linked into each host
+    Scenarios/                scenario definitions
+  Oiie.Sandbox.Api/           the REST surface: /admin, /health, message pumps
+  SimHost/                    Blazor UI for running and inspecting scenarios
+  WorkflowOrchestration/      React UI for driving the sandbox interactively
 
   schemas/{ccom,cir,oagis}    single source of truth for XSDs
   infra/{isbm,cir,sandbox}    Bicep, per deliverable
@@ -38,6 +41,12 @@ OIIE/
 
 Flat, with no `src/` level — the convention the source repositories used.
 Grouping is handled by solution folders.
+
+The sandbox is three projects, not one. `Oiie.Sandbox.Core` holds the engine;
+`Oiie.Sandbox.Api` and `SimHost` are separate hosts over it, and only the API
+runs the message pumps. Two UIs are kept deliberately: SimHost drives end-to-end
+automated scenario runs, WorkflowOrchestration is for interactive use. See
+`docs/decision-records/2026-08-sandbox-host-split.md`.
 
 ## What the sandbox shows
 
@@ -98,21 +107,34 @@ Two workflows run on push and pull request against `main`:
 
 Both are build-and-verify only. Neither deploys, and neither needs Azure
 credentials. The end-to-end suite under `testing/` is **not** in CI: it requires
-a running SimHost plus the live Azure ISBM and CIR apps, so it stays a manual
+a running sandbox API plus the live Azure ISBM and CIR apps, so it stays a manual
 step:
 
 ```pwsh
-cd SimHost;  dotnet run --launch-profile SimHost   # leave running
-cd testing;  pwsh -NoProfile -File .\test-sandbox.ps1
+cd Oiie.Sandbox.Api;  dotnet run   # leave running
+cd testing;           pwsh -NoProfile -File .\test-sandbox.ps1
 ```
+
+The suite drives `/admin` and `/health`, which the **API** serves — not SimHost.
+Point it at `https://localhost:7241` locally.
+
+To use either UI, run the API and then:
+
+```pwsh
+cd SimHost;                 dotnet run   # Blazor, https://localhost:7180
+cd WorkflowOrchestration;   npm run dev  # React, http://localhost:8443
+```
+
+Both need the API running: SimHost calls it for reset and scenario launch, and
+the React app talks to nothing else. `OpenOM.slnLaunch` starts the API and
+SimHost together.
 
 Scenarios can also be started and inspected from the browser at `/runs`, which
 is usually the faster way to see *why* a step failed.
 
-The launch profile is `SimHost`. There is no `https` profile, and passing a name
-that does not exist silently skips `ASPNETCORE_ENVIRONMENT=Development`, so
-`appsettings.Development.json` is never loaded and every database connection
-fails with `Configuration 'Sandbox:Environment' is not set.`
+`appsettings.Development.json` is not committed — copy the `.template` beside it
+and set your own database. Without it every connection fails with
+`Configuration 'Sandbox:Environment' is not set.`
 
 ## Decisions worth reading first
 
@@ -120,6 +142,14 @@ fails with `Configuration 'Sandbox:Environment' is not set.`
 Service Bus authentication works (managed identity, no keys anywhere — including
 what a developer needs granted to run locally) and why `CirProvider` shares only
 the ISBM contract types rather than the client interface.
+
+`docs/decision-records/2026-08-sandbox-host-split.md` explains why the sandbox is
+three projects and two App Services, and why the API is an App Service rather
+than a Function App like the other two deliverables.
+
+`docs/decision-records/2026-08-eng-imodel-named-versions.md` explains why
+publication from ENG is all-or-nothing. `PromoteAsync` looks like an unfinished
+feature and is not one; read this before "improving" it.
 
 ## Known gaps
 

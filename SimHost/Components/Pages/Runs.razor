@@ -8,6 +8,7 @@
 @inject ScenarioCatalog Catalog
 @inject ScenarioLauncher Launcher
 @inject SandboxResetService Resets
+@inject SandboxApiEndpoint SandboxApi
 @inject NavigationManager Nav
 
 <PageTitle>Runs - OIIE Sandbox</PageTitle>
@@ -135,7 +136,9 @@ else
         _resetMessage = null;
         StateHasChanged();
 
-        var baseUrl = Nav.BaseUri;
+        // The admin surface lives in the Sandbox API, which is a separate process from
+        // this UI, so its own base URI is not where /admin/reset is served.
+        var baseUrl = SandboxApi.Resolve(Nav.BaseUri);
 
         var outcome = dayZero
             ? await Resets.DayZeroAsync(baseUrl)
@@ -181,7 +184,7 @@ else
 
         try
         {
-            var runId = await Launcher.StartAsync(_scenarioId, Nav.BaseUri);
+            var runId = await Launcher.StartAsync(_scenarioId, SandboxApi.Resolve(Nav.BaseUri));
             Nav.NavigateTo($"/runs/{runId}");
         }
         catch (Exception ex)

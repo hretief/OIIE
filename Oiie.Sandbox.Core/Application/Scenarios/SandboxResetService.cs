@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using Oiie.Isbm.Client;
 using SimHost.Application.Participants;
+using SimHost.Domain.Common;
 using SimHost.Infrastructure.Isbm;
 
 namespace SimHost.Application.Scenarios;
@@ -145,11 +146,11 @@ public sealed class SandboxResetService(
             using var request = new HttpRequestMessage(
                 HttpMethod.Post, new Uri(new Uri(baseUrl), path));
 
-            var key = configuration["Sandbox:AdminKey"];
+            var key = configuration[SandboxAdminKey.ConfigurationKey];
 
             if (!string.IsNullOrWhiteSpace(key))
             {
-                request.Headers.Add(Middleware.AdminKeyMiddleware.HeaderName, key);
+                request.Headers.Add(SandboxAdminKey.HeaderName, key);
             }
 
             using var response = await client.SendAsync(request, ct);
