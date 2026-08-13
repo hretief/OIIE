@@ -30,8 +30,8 @@ function toITwin(twin: api.ITwin): ITwin {
   }
 }
 
-type WorkflowId = 'SC01' | 'SC02' | 'SC11' | 'SC04'
-type PersonaId = 'ENG' | 'REG' | 'MMS' | 'RELIABILITY' | 'CONSTRUCT' | 'REG_ASSET'
+type WorkflowId = 'SC01' | 'SC02' | 'SC11' | 'SC04' | 'SC05'
+type PersonaId = 'ENG' | 'REG' | 'MMS' | 'RELIABILITY' | 'CONSTRUCT' | 'REG_ASSET' | 'GIS'
 
 // SC01 — Segment lifecycle
 type SegmentStatus = 'draft' | 'published' | 'validated' | 'approved' | 'stored_mms' | 'stored_rel'
@@ -46,10 +46,11 @@ interface Segment {
   status: SegmentStatus
   storedMms: boolean
   storedRel: boolean
+  storedGis: boolean
 }
 
 // SC04 — As-Built asset lifecycle
-type AsBuiltStatus = 'draft' | 'eng_published' | 'construct_published' | 'registered'
+type AsBuiltStatus = 'draft' | 'eng_published' | 'construct_published' | 'registered' | 'om_published'
 
 interface AsBuiltAsset {
   uuid: string
@@ -64,6 +65,12 @@ interface AsBuiltAsset {
   created: string
   status: AsBuiltStatus
   registeredOm: boolean
+  // SC05 — which O&M systems have taken the registered asset. Separate flags
+  // rather than one "published" bit, for the same reason segments carry three:
+  // the demo has to show each system taking it up independently.
+  omMms: boolean
+  omRel: boolean
+  omGis: boolean
 }
 
 // SC11 — Asset update lifecycle
@@ -85,21 +92,41 @@ interface AssetUpdate {
 
 // ─── Personas ────────────────────────────────────────────────────────────
 
+// Each persona carries two names.
+//
+// `label` / `fullLabel` are the OIIE role names. They match the participant ids
+// the sandbox uses on the wire, so they stay exactly as they are — renaming them
+// would decouple what is on screen from what is in the logs and the message
+// archive, which is the one thing that makes a round trip explainable.
+//
+// `alias` / `aliasFull` are the client's own application names, and are what the
+// UI shows. The demo is more persuasive when a reviewer sees the systems they
+// actually operate rather than a vocabulary they would have to learn first.
+//
+// Hard-coded for now, pending the admin page that makes this configurable. Held
+// on the persona record rather than in a separate lookup so a new persona cannot
+// be added with a name but no alias.
 const PERSONAS: {
   id: PersonaId
   label: string
   fullLabel: string
+  alias: string
+  aliasFull: string
   accent: string
   dimBg: string
   glowBg: string
   borderColor: string
 }[] = [
-  { id: 'ENG', label: 'ENG', fullLabel: 'Engineering Design', accent: '#3b82f6', dimBg: 'rgba(59,130,246,0.12)', glowBg: 'rgba(59,130,246,0.25)', borderColor: 'rgba(59,130,246,0.4)' },
-  { id: 'REG', label: 'REG-LOCATION', fullLabel: 'Functional Location Registry', accent: '#f59e0b', dimBg: 'rgba(245,158,11,0.12)', glowBg: 'rgba(245,158,11,0.25)', borderColor: 'rgba(245,158,11,0.4)' },
-  { id: 'MMS', label: 'MMS', fullLabel: 'Maintenance Management System', accent: '#10b981', dimBg: 'rgba(16,185,129,0.12)', glowBg: 'rgba(16,185,129,0.25)', borderColor: 'rgba(16,185,129,0.4)' },
-  { id: 'RELIABILITY', label: 'REL', fullLabel: 'Reliability Engineering', accent: '#a78bfa', dimBg: 'rgba(167,139,250,0.12)', glowBg: 'rgba(167,139,250,0.25)', borderColor: 'rgba(167,139,250,0.4)' },
-  { id: 'CONSTRUCT', label: 'CONSTRUCT', fullLabel: 'Construction Management System', accent: '#fb923c', dimBg: 'rgba(251,146,60,0.12)', glowBg: 'rgba(251,146,60,0.25)', borderColor: 'rgba(251,146,60,0.4)' },
-  { id: 'REG_ASSET', label: 'REG-ASSET', fullLabel: 'O&M Asset Registry', accent: '#22d3ee', dimBg: 'rgba(34,211,238,0.12)', glowBg: 'rgba(34,211,238,0.25)', borderColor: 'rgba(34,211,238,0.4)' },
+  { id: 'ENG', label: 'ENG', fullLabel: 'Engineering Design', alias: 'BIC', aliasFull: 'Infrastructure Cloud', accent: '#3b82f6', dimBg: 'rgba(59,130,246,0.12)', glowBg: 'rgba(59,130,246,0.25)', borderColor: 'rgba(59,130,246,0.4)' },
+  { id: 'REG', label: 'REG-LOCATION', fullLabel: 'Functional Location Registry', alias: 'EIS', aliasFull: 'Engineering Information System', accent: '#f59e0b', dimBg: 'rgba(245,158,11,0.12)', glowBg: 'rgba(245,158,11,0.25)', borderColor: 'rgba(245,158,11,0.4)' },
+  { id: 'MMS', label: 'MMS', fullLabel: 'Maintenance Management System', alias: 'TAMS', aliasFull: 'Transportation Asset Management System', accent: '#10b981', dimBg: 'rgba(16,185,129,0.12)', glowBg: 'rgba(16,185,129,0.25)', borderColor: 'rgba(16,185,129,0.4)' },
+  // REL keeps its own name: the client had no separate application for it.
+  { id: 'RELIABILITY', label: 'REL', fullLabel: 'Reliability Engineering', alias: 'REL', aliasFull: 'Reliability Engineering', accent: '#a78bfa', dimBg: 'rgba(167,139,250,0.12)', glowBg: 'rgba(167,139,250,0.25)', borderColor: 'rgba(167,139,250,0.4)' },
+  { id: 'CONSTRUCT', label: 'CONSTRUCT', fullLabel: 'Construction Management System', alias: 'SYNCHRO', aliasFull: 'Construction Management System', accent: '#fb923c', dimBg: 'rgba(251,146,60,0.12)', glowBg: 'rgba(251,146,60,0.25)', borderColor: 'rgba(251,146,60,0.4)' },
+  { id: 'REG_ASSET', label: 'REG-ASSET', fullLabel: 'O&M Asset Registry', alias: 'AR', aliasFull: 'O&M Asset Registry', accent: '#22d3ee', dimBg: 'rgba(34,211,238,0.12)', glowBg: 'rgba(34,211,238,0.25)', borderColor: 'rgba(34,211,238,0.4)' },
+  // GIS takes part in no workflow step yet, so it will not appear in the sidebar
+  // until one names it. Listed here so the alias is ready when it does.
+  { id: 'GIS', label: 'GIS', fullLabel: 'Geographic Information System', alias: 'ESRI', aliasFull: 'Geospatial Mapping Software', accent: '#84cc16', dimBg: 'rgba(132,204,22,0.12)', glowBg: 'rgba(132,204,22,0.25)', borderColor: 'rgba(132,204,22,0.4)' },
 ]
 
 // ─── Workflow step definitions ────────────────────────────────────────────────
@@ -124,8 +151,8 @@ const SC01_STEPS: WorkflowStep[] = [
   // below, which posts to /admin/eng/tags. It carries no action button, because
   // a segment number has to be chosen and a button cannot ask for one.
   { num: 1, persona: 'ENG',         label: 'Author Segments',      description: 'Enrich the iModel with segments — writes to the sandbox' },
-  { num: 2, persona: 'ENG',         label: 'Publish Design',        description: 'Release pending segments as a Named Version — goes to REG-LOCATION' },
-  { num: 3, persona: 'REG',         label: 'Receive Segments',      description: 'Incoming design proposals from Engineering land in the stewardship queue' },
+  { num: 2, persona: 'ENG',         label: 'Publish Design',        description: 'Release pending segments as a Named Version — goes to EIS' },
+  { num: 3, persona: 'REG',         label: 'Receive Segments',      description: 'Incoming design proposals from BIC land in the stewardship queue' },
   { num: 4, persona: 'REG',         label: 'Validate Segments',     description: 'Verify segments meet regulatory requirements',            action: 'VALIDATE' },
 ]
 
@@ -141,34 +168,63 @@ const SC01_STEPS: WorkflowStep[] = [
 // subscribes to; om-reliability subscribes to /OandM-Events (operational events,
 // D1.3) which MMS publishes. Keeping the two apart is what stops one bus path
 // merging two distinct information domains.
+//
+// GIS sits with MMS on /OandM rather than with REL on /OandM-Events. It consumes
+// the approved location itself — the spatial extent of a segment is provisioning
+// data, settled at approval — not the operational events MMS goes on to raise
+// about it. Same channel as MMS, therefore, and for the same reason.
 const SC02_STEPS: WorkflowStep[] = [
-  { num: 1, persona: 'REG',         label: 'Review Proposals',      description: 'Segments proposed by ENG await a stewardship decision' },
+  { num: 1, persona: 'REG',         label: 'Review Proposals',      description: 'Segments proposed by BIC await a stewardship decision' },
   { num: 2, persona: 'REG',         label: 'Approve Segments',      description: 'Approve — mints location codes and releases to O&M',      action: 'APPROVE' },
   { num: 3, persona: 'MMS',         label: 'Receive Segments',      description: 'Approved locations arrive on the O&M channel' },
-  { num: 4, persona: 'MMS',         label: 'Store as Assets',       description: 'Commit locations as MMS functional location records',     action: 'STORE ASSETS' },
-  { num: 5, persona: 'RELIABILITY', label: 'Receive Segments',      description: 'Segment data reaches reliability via the O&M events channel' },
-  { num: 6, persona: 'RELIABILITY', label: 'Store as Assets',       description: 'Register segments in Reliability asset records',          action: 'STORE ASSETS' },
+  { num: 4, persona: 'MMS',         label: 'Store as Assets',       description: 'Commit locations as TAMS functional location records',     action: 'STORE ASSETS' },
+  { num: 5, persona: 'GIS',         label: 'Receive Segments',      description: 'Approved locations arrive on the O&M channel' },
+  { num: 6, persona: 'GIS',         label: 'Store as Features',     description: 'Commit locations as ESRI geospatial features',              action: 'STORE ASSETS' },
+  { num: 7, persona: 'RELIABILITY', label: 'Receive Segments',      description: 'Segment data reaches reliability via the O&M events channel' },
+  { num: 8, persona: 'RELIABILITY', label: 'Store as Assets',       description: 'Register segments in Reliability asset records',          action: 'STORE ASSETS' },
 ]
 
 const SC11_STEPS: WorkflowStep[] = [
   { num: 1, persona: 'MMS',         label: 'Install Asset',         description: 'Install a physical asset into a segment record',          action: 'INSTALL ASSET' },
   { num: 2, persona: 'MMS',         label: 'Publish Update',        description: 'Broadcast asset installation to subscribers',             action: 'PUBLISH UPDATE' },
-  { num: 3, persona: 'RELIABILITY', label: 'Receive Update',        description: 'Incoming MMS asset installation update' },
+  { num: 3, persona: 'RELIABILITY', label: 'Receive Update',        description: 'Incoming TAMS asset installation update' },
   { num: 4, persona: 'RELIABILITY', label: 'Update Records',        description: 'Update own records with fitted asset + serial number',    action: 'UPDATE RECORDS' },
-  { num: 5, persona: 'REG',         label: 'Receive Update',        description: 'Incoming MMS asset installation update' },
+  { num: 5, persona: 'REG',         label: 'Receive Update',        description: 'Incoming TAMS asset installation update' },
   { num: 6, persona: 'REG',         label: 'Update Segment Records', description: 'Update segment records with fitted asset data',          action: 'UPDATE RECORDS' },
 ]
 
 const SC04_STEPS: WorkflowStep[] = [
   { num: 1, persona: 'ENG',       label: 'Author As-Built Record',       description: 'Create as-built engineering asset record',                        action: 'CREATE AS-BUILT' },
   { num: 3, persona: 'ENG',       label: 'Publish As-Built Design',      description: 'Release as-built engineering data to Construction',              action: 'PUBLISH AS-BUILT' },
-  { num: 4, persona: 'CONSTRUCT', label: 'Receive As-Built Data',        description: 'Incoming as-built engineering data from ENG' },
-  { num: 5, persona: 'CONSTRUCT', label: 'Publish Constructed Asset',    description: 'Publish constructed asset & installation data to REG-ASSET',     action: 'PUBLISH ASSET' },
-  { num: 6, persona: 'REG_ASSET', label: 'Receive Asset Data',           description: 'Incoming serialized equipment asset data from CONSTRUCT' },
+  { num: 4, persona: 'CONSTRUCT', label: 'Receive As-Built Data',        description: 'Incoming as-built engineering data from BIC' },
+  { num: 5, persona: 'CONSTRUCT', label: 'Publish Constructed Asset',    description: 'Publish constructed asset & installation data to AR',     action: 'PUBLISH ASSET' },
+  { num: 6, persona: 'REG_ASSET', label: 'Receive Asset Data',           description: 'Incoming serialized equipment asset data from SYNCHRO' },
   { num: 7, persona: 'REG_ASSET', label: 'Register O&M Asset',           description: 'Register asset in the O&M Asset Registry',                       action: 'REGISTER ASSET' },
 ]
 
-const WORKFLOW_STEPS: Record<WorkflowId, WorkflowStep[]> = { SC01: SC01_STEPS, SC02: SC02_STEPS, SC11: SC11_STEPS, SC04: SC04_STEPS }
+// SC05 picks up exactly where SC04 stops. SC04 ends with AR holding a registered
+// asset; SC05 is the act of releasing that asset to the systems that operate and
+// maintain it.
+//
+// The three consumers are deliberately the same trio as SC02, because this is the
+// same handover shape one level down: SC02 hands over the location a thing sits
+// in, SC05 hands over the serialised thing itself. TAMS maintains it, REL builds
+// its reliability history, ESRI places it on the map.
+//
+// Only assets AR has actually registered can travel — the guard in handleSC05
+// enforces that, so the demo cannot skip SC04 and still show a result here.
+const SC05_STEPS: WorkflowStep[] = [
+  { num: 1, persona: 'REG_ASSET', label: 'Review Registered Assets', description: 'Assets registered in the O&M Asset Registry, ready for release' },
+  { num: 2, persona: 'REG_ASSET', label: 'Publish to O&M',          description: 'Release registered assets to the O&M systems',            action: 'PUBLISH TO O&M' },
+  { num: 3, persona: 'MMS',       label: 'Receive Asset Data',      description: 'Registered assets arrive on the O&M channel' },
+  { num: 4, persona: 'MMS',       label: 'Store as Assets',         description: 'Commit assets as TAMS maintainable equipment records', action: 'STORE ASSETS' },
+  { num: 5, persona: 'RELIABILITY', label: 'Receive Asset Data',    description: 'Asset data reaches reliability via the O&M events channel' },
+  { num: 6, persona: 'RELIABILITY', label: 'Store as Assets',       description: 'Register assets in Reliability asset records',           action: 'STORE ASSETS' },
+  { num: 7, persona: 'GIS',       label: 'Receive Asset Data',      description: 'Registered assets arrive on the O&M channel' },
+  { num: 8, persona: 'GIS',       label: 'Store as Features',       description: 'Commit assets as ESRI geospatial features',              action: 'STORE ASSETS' },
+]
+
+const WORKFLOW_STEPS: Record<WorkflowId, WorkflowStep[]> = { SC01: SC01_STEPS, SC02: SC02_STEPS, SC11: SC11_STEPS, SC04: SC04_STEPS, SC05: SC05_STEPS }
 
 /**
  * Who takes part, in the order the data travels.
@@ -186,11 +242,15 @@ const WORKFLOW_PERSONAS: Record<WorkflowId, PersonaId[]> = Object.fromEntries(
   ),
 ) as Record<WorkflowId, PersonaId[]>
 
+// The OIIE scenario ids (SC01, SC02...) are kept: they are how these exchanges
+// are referred to in the specification, and a reviewer checking the demo against
+// it needs them. Only the participant names inside the sentence are aliased.
 const WORKFLOW_DESCRIPTION: Record<WorkflowId, string> = {
-  SC01: 'Publish As-Designed / As-Built Engineering Network / Segment / Tag data from ENG to REG-LOCATION',
-  SC02: 'Publish As-Designed / As-Built Engineering Network / Segment / Tag data from REG-LOCATION to O&M',
-  SC04: 'Publish As-Built Engineering Asset data from ENG, CONSTRUCT to REG-ASSET',
-  SC11: 'Publish Asset Removal / Installation events from MMS to REG-LOCATION and O&M',
+  SC01: 'Publish As-Designed / As-Built Engineering Network / Segment / Tag data from BIC to EIS',
+  SC02: 'Publish As-Designed / As-Built Engineering Network / Segment / Tag data from EIS to O&M',
+  SC04: 'Publish As-Built Engineering Asset data from BIC, SYNCHRO to AR',
+  SC05: 'Publish As-Built Engineering Asset data from AR to O&M',
+  SC11: 'Publish Asset Removal / Installation events from TAMS to EIS and O&M',
 }
 
 // ─── Seed data ────────────────────────────────────────────────────────────────
@@ -203,11 +263,11 @@ function makeUuid() {
 }
 
 const SEED_SEGMENTS: Segment[] = [
-  { uuid: 'a1b2c3d4-0001-4e5f-8a9b-c0d1e2f30001', shortName: 'PUMP-TRAIN-A',    fullName: 'Primary Pump Train — Section A',           segmentType: 'Rotating Equipment', registrationSite: 'RTM-REFINERY', created: '2026-08-10 09:14', status: 'draft',     storedMms: false, storedRel: false },
-  { uuid: 'a1b2c3d4-0002-4e5f-8a9b-c0d1e2f30002', shortName: 'VALVE-CTRL-3B',   fullName: 'Control Valve Assembly — Loop 3B',         segmentType: 'Control Element',    registrationSite: 'RTM-REFINERY', created: '2026-08-10 10:32', status: 'draft',     storedMms: false, storedRel: false },
-  { uuid: 'a1b2c3d4-0003-4e5f-8a9b-c0d1e2f30003', shortName: 'COMP-STAGE-2',    fullName: 'Compressor Stage 2 — High Pressure Train', segmentType: 'Rotating Equipment', registrationSite: 'HBG-CHEMICALS', created: '2026-08-11 08:55', status: 'published', storedMms: false, storedRel: false },
-  { uuid: 'a1b2c3d4-0004-4e5f-8a9b-c0d1e2f30004', shortName: 'HEX-SHELL-07',    fullName: 'Shell & Tube Heat Exchanger — Unit 07',   segmentType: 'Static Equipment',   registrationSite: 'HBG-CHEMICALS', created: '2026-08-11 14:10', status: 'validated', storedMms: false, storedRel: false },
-  { uuid: 'a1b2c3d4-0005-4e5f-8a9b-c0d1e2f30005', shortName: 'TANK-STORAGE-F',  fullName: 'Floating Roof Storage Tank — Farm F',     segmentType: 'Static Equipment',   registrationSite: 'BRG-OFFSHORE', created: '2026-08-12 07:20', status: 'approved',  storedMms: false, storedRel: false },
+  { uuid: 'a1b2c3d4-0001-4e5f-8a9b-c0d1e2f30001', shortName: 'PUMP-TRAIN-A',    fullName: 'Primary Pump Train — Section A',           segmentType: 'Rotating Equipment', registrationSite: 'RTM-REFINERY', created: '2026-08-10 09:14', status: 'draft',     storedMms: false, storedRel: false, storedGis: false },
+  { uuid: 'a1b2c3d4-0002-4e5f-8a9b-c0d1e2f30002', shortName: 'VALVE-CTRL-3B',   fullName: 'Control Valve Assembly — Loop 3B',         segmentType: 'Control Element',    registrationSite: 'RTM-REFINERY', created: '2026-08-10 10:32', status: 'draft',     storedMms: false, storedRel: false, storedGis: false },
+  { uuid: 'a1b2c3d4-0003-4e5f-8a9b-c0d1e2f30003', shortName: 'COMP-STAGE-2',    fullName: 'Compressor Stage 2 — High Pressure Train', segmentType: 'Rotating Equipment', registrationSite: 'HBG-CHEMICALS', created: '2026-08-11 08:55', status: 'published', storedMms: false, storedRel: false, storedGis: false },
+  { uuid: 'a1b2c3d4-0004-4e5f-8a9b-c0d1e2f30004', shortName: 'HEX-SHELL-07',    fullName: 'Shell & Tube Heat Exchanger — Unit 07',   segmentType: 'Static Equipment',   registrationSite: 'HBG-CHEMICALS', created: '2026-08-11 14:10', status: 'validated', storedMms: false, storedRel: false, storedGis: false },
+  { uuid: 'a1b2c3d4-0005-4e5f-8a9b-c0d1e2f30005', shortName: 'TANK-STORAGE-F',  fullName: 'Floating Roof Storage Tank — Farm F',     segmentType: 'Static Equipment',   registrationSite: 'BRG-OFFSHORE', created: '2026-08-12 07:20', status: 'approved',  storedMms: false, storedRel: false, storedGis: false },
 ]
 
 const SEED_UPDATES: AssetUpdate[] = [
@@ -223,9 +283,15 @@ const ASSET_TEMPLATES = [
 ]
 
 const SEED_ASBUILT: AsBuiltAsset[] = [
-  { uuid: 'b2c3d4e5-0001-4f6a-9b0c-d1e2f3a40001', equipmentTag: 'P-1001A', description: 'Centrifugal Pump — Cooling Water Service A', equipmentClass: 'Pump', manufacturer: 'Flowserve', modelNumber: 'DVSH-300', serialNumber: 'FLW-2026-00412', installationSite: 'RTM-REFINERY', installDate: '2026-07-15', created: '2026-08-05 10:00', status: 'draft', registeredOm: false },
-  { uuid: 'b2c3d4e5-0002-4f6a-9b0c-d1e2f3a40002', equipmentTag: 'E-2003',  description: 'Shell & Tube Heat Exchanger — Feed Preheat',   equipmentClass: 'Heat Exchanger', manufacturer: 'Alfa Laval', modelNumber: 'TS-6M', serialNumber: 'ALF-2026-00188', installationSite: 'HBG-CHEMICALS', installDate: '2026-07-22', created: '2026-08-06 09:30', status: 'eng_published', registeredOm: false },
-  { uuid: 'b2c3d4e5-0003-4f6a-9b0c-d1e2f3a40003', equipmentTag: 'K-3002',  description: 'Reciprocating Compressor — Gas Injection',      equipmentClass: 'Compressor', manufacturer: 'Burckhardt', modelNumber: 'L-B20H', serialNumber: 'BUC-2026-00073', installationSite: 'BRG-OFFSHORE', installDate: '2026-08-01', created: '2026-08-07 14:15', status: 'construct_published', registeredOm: false },
+  { uuid: 'b2c3d4e5-0001-4f6a-9b0c-d1e2f3a40001', equipmentTag: 'P-1001A', description: 'Centrifugal Pump — Cooling Water Service A', equipmentClass: 'Pump', manufacturer: 'Flowserve', modelNumber: 'DVSH-300', serialNumber: 'FLW-2026-00412', installationSite: 'RTM-REFINERY', installDate: '2026-07-15', created: '2026-08-05 10:00', status: 'draft', registeredOm: false, omMms: false, omRel: false, omGis: false },
+  { uuid: 'b2c3d4e5-0002-4f6a-9b0c-d1e2f3a40002', equipmentTag: 'E-2003', description: 'Shell & Tube Heat Exchanger — Feed Preheat', equipmentClass: 'Heat Exchanger', manufacturer: 'Alfa Laval', modelNumber: 'TS-6M', serialNumber: 'ALF-2026-00188', installationSite: 'HBG-CHEMICALS', installDate: '2026-07-22', created: '2026-08-06 09:30', status: 'eng_published', registeredOm: false, omMms: false, omRel: false, omGis: false },
+  { uuid: 'b2c3d4e5-0003-4f6a-9b0c-d1e2f3a40003', equipmentTag: 'K-3002', description: 'Reciprocating Compressor — Gas Injection', equipmentClass: 'Compressor', manufacturer: 'Burckhardt', modelNumber: 'L-B20H', serialNumber: 'BUC-2026-00073', installationSite: 'BRG-OFFSHORE', installDate: '2026-08-01', created: '2026-08-07 14:15', status: 'construct_published', registeredOm: false, omMms: false, omRel: false, omGis: false },
+  // Already registered by AR, so SC05 can be demonstrated on its own without
+  // first walking SC04 end to end. One per site, so the scenario has something
+  // to show whichever site is selected.
+  { uuid: 'b2c3d4e5-0004-4f6a-9b0c-d1e2f3a40004', equipmentTag: 'P-1002B', description: 'Centrifugal Pump — Cooling Water Service B', equipmentClass: 'Pump', manufacturer: 'Flowserve', modelNumber: 'DVSH-300', serialNumber: 'FLW-2026-00519', installationSite: 'RTM-REFINERY', installDate: '2026-07-18', created: '2026-08-08 08:20', status: 'registered', registeredOm: true, omMms: false, omRel: false, omGis: false },
+  { uuid: 'b2c3d4e5-0005-4f6a-9b0c-d1e2f3a40005', equipmentTag: 'RX-0201', description: 'Jacketed Reactor — Polymerisation Train 2', equipmentClass: 'Vessel', manufacturer: 'ERGIL', modelNumber: 'JR-4500', serialNumber: 'ERG-2026-00231', installationSite: 'HBG-CHEMICALS', installDate: '2026-07-29', created: '2026-08-08 11:05', status: 'registered', registeredOm: true, omMms: false, omRel: false, omGis: false },
+  { uuid: 'b2c3d4e5-0006-4f6a-9b0c-d1e2f3a40006', equipmentTag: 'G-5001', description: 'Gas Turbine Generator — Main Power', equipmentClass: 'Turbine', manufacturer: 'Siemens Energy', modelNumber: 'SGT-400', serialNumber: 'SIE-2026-00094', installationSite: 'BRG-OFFSHORE', installDate: '2026-08-03', created: '2026-08-08 15:40', status: 'registered', registeredOm: true, omMms: false, omRel: false, omGis: false },
 ]
 
 const NEW_ASBUILT_TEMPLATES = [
@@ -292,7 +358,18 @@ function Toast({ message, accent }: { message: string; accent: string }) {
 // duplicated inline in both, and SC04's CONSTRUCT and REG_ASSET were missing
 // from each copy, so those steps rendered with an undefined colour.
 const PERSONA_COLOR: Record<PersonaId, string> = {
-  ENG: '#3b82f6', REG: '#f59e0b', MMS: '#10b981', RELIABILITY: '#a78bfa', CONSTRUCT: '#fb923c', REG_ASSET: '#22d3ee',
+  ENG: '#3b82f6', REG: '#f59e0b', MMS: '#10b981', RELIABILITY: '#a78bfa', CONSTRUCT: '#fb923c', REG_ASSET: '#22d3ee', GIS: '#84cc16',
+}
+
+/**
+ * The client-facing short name for a persona.
+ *
+ * The banner previously rendered the raw PersonaId, which is why REG_ASSET
+ * appeared with an underscore. Going through the persona table fixes that and
+ * keeps every on-screen name coming from one place.
+ */
+function personaAlias(id: PersonaId): string {
+  return PERSONAS.find(p => p.id === id)?.alias ?? id
 }
 
 function PipelineBanner({ steps, activePersona }: { steps: WorkflowStep[]; activePersona: PersonaId }) {
@@ -307,7 +384,7 @@ function PipelineBanner({ steps, activePersona }: { steps: WorkflowStep[]; activ
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, opacity: isMine ? 1 : 0.35 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                 <div style={{ width: 7, height: 7, borderRadius: '50%', background: isMine ? color : 'var(--text-muted)', flexShrink: 0 }} />
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: isMine ? color : 'var(--text-muted)', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>{step.persona}</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: isMine ? color : 'var(--text-muted)', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>{personaAlias(step.persona)}</span>
               </div>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: '8px', color: isMine ? 'var(--text-secondary)' : 'var(--text-muted)', whiteSpace: 'nowrap', maxWidth: 90, textAlign: 'center', lineHeight: 1.3 }}>{step.label}</span>
             </div>
@@ -382,10 +459,10 @@ function gateFindings(seg: api.Tag): string[] {
 }
 
 const AB_STATUS_COLOR: Record<AsBuiltStatus, string> = {
-  draft: '#6b7280', eng_published: '#3b82f6', construct_published: '#fb923c', registered: '#22d3ee',
+  draft: '#6b7280', eng_published: '#3b82f6', construct_published: '#fb923c', registered: '#22d3ee', om_published: '#10b981',
 }
 const AB_STATUS_LABEL: Record<AsBuiltStatus, string> = {
-  draft: 'DRAFT', eng_published: 'ENG PUBLISHED', construct_published: 'CONSTRUCT PUB', registered: 'REGISTERED',
+  draft: 'DRAFT', eng_published: 'BIC PUBLISHED', construct_published: 'SYNCHRO PUB', registered: 'REGISTERED', om_published: 'O&M PUBLISHED',
 }
 
 const UPD_STATUS_COLOR: Record<UpdateStatus, string> = {
@@ -943,7 +1020,7 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, onSubmit, o
                 silently strip it. Kept as an option, marked, so the loss is a
                 choice rather than an accident. */}
             {classKey && !classes.some(c => c.key === classKey) && (
-              <option value={classKey}>{classKey} (not in ENG reference data)</option>
+              <option value={classKey}>{classKey} (not in BIC reference data)</option>
             )}
             {classes.filter(c => !c.isAspect).map(c => (
               // Indented by depth so the taxonomy is legible: an instrument is a
@@ -1041,7 +1118,9 @@ function UpdateTable({ updates, selected, onToggle, onToggleAll, accent, dimBg }
   )
 }
 
-function AsBuiltTable({ assets, selected, onToggle, onToggleAll, accent, dimBg }: { assets: AsBuiltAsset[]; selected: Set<string>; onToggle: (id: string) => void; onToggleAll: () => void; accent: string; dimBg: string }) {
+// showOm is off for SC04, where nothing has reached O&M yet and the column would
+// be three empty dashes on every row.
+function AsBuiltTable({ assets, selected, onToggle, onToggleAll, accent, dimBg, showOm = false }: { assets: AsBuiltAsset[]; selected: Set<string>; onToggle: (id: string) => void; onToggleAll: () => void; accent: string; dimBg: string; showOm?: boolean }) {
   const allSel = assets.length > 0 && assets.every(a => selected.has(a.uuid))
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -1059,11 +1138,12 @@ function AsBuiltTable({ assets, selected, onToggle, onToggleAll, accent, dimBg }
             <TH>INSTALL DATE</TH>
             <TH>SITE</TH>
             <TH>STATUS</TH>
+            {showOm && <TH>O&M UPTAKE</TH>}
           </tr>
         </thead>
         <tbody>
           {assets.length === 0 ? (
-            <tr><td colSpan={11} style={{ padding: '48px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
+            <tr><td colSpan={showOm ? 12 : 11} style={{ padding: '48px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
               <div style={{ opacity: 0.4, fontSize: 24, marginBottom: 8 }}>◎</div>No items in inbox
             </td></tr>
           ) : assets.map(a => (
@@ -1079,6 +1159,14 @@ function AsBuiltTable({ assets, selected, onToggle, onToggleAll, accent, dimBg }
               <td style={{ padding: '9px 8px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>{a.installDate}</td>
               <td style={{ padding: '9px 8px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>{a.installationSite}</td>
               <td style={{ padding: '9px 8px' }}><Pill label={AB_STATUS_LABEL[a.status]} color={AB_STATUS_COLOR[a.status]} /></td>
+              {showOm && (
+                <td style={{ padding: '9px 8px', display: 'flex', gap: 4 }}>
+                  {a.omMms && <Pill label="TAMS" color="#f59e0b" />}
+                  {a.omRel && <Pill label="REL" color="#a78bfa" />}
+                  {a.omGis && <Pill label="ESRI" color="#34d399" />}
+                  {!a.omMms && !a.omRel && !a.omGis && <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>—</span>}
+                </td>
+              )}
             </TRow>
           ))}
         </tbody>
@@ -1336,11 +1424,20 @@ export default function App() {
   // ── Inbox items per persona × workflow ───────────────────────────────────
 
   function inboxAsBuilt(): AsBuiltAsset[] {
-    if (workflow !== 'SC04' || !activeTwin) return []
+    if (!activeTwin) return []
     const tw = activeTwin.shortName
+    if (workflow === 'SC05') {
+      // SC05 starts from SC04's finish line: AR only offers what it has actually
+      // registered, and the O&M systems only see what AR has released.
+      const registered = asBuilt.filter(a => a.installationSite === tw && (a.status === 'registered' || a.status === 'om_published'))
+      if (persona === 'REG_ASSET') return registered
+      if (persona === 'MMS' || persona === 'RELIABILITY' || persona === 'GIS') return registered.filter(a => a.status === 'om_published')
+      return []
+    }
+    if (workflow !== 'SC04') return []
     if (persona === 'ENG') return asBuilt.filter(a => a.installationSite === tw)
     if (persona === 'CONSTRUCT') return asBuilt.filter(a => a.installationSite === tw && (a.status === 'eng_published' || a.status === 'construct_published'))
-    if (persona === 'REG_ASSET') return asBuilt.filter(a => a.installationSite === tw && (a.status === 'construct_published' || a.status === 'registered'))
+    if (persona === 'REG_ASSET') return asBuilt.filter(a => a.installationSite === tw && (a.status === 'construct_published' || a.status === 'registered' || a.status === 'om_published'))
     return []
   }
 
@@ -1350,6 +1447,7 @@ export default function App() {
     if (persona === 'ENG') return segments.filter(s => s.registrationSite === tw)
     if (persona === 'REG') return segments.filter(s => s.registrationSite === tw && (s.status === 'published' || s.status === 'validated'))
     if (persona === 'MMS') return segments.filter(s => s.registrationSite === tw && (s.status === 'approved' || s.storedMms))
+    if (persona === 'GIS') return segments.filter(s => s.registrationSite === tw && (s.status === 'approved' || s.storedGis))
     if (persona === 'RELIABILITY') return segments.filter(s => s.registrationSite === tw && (s.status === 'approved' || s.storedRel))
     return []
   }
@@ -1364,7 +1462,7 @@ export default function App() {
   }
 
   const usesUpdates = workflow === 'SC11'
-  const usesAsBuilt = workflow === 'SC04'
+  const usesAsBuilt = workflow === 'SC04' || workflow === 'SC05'
 
   // Segments are ENG's, and only SC01 concerns the design leg.
   const showSegments = workflow === 'SC01' && persona === 'ENG'
@@ -1416,15 +1514,18 @@ export default function App() {
       if (!ids.length) { flash('Select validated segments to approve'); return }
       setSegments(prev => prev.map(s => ids.includes(s.uuid) ? { ...s, status: 'approved' } : s))
       setSelected(new Set())
-      flash(`${ids.length} segment(s) approved → MMS & Reliability`)
+      flash(`${ids.length} segment(s) approved → TAMS, ESRI & Reliability`)
       return
     }
 
     if (action === 'STORE ASSETS') {
       const ids = selIds.filter(id => segments.find(s => s.uuid === id)?.status === 'approved')
       if (!ids.length) { flash('Select approved segments to store'); return }
-      if (persona === 'MMS') setSegments(prev => prev.map(s => ids.includes(s.uuid) ? { ...s, storedMms: true } : s))
-      else setSegments(prev => prev.map(s => ids.includes(s.uuid) ? { ...s, storedRel: true } : s))
+      // Explicit per-persona flags: this was an if/else that treated anything
+      // not MMS as Reliability, so a third O&M consumer would silently have
+      // written to REL's records.
+      const storeField = persona === 'MMS' ? 'storedMms' : persona === 'GIS' ? 'storedGis' : 'storedRel'
+      setSegments(prev => prev.map(s => ids.includes(s.uuid) ? { ...s, [storeField]: true } : s))
       setSelected(new Set())
       flash(`${ids.length} segment(s) stored as assets`)
       return
@@ -1494,7 +1595,7 @@ export default function App() {
       setNewAbIdx(i => i + 1)
       const uuid = makeUuid()
       const serial = `SN-${tmpl.equipmentTag.replace(/[^A-Z0-9]/g, '')}-${Math.floor(10000 + Math.random() * 90000)}`
-      setAsBuilt(prev => [...prev, { uuid, equipmentTag: tmpl.equipmentTag, description: tmpl.description, equipmentClass: tmpl.equipmentClass, manufacturer: tmpl.manufacturer, modelNumber: tmpl.modelNumber, serialNumber: serial, installationSite: activeTwin.shortName, installDate: now().slice(0, 10), created: now(), status: 'draft', registeredOm: false }])
+      setAsBuilt(prev => [...prev, { uuid, equipmentTag: tmpl.equipmentTag, description: tmpl.description, equipmentClass: tmpl.equipmentClass, manufacturer: tmpl.manufacturer, modelNumber: tmpl.modelNumber, serialNumber: serial, installationSite: activeTwin.shortName, installDate: now().slice(0, 10), created: now(), status: 'draft', registeredOm: false, omMms: false, omRel: false, omGis: false }])
       flash(`As-built record ${tmpl.equipmentTag} created`)
       return
     }
@@ -1518,11 +1619,39 @@ export default function App() {
     }
   }
 
+  // SC05 — AR releases registered assets, then each O&M system takes them up.
+  // All three consumers share one STORE ASSETS action and the persona decides
+  // which flag it sets, mirroring how SC02 handles its three O&M consumers.
+  function handleSC05(action: string) {
+    if (!activeTwin) return
+    const selIds = [...selected]
+
+    if (action === 'PUBLISH TO O&M') {
+      const ids = selIds.filter(id => asBuilt.find(a => a.uuid === id)?.status === 'registered')
+      if (!ids.length) { flash('Select registered assets to publish'); return }
+      setAsBuilt(prev => prev.map(a => ids.includes(a.uuid) ? { ...a, status: 'om_published' } : a))
+      setSelected(new Set())
+      flash(`${ids.length} asset(s) published → O&M`)
+      return
+    }
+
+    if (action === 'STORE ASSETS') {
+      const ids = selIds.filter(id => asBuilt.find(a => a.uuid === id)?.status === 'om_published')
+      if (!ids.length) { flash('Select published assets to store'); return }
+      const key = persona === 'MMS' ? 'omMms' : persona === 'RELIABILITY' ? 'omRel' : 'omGis'
+      setAsBuilt(prev => prev.map(a => ids.includes(a.uuid) ? { ...a, [key]: true } : a))
+      setSelected(new Set())
+      flash(`${ids.length} asset(s) stored in ${personaAlias(persona)}`)
+      return
+    }
+  }
+
   function handleAction(action: string) {
     // SC02 continues the same segment lifecycle SC01 starts, so the mock inbox
     // transitions live in the one handler rather than being duplicated.
     if (workflow === 'SC01' || workflow === 'SC02') handleSC01(action)
     else if (workflow === 'SC11') handleSC11(action)
+    else if (workflow === 'SC05') handleSC05(action)
     else handleSC04(action)
   }
 
@@ -1533,21 +1662,22 @@ export default function App() {
 
   function inboxLabel() {
     if (workflow === 'SC01') {
-      if (persona === 'ENG') return 'ALL SEGMENTS · AUTHORED BY ENG'
-      return 'SEGMENTS PENDING REVIEW FROM ENG'
+      if (persona === 'ENG') return 'ALL SEGMENTS · AUTHORED BY BIC'
+      return 'SEGMENTS PENDING REVIEW FROM BIC'
     }
     if (workflow === 'SC02') {
       if (persona === 'REG') return 'PROPOSALS AWAITING STEWARDSHIP DECISION'
-      if (persona === 'MMS') return 'APPROVED LOCATIONS · MMS INBOX'
+      if (persona === 'MMS') return 'APPROVED LOCATIONS · TAMS INBOX'
+      if (persona === 'GIS') return 'APPROVED LOCATIONS · ESRI INBOX'
       return 'SEGMENT DATA · RELIABILITY INBOX'
     }
     if (workflow === 'SC04') {
-      if (persona === 'ENG') return 'AS-BUILT ASSETS · AUTHORED BY ENG'
-      if (persona === 'CONSTRUCT') return 'AS-BUILT DATA FROM ENG · CONSTRUCT INBOX'
-      return 'CONSTRUCTED ASSETS · REG-ASSET INBOX'
+      if (persona === 'ENG') return 'AS-BUILT ASSETS · AUTHORED BY BIC'
+      if (persona === 'CONSTRUCT') return 'AS-BUILT DATA FROM BIC · SYNCHRO INBOX'
+      return 'CONSTRUCTED ASSETS · AR INBOX'
     }
-    if (persona === 'MMS') return 'ASSET UPDATES · MMS AUTHORED'
-    return 'INCOMING ASSET UPDATES FROM MMS'
+    if (persona === 'MMS') return 'ASSET UPDATES · TAMS AUTHORED'
+    return 'INCOMING ASSET UPDATES FROM TAMS'
   }
 
   function sidebarCount(px: typeof PERSONAS[0]): number {
@@ -1555,12 +1685,18 @@ export default function App() {
       if (px.id === 'ENG') return segments.length
       if (px.id === 'REG') return segments.filter(s => s.status === 'published' || s.status === 'validated').length
       if (px.id === 'MMS') return segments.filter(s => s.status === 'approved' || s.storedMms).length
+      if (px.id === 'GIS') return segments.filter(s => s.status === 'approved' || s.storedGis).length
       return segments.filter(s => s.status === 'approved' || s.storedRel).length
+    }
+    if (workflow === 'SC05') {
+      const registered = asBuilt.filter(a => a.status === 'registered' || a.status === 'om_published')
+      if (px.id === 'REG_ASSET') return registered.length
+      return registered.filter(a => a.status === 'om_published').length
     }
     if (workflow === 'SC04') {
       if (px.id === 'ENG') return asBuilt.length
       if (px.id === 'CONSTRUCT') return asBuilt.filter(a => a.status === 'eng_published' || a.status === 'construct_published').length
-      return asBuilt.filter(a => a.status === 'construct_published' || a.status === 'registered').length
+      return asBuilt.filter(a => a.status === 'construct_published' || a.status === 'registered' || a.status === 'om_published').length
     }
     if (px.id === 'MMS') return updates.length
     if (px.id === 'RELIABILITY') return updates.filter(u => u.status !== 'pending').length
@@ -1580,7 +1716,7 @@ export default function App() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.1em', marginRight: 4 }}>WORKFLOW</span>
-          {(['SC01', 'SC02', 'SC04', 'SC11'] as WorkflowId[]).map(wf => (
+          {(['SC01', 'SC02', 'SC04', 'SC05', 'SC11'] as WorkflowId[]).map(wf => (
             <button
               key={wf}
               onClick={() => {
@@ -1671,8 +1807,8 @@ export default function App() {
               <button key={px.id} onClick={() => { setPersona(px.id); setSelected(new Set()) }}
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 18px', background: isActive ? px.dimBg : 'transparent', borderTop: 'none', borderRight: 'none', borderBottom: 'none', borderLeft: `3px solid ${isActive ? px.accent : 'transparent'}`, cursor: 'pointer', width: '100%', textAlign: 'left', transition: 'all 0.13s' }}>
                 <div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 600, color: isActive ? px.accent : 'var(--text-secondary)', letterSpacing: '0.08em', marginBottom: 2 }}>{px.label}</div>
-                  <div style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.3 }}>{px.fullLabel}</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 600, color: isActive ? px.accent : 'var(--text-secondary)', letterSpacing: '0.08em', marginBottom: 2 }}>{px.alias}</div>
+                  <div style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.3 }}>{px.aliasFull}</div>
                 </div>
                 <span style={{ background: isActive ? px.accent + '33' : 'var(--bg-hover)', color: isActive ? px.accent : 'var(--text-muted)', borderRadius: '3px', padding: '1px 6px', fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 600, minWidth: 22, textAlign: 'center' }}>
                   {sidebarCount(px)}
@@ -1689,7 +1825,7 @@ export default function App() {
                 <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 6, opacity: step.persona === persona ? 1 : 0.4 }}>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: '8px', color, fontWeight: 700, minWidth: 14, marginTop: 1 }}>{step.num}</div>
                   <div>
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '8px', color, letterSpacing: '0.06em' }}>{step.persona}</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '8px', color, letterSpacing: '0.06em' }}>{personaAlias(step.persona)}</div>
                     <div style={{ fontSize: '9px', color: 'var(--text-muted)', lineHeight: 1.3 }}>{step.label}</div>
                   </div>
                 </div>
@@ -1703,8 +1839,8 @@ export default function App() {
           <div style={{ padding: '16px 28px', background: 'var(--bg-surface)', borderBottom: `1px solid ${p.borderColor}`, display: 'flex', alignItems: 'center', gap: 20, flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div style={{ width: 8, height: 8, borderRadius: '50%', background: p.accent, boxShadow: `0 0 7px ${p.accent}` }} />
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: p.accent, letterSpacing: '0.12em' }}>{p.label}</span>
-              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>— {p.fullLabel}</span>
+              <span title={`${p.label} — ${p.fullLabel}`} style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: p.accent, letterSpacing: '0.12em' }}>{p.alias}</span>
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>— {p.aliasFull}</span>
             </div>
             <div style={{ marginLeft: 'auto' }}>
               <PipelineBanner steps={steps} activePersona={persona} />
@@ -1715,7 +1851,7 @@ export default function App() {
             {mySteps.length > 0 && (
               <section>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.14em', marginBottom: 10 }}>
-                  WORKFLOW STEPS — {p.label}
+                  WORKFLOW STEPS — {p.alias}
                 </div>
                 <StepsPanel steps={steps} persona={persona} accent={p.accent} dimBg={p.dimBg} borderColor={p.borderColor} onAction={handleAction} selectedCount={selCount} />
               </section>
@@ -1767,7 +1903,7 @@ export default function App() {
             {showSegments && (
               <section>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.14em', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span>ENG SEGMENTS</span>
+                  <span>BIC SEGMENTS</span>
                   <span style={{ background: p.dimBg, color: p.accent, padding: '1px 8px', borderRadius: '3px', fontWeight: 600 }}>
                     {visibleSegments.length} OF {engSegments.length}
                   </span>
@@ -1874,7 +2010,7 @@ export default function App() {
                 {usesUpdates
                   ? <UpdateTable updates={ibUpds} selected={selected} onToggle={toggleItem} onToggleAll={toggleAll} accent={p.accent} dimBg={p.dimBg} />
                   : usesAsBuilt
-                  ? <AsBuiltTable assets={ibAb} selected={selected} onToggle={toggleItem} onToggleAll={toggleAll} accent={p.accent} dimBg={p.dimBg} />
+                  ? <AsBuiltTable assets={ibAb} selected={selected} onToggle={toggleItem} onToggleAll={toggleAll} accent={p.accent} dimBg={p.dimBg} showOm={workflow === 'SC05'} />
                   : <SegmentTable segments={ibSegs} selected={selected} onToggle={toggleItem} onToggleAll={toggleAll} accent={p.accent} dimBg={p.dimBg} />
                 }
               </div>
