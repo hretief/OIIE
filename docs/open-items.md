@@ -41,7 +41,8 @@ unresolved.
 
 ## Latency of scoped MMS reads
 
-**Status:** diagnosed, not fixed. Awaiting a decision. Full evidence in DR-010.
+**Status:** diagnosed, not fixed. Deferred by the user on 2026-08-14 to be
+picked up later. Full evidence and ruled-out causes in DR-010.
 
 A scoped `/admin/mms/locations?twin=…` takes ~1.9s to return 9 rows; the same
 endpoint unscoped returns 13 rows in ~450ms. The cause is not the MMS table or
@@ -53,11 +54,30 @@ hardcoded 2s Service Bus receive timeout in
 var recv = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(2), ct);
 ```
 
-Three options are set out in DR-010. The preferred one — making the timeout
-configurable and using a short wait only on the consumer-request path — is not
-a local change: it touches the separately deployed `ISBMProvider` and needs a
-redeploy, so it was left for the user to decide rather than actioned.
+### Where to start
 
-Do not "fix" this by caching the equivalence set without reading DR-008 and
-DR-010 first. That would reintroduce the bug where a successfully related twin
-reads as unrelated.
+`PeekNextAsync` is the only receive call site in the provider, so the change is
+small in size but not in blast radius. The 2s wait is *correct* for genuine
+asynchronous consumers — `InboxPump` and `IsbmBodListener` long-poll on purpose,
+and shortening it globally turns their efficient blocking reads into a busy spin
+against Service Bus, raising cost and throttling risk.
+
+So the shape of the fix is a per-call wait, not a smaller constant:
+
+1. Thread a receive timeout through `PeekNextAsync` (config-backed, defaulting
+   to the current 2s so subscriber behaviour is unchanged).
+2. Pass a short wait only on the consumer-request read path, which is
+   synchronous request/response and has a caller waiting on it.
+3. Redeploy `ISBMProvider`. This cannot be validated locally, which is the main
+   reason it was not done in the same session as the diagnosis.
+
+Re-measure with the timings above as the baseline: unscoped ~450ms is the floor,
+since it does no ISBM round trip at all.
+
+### Do not
+
+Cache the equivalence set to dodge the round trip without reading DR-008 and
+DR-010 first. It looks like the obvious shortcut and it reintroduces the bug
+where a successfully related twin reads as unrelated — the CIRID is cacheable,
+the equivalence set is not, because MMS reads `OWNER_ID` out of it and has
+nowhere local to store one.
