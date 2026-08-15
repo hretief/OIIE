@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import * as api from './api'
+import * as itwin from './itwin'
 import * as auth from './auth'
 import type { CurrentUser } from './auth'
 
@@ -34,27 +35,55 @@ function initialsOf(name: string): string {
 // ─── iTwin registry ───────────────────────────────────────────────────────────
 
 /**
- * Twins come from the sandbox (GET /admin/eng/twins), not from a list here.
+ * The asset iTwins the banner shows, by their platform Number.
  *
- * The API calls them { id, code, name }; these screens were written against
- * { uuid, shortName, fullName } and SC11/SC04 still match on shortName, so the
- * shape is mapped once here rather than renamed throughout.
+ * Restricting to the districts this sandbox models keeps the context bar
+ * readable and stops a twin that has no participant behind it from being
+ * selectable at all.
+ *
+ * 7200 is here because it owns 9 of the 13 seeded inventory rows. Without it the
+ * banner cannot reach most of the sample data, which reads as an empty demo
+ * rather than as a filtered one.
  */
-function toITwin(twin: api.ITwin): ITwin {
+const BANNER_TWIN_NUMBERS = new Set([
+  '7000', '7200', '8300', '9100', '9200', '9300', '9400', '9600', '9700', '9800',
+])
+
+/**
+ * The platform names the fields differently to these screens -- number is the
+ * short code and displayName the friendly name, against { uuid, shortName,
+ * fullName } here, which SC11/SC04 still match on -- so the shape is mapped
+ * once rather than renamed throughout.
+ */
+
+/**
+ * Whether a twin belongs in the context bar.
+ *
+ * Only the number is checked: the twins are already fetched with subClass=Asset,
+ * so everything reaching here is an asset twin and re-checking the
+ * classification client-side would only risk disagreeing with the platform over
+ * a field it already filtered on.
+ */
+function isBannerTwin(twin: itwin.ITwinSummary): boolean {
+  const number = twin.number?.trim()
+  return !!number && BANNER_TWIN_NUMBERS.has(number)
+}
+
+function summaryToITwin(twin: itwin.ITwinSummary): ITwin {
   return {
     uuid: twin.id,
-    // Code is optional server-side. Falling back to a short id keeps the twin
-    // selectable rather than rendering a blank button.
-    shortName: twin.code || twin.id.slice(0, 8),
-    fullName: twin.name || twin.description || twin.code || twin.id,
+    // Both names are optional server-side. Falling back to a short id keeps the
+    // twin selectable rather than rendering a blank button.
+    shortName: twin.number || twin.displayName || twin.id.slice(0, 8),
+    fullName: twin.displayName || twin.number || twin.id,
   }
 }
 
 type WorkflowId = 'SC01' | 'SC02' | 'SC11' | 'SC04' | 'SC05'
-type PersonaId = 'ENG' | 'REG' | 'MMS' | 'RELIABILITY' | 'CONSTRUCT' | 'REG_ASSET' | 'GIS'
+type PersonaId = 'ENG' | 'REG' | 'MMS' | 'CMS' | 'CONSTRUCT' | 'REG_ASSET' | 'GIS'
 
 // SC01 — Segment lifecycle
-type SegmentStatus = 'draft' | 'published' | 'validated' | 'approved' | 'stored_mms' | 'stored_rel'
+type SegmentStatus = 'draft' | 'published' | 'validated' | 'approved' | 'stored_mms' | 'stored_cms'
 
 interface Segment {
   uuid: string
@@ -65,7 +94,7 @@ interface Segment {
   created: string
   status: SegmentStatus
   storedMms: boolean
-  storedRel: boolean
+  storedCms: boolean
   storedGis: boolean
 }
 
@@ -89,12 +118,12 @@ interface AsBuiltAsset {
   // rather than one "published" bit, for the same reason segments carry three:
   // the demo has to show each system taking it up independently.
   omMms: boolean
-  omRel: boolean
+  omCms: boolean
   omGis: boolean
 }
 
 // SC11 — Asset update lifecycle
-type UpdateStatus = 'pending' | 'published' | 'rel_updated' | 'reg_updated'
+type UpdateStatus = 'pending' | 'published' | 'cms_updated' | 'reg_updated'
 
 interface AssetUpdate {
   id: string
@@ -106,7 +135,7 @@ interface AssetUpdate {
   installedBy: string
   installedAt: string
   status: UpdateStatus
-  relUpdated: boolean
+  cmsUpdated: boolean
   regUpdated: boolean
 }
 
@@ -140,8 +169,9 @@ const PERSONAS: {
   { id: 'ENG', label: 'ENG', fullLabel: 'Engineering Design', alias: 'BIC', aliasFull: 'Infrastructure Cloud', accent: '#3b82f6', dimBg: 'rgba(59,130,246,0.12)', glowBg: 'rgba(59,130,246,0.25)', borderColor: 'rgba(59,130,246,0.4)' },
   { id: 'REG', label: 'REG-LOCATION', fullLabel: 'Functional Location Registry', alias: 'EIS', aliasFull: 'Engineering Information System', accent: '#f59e0b', dimBg: 'rgba(245,158,11,0.12)', glowBg: 'rgba(245,158,11,0.25)', borderColor: 'rgba(245,158,11,0.4)' },
   { id: 'MMS', label: 'MMS', fullLabel: 'Maintenance Management System', alias: 'TAMS', aliasFull: 'Transportation Asset Management System', accent: '#10b981', dimBg: 'rgba(16,185,129,0.12)', glowBg: 'rgba(16,185,129,0.25)', borderColor: 'rgba(16,185,129,0.4)' },
-  // REL keeps its own name: the client had no separate application for it.
-  { id: 'RELIABILITY', label: 'REL', fullLabel: 'Reliability Engineering', alias: 'REL', aliasFull: 'Reliability Engineering', accent: '#a78bfa', dimBg: 'rgba(167,139,250,0.12)', glowBg: 'rgba(167,139,250,0.25)', borderColor: 'rgba(167,139,250,0.4)' },
+  // CMS keeps its canonical name: the client had no separate application for it,
+  // so the demo alias and the canonical term are the same.
+  { id: 'CMS', label: 'CMS', fullLabel: 'Condition Monitoring System', alias: 'CMS', aliasFull: 'Condition Monitoring System', accent: '#a78bfa', dimBg: 'rgba(167,139,250,0.12)', glowBg: 'rgba(167,139,250,0.25)', borderColor: 'rgba(167,139,250,0.4)' },
   { id: 'CONSTRUCT', label: 'CONSTRUCT', fullLabel: 'Construction Management System', alias: 'SYNCHRO', aliasFull: 'Construction Management System', accent: '#fb923c', dimBg: 'rgba(251,146,60,0.12)', glowBg: 'rgba(251,146,60,0.25)', borderColor: 'rgba(251,146,60,0.4)' },
   { id: 'REG_ASSET', label: 'REG-ASSET', fullLabel: 'O&M Asset Registry', alias: 'AR', aliasFull: 'O&M Asset Registry', accent: '#22d3ee', dimBg: 'rgba(34,211,238,0.12)', glowBg: 'rgba(34,211,238,0.25)', borderColor: 'rgba(34,211,238,0.4)' },
   // GIS takes part in no workflow step yet, so it will not appear in the sidebar
@@ -183,13 +213,13 @@ const SC01_STEPS: WorkflowStep[] = [
 // about what operations is allowed to see. Approval mints location codes, and
 // only then can the design travel on.
 //
-// REL is reached over a different channel from MMS, not the same one. REG-LOCATION
+// CMS is reached over a different channel from MMS, not the same one. REG-LOCATION
 // publishes to /OandM (engineering provisioning, ISO18435 D0.2) which MMS
-// subscribes to; om-reliability subscribes to /OandM-Events (operational events,
+// subscribes to; cms subscribes to /OandM-Events (operational events,
 // D1.3) which MMS publishes. Keeping the two apart is what stops one bus path
 // merging two distinct information domains.
 //
-// GIS sits with MMS on /OandM rather than with REL on /OandM-Events. It consumes
+// GIS sits with MMS on /OandM rather than with CMS on /OandM-Events. It consumes
 // the approved location itself — the spatial extent of a segment is provisioning
 // data, settled at approval — not the operational events MMS goes on to raise
 // about it. Same channel as MMS, therefore, and for the same reason.
@@ -200,15 +230,15 @@ const SC02_STEPS: WorkflowStep[] = [
   { num: 4, persona: 'MMS',         label: 'Store as Assets',       description: 'Commit locations as TAMS functional location records',     action: 'STORE ASSETS' },
   { num: 5, persona: 'GIS',         label: 'Receive Segments',      description: 'Approved locations arrive on the O&M channel' },
   { num: 6, persona: 'GIS',         label: 'Store as Features',     description: 'Commit locations as ESRI geospatial features',              action: 'STORE ASSETS' },
-  { num: 7, persona: 'RELIABILITY', label: 'Receive Segments',      description: 'Segment data reaches reliability via the O&M events channel' },
-  { num: 8, persona: 'RELIABILITY', label: 'Store as Assets',       description: 'Register segments in Reliability asset records',          action: 'STORE ASSETS' },
+  { num: 7, persona: 'CMS', label: 'Receive Segments',      description: 'Segment data reaches CMS via the O&M events channel' },
+  { num: 8, persona: 'CMS', label: 'Store as Assets',       description: 'Register segments in CMS asset records',          action: 'STORE ASSETS' },
 ]
 
 const SC11_STEPS: WorkflowStep[] = [
   { num: 1, persona: 'MMS',         label: 'Install Asset',         description: 'Install a physical asset into a segment record',          action: 'INSTALL ASSET' },
   { num: 2, persona: 'MMS',         label: 'Publish Update',        description: 'Broadcast asset installation to subscribers',             action: 'PUBLISH UPDATE' },
-  { num: 3, persona: 'RELIABILITY', label: 'Receive Update',        description: 'Incoming TAMS asset installation update' },
-  { num: 4, persona: 'RELIABILITY', label: 'Update Records',        description: 'Update own records with fitted asset + serial number',    action: 'UPDATE RECORDS' },
+  { num: 3, persona: 'CMS', label: 'Receive Update',        description: 'Incoming TAMS asset installation update' },
+  { num: 4, persona: 'CMS', label: 'Update Records',        description: 'Update own records with fitted asset + serial number',    action: 'UPDATE RECORDS' },
   { num: 5, persona: 'REG',         label: 'Receive Update',        description: 'Incoming TAMS asset installation update' },
   { num: 6, persona: 'REG',         label: 'Update Segment Records', description: 'Update segment records with fitted asset data',          action: 'UPDATE RECORDS' },
 ]
@@ -228,8 +258,8 @@ const SC04_STEPS: WorkflowStep[] = [
 //
 // The three consumers are deliberately the same trio as SC02, because this is the
 // same handover shape one level down: SC02 hands over the location a thing sits
-// in, SC05 hands over the serialised thing itself. TAMS maintains it, REL builds
-// its reliability history, ESRI places it on the map.
+// in, SC05 hands over the serialised thing itself. TAMS maintains it, CMS builds
+// its condition history, ESRI places it on the map.
 //
 // Only assets AR has actually registered can travel — the guard in handleSC05
 // enforces that, so the demo cannot skip SC04 and still show a result here.
@@ -238,8 +268,8 @@ const SC05_STEPS: WorkflowStep[] = [
   { num: 2, persona: 'REG_ASSET', label: 'Publish to O&M',          description: 'Release registered assets to the O&M systems',            action: 'PUBLISH TO O&M' },
   { num: 3, persona: 'MMS',       label: 'Receive Asset Data',      description: 'Registered assets arrive on the O&M channel' },
   { num: 4, persona: 'MMS',       label: 'Store as Assets',         description: 'Commit assets as TAMS maintainable equipment records', action: 'STORE ASSETS' },
-  { num: 5, persona: 'RELIABILITY', label: 'Receive Asset Data',    description: 'Asset data reaches reliability via the O&M events channel' },
-  { num: 6, persona: 'RELIABILITY', label: 'Store as Assets',       description: 'Register assets in Reliability asset records',           action: 'STORE ASSETS' },
+  { num: 5, persona: 'CMS', label: 'Receive Asset Data',    description: 'Asset data reaches CMS via the O&M events channel' },
+  { num: 6, persona: 'CMS', label: 'Store as Assets',       description: 'Register assets in CMS asset records',           action: 'STORE ASSETS' },
   { num: 7, persona: 'GIS',       label: 'Receive Asset Data',      description: 'Registered assets arrive on the O&M channel' },
   { num: 8, persona: 'GIS',       label: 'Store as Features',       description: 'Commit assets as ESRI geospatial features',              action: 'STORE ASSETS' },
 ]
@@ -283,15 +313,15 @@ function makeUuid() {
 }
 
 const SEED_SEGMENTS: Segment[] = [
-  { uuid: 'a1b2c3d4-0001-4e5f-8a9b-c0d1e2f30001', shortName: 'PUMP-TRAIN-A',    fullName: 'Primary Pump Train — Section A',           segmentType: 'Rotating Equipment', registrationSite: 'RTM-REFINERY', created: '2026-08-10 09:14', status: 'draft',     storedMms: false, storedRel: false, storedGis: false },
-  { uuid: 'a1b2c3d4-0002-4e5f-8a9b-c0d1e2f30002', shortName: 'VALVE-CTRL-3B',   fullName: 'Control Valve Assembly — Loop 3B',         segmentType: 'Control Element',    registrationSite: 'RTM-REFINERY', created: '2026-08-10 10:32', status: 'draft',     storedMms: false, storedRel: false, storedGis: false },
-  { uuid: 'a1b2c3d4-0003-4e5f-8a9b-c0d1e2f30003', shortName: 'COMP-STAGE-2',    fullName: 'Compressor Stage 2 — High Pressure Train', segmentType: 'Rotating Equipment', registrationSite: 'HBG-CHEMICALS', created: '2026-08-11 08:55', status: 'published', storedMms: false, storedRel: false, storedGis: false },
-  { uuid: 'a1b2c3d4-0004-4e5f-8a9b-c0d1e2f30004', shortName: 'HEX-SHELL-07',    fullName: 'Shell & Tube Heat Exchanger — Unit 07',   segmentType: 'Static Equipment',   registrationSite: 'HBG-CHEMICALS', created: '2026-08-11 14:10', status: 'validated', storedMms: false, storedRel: false, storedGis: false },
-  { uuid: 'a1b2c3d4-0005-4e5f-8a9b-c0d1e2f30005', shortName: 'TANK-STORAGE-F',  fullName: 'Floating Roof Storage Tank — Farm F',     segmentType: 'Static Equipment',   registrationSite: 'BRG-OFFSHORE', created: '2026-08-12 07:20', status: 'approved',  storedMms: false, storedRel: false, storedGis: false },
+  { uuid: 'a1b2c3d4-0001-4e5f-8a9b-c0d1e2f30001', shortName: 'PUMP-TRAIN-A',    fullName: 'Primary Pump Train — Section A',           segmentType: 'Rotating Equipment', registrationSite: 'RTM-REFINERY', created: '2026-08-10 09:14', status: 'draft',     storedMms: false, storedCms: false, storedGis: false },
+  { uuid: 'a1b2c3d4-0002-4e5f-8a9b-c0d1e2f30002', shortName: 'VALVE-CTRL-3B',   fullName: 'Control Valve Assembly — Loop 3B',         segmentType: 'Control Element',    registrationSite: 'RTM-REFINERY', created: '2026-08-10 10:32', status: 'draft',     storedMms: false, storedCms: false, storedGis: false },
+  { uuid: 'a1b2c3d4-0003-4e5f-8a9b-c0d1e2f30003', shortName: 'COMP-STAGE-2',    fullName: 'Compressor Stage 2 — High Pressure Train', segmentType: 'Rotating Equipment', registrationSite: 'HBG-CHEMICALS', created: '2026-08-11 08:55', status: 'published', storedMms: false, storedCms: false, storedGis: false },
+  { uuid: 'a1b2c3d4-0004-4e5f-8a9b-c0d1e2f30004', shortName: 'HEX-SHELL-07',    fullName: 'Shell & Tube Heat Exchanger — Unit 07',   segmentType: 'Static Equipment',   registrationSite: 'HBG-CHEMICALS', created: '2026-08-11 14:10', status: 'validated', storedMms: false, storedCms: false, storedGis: false },
+  { uuid: 'a1b2c3d4-0005-4e5f-8a9b-c0d1e2f30005', shortName: 'TANK-STORAGE-F',  fullName: 'Floating Roof Storage Tank — Farm F',     segmentType: 'Static Equipment',   registrationSite: 'BRG-OFFSHORE', created: '2026-08-12 07:20', status: 'approved',  storedMms: false, storedCms: false, storedGis: false },
 ]
 
 const SEED_UPDATES: AssetUpdate[] = [
-  { id: 'UPD-001', segmentUuid: 'a1b2c3d4-0005-4e5f-8a9b-c0d1e2f30005', segmentShortName: 'TANK-STORAGE-F', iTwinShortName: 'BRG-OFFSHORE', assetType: 'Level Transmitter', serialNumber: 'SN-LT-20847', installedBy: 'R. Torres', installedAt: '2026-08-12 11:05', status: 'pending', relUpdated: false, regUpdated: false },
+  { id: 'UPD-001', segmentUuid: 'a1b2c3d4-0005-4e5f-8a9b-c0d1e2f30005', segmentShortName: 'TANK-STORAGE-F', iTwinShortName: 'BRG-OFFSHORE', assetType: 'Level Transmitter', serialNumber: 'SN-LT-20847', installedBy: 'R. Torres', installedAt: '2026-08-12 11:05', status: 'pending', cmsUpdated: false, regUpdated: false },
 ]
 
 
@@ -303,15 +333,15 @@ const ASSET_TEMPLATES = [
 ]
 
 const SEED_ASBUILT: AsBuiltAsset[] = [
-  { uuid: 'b2c3d4e5-0001-4f6a-9b0c-d1e2f3a40001', equipmentTag: 'P-1001A', description: 'Centrifugal Pump — Cooling Water Service A', equipmentClass: 'Pump', manufacturer: 'Flowserve', modelNumber: 'DVSH-300', serialNumber: 'FLW-2026-00412', installationSite: 'RTM-REFINERY', installDate: '2026-07-15', created: '2026-08-05 10:00', status: 'draft', registeredOm: false, omMms: false, omRel: false, omGis: false },
-  { uuid: 'b2c3d4e5-0002-4f6a-9b0c-d1e2f3a40002', equipmentTag: 'E-2003', description: 'Shell & Tube Heat Exchanger — Feed Preheat', equipmentClass: 'Heat Exchanger', manufacturer: 'Alfa Laval', modelNumber: 'TS-6M', serialNumber: 'ALF-2026-00188', installationSite: 'HBG-CHEMICALS', installDate: '2026-07-22', created: '2026-08-06 09:30', status: 'eng_published', registeredOm: false, omMms: false, omRel: false, omGis: false },
-  { uuid: 'b2c3d4e5-0003-4f6a-9b0c-d1e2f3a40003', equipmentTag: 'K-3002', description: 'Reciprocating Compressor — Gas Injection', equipmentClass: 'Compressor', manufacturer: 'Burckhardt', modelNumber: 'L-B20H', serialNumber: 'BUC-2026-00073', installationSite: 'BRG-OFFSHORE', installDate: '2026-08-01', created: '2026-08-07 14:15', status: 'construct_published', registeredOm: false, omMms: false, omRel: false, omGis: false },
+  { uuid: 'b2c3d4e5-0001-4f6a-9b0c-d1e2f3a40001', equipmentTag: 'P-1001A', description: 'Centrifugal Pump — Cooling Water Service A', equipmentClass: 'Pump', manufacturer: 'Flowserve', modelNumber: 'DVSH-300', serialNumber: 'FLW-2026-00412', installationSite: 'RTM-REFINERY', installDate: '2026-07-15', created: '2026-08-05 10:00', status: 'draft', registeredOm: false, omMms: false, omCms: false, omGis: false },
+  { uuid: 'b2c3d4e5-0002-4f6a-9b0c-d1e2f3a40002', equipmentTag: 'E-2003', description: 'Shell & Tube Heat Exchanger — Feed Preheat', equipmentClass: 'Heat Exchanger', manufacturer: 'Alfa Laval', modelNumber: 'TS-6M', serialNumber: 'ALF-2026-00188', installationSite: 'HBG-CHEMICALS', installDate: '2026-07-22', created: '2026-08-06 09:30', status: 'eng_published', registeredOm: false, omMms: false, omCms: false, omGis: false },
+  { uuid: 'b2c3d4e5-0003-4f6a-9b0c-d1e2f3a40003', equipmentTag: 'K-3002', description: 'Reciprocating Compressor — Gas Injection', equipmentClass: 'Compressor', manufacturer: 'Burckhardt', modelNumber: 'L-B20H', serialNumber: 'BUC-2026-00073', installationSite: 'BRG-OFFSHORE', installDate: '2026-08-01', created: '2026-08-07 14:15', status: 'construct_published', registeredOm: false, omMms: false, omCms: false, omGis: false },
   // Already registered by AR, so SC05 can be demonstrated on its own without
   // first walking SC04 end to end. One per site, so the scenario has something
   // to show whichever site is selected.
-  { uuid: 'b2c3d4e5-0004-4f6a-9b0c-d1e2f3a40004', equipmentTag: 'P-1002B', description: 'Centrifugal Pump — Cooling Water Service B', equipmentClass: 'Pump', manufacturer: 'Flowserve', modelNumber: 'DVSH-300', serialNumber: 'FLW-2026-00519', installationSite: 'RTM-REFINERY', installDate: '2026-07-18', created: '2026-08-08 08:20', status: 'registered', registeredOm: true, omMms: false, omRel: false, omGis: false },
-  { uuid: 'b2c3d4e5-0005-4f6a-9b0c-d1e2f3a40005', equipmentTag: 'RX-0201', description: 'Jacketed Reactor — Polymerisation Train 2', equipmentClass: 'Vessel', manufacturer: 'ERGIL', modelNumber: 'JR-4500', serialNumber: 'ERG-2026-00231', installationSite: 'HBG-CHEMICALS', installDate: '2026-07-29', created: '2026-08-08 11:05', status: 'registered', registeredOm: true, omMms: false, omRel: false, omGis: false },
-  { uuid: 'b2c3d4e5-0006-4f6a-9b0c-d1e2f3a40006', equipmentTag: 'G-5001', description: 'Gas Turbine Generator — Main Power', equipmentClass: 'Turbine', manufacturer: 'Siemens Energy', modelNumber: 'SGT-400', serialNumber: 'SIE-2026-00094', installationSite: 'BRG-OFFSHORE', installDate: '2026-08-03', created: '2026-08-08 15:40', status: 'registered', registeredOm: true, omMms: false, omRel: false, omGis: false },
+  { uuid: 'b2c3d4e5-0004-4f6a-9b0c-d1e2f3a40004', equipmentTag: 'P-1002B', description: 'Centrifugal Pump — Cooling Water Service B', equipmentClass: 'Pump', manufacturer: 'Flowserve', modelNumber: 'DVSH-300', serialNumber: 'FLW-2026-00519', installationSite: 'RTM-REFINERY', installDate: '2026-07-18', created: '2026-08-08 08:20', status: 'registered', registeredOm: true, omMms: false, omCms: false, omGis: false },
+  { uuid: 'b2c3d4e5-0005-4f6a-9b0c-d1e2f3a40005', equipmentTag: 'RX-0201', description: 'Jacketed Reactor — Polymerisation Train 2', equipmentClass: 'Vessel', manufacturer: 'ERGIL', modelNumber: 'JR-4500', serialNumber: 'ERG-2026-00231', installationSite: 'HBG-CHEMICALS', installDate: '2026-07-29', created: '2026-08-08 11:05', status: 'registered', registeredOm: true, omMms: false, omCms: false, omGis: false },
+  { uuid: 'b2c3d4e5-0006-4f6a-9b0c-d1e2f3a40006', equipmentTag: 'G-5001', description: 'Gas Turbine Generator — Main Power', equipmentClass: 'Turbine', manufacturer: 'Siemens Energy', modelNumber: 'SGT-400', serialNumber: 'SIE-2026-00094', installationSite: 'BRG-OFFSHORE', installDate: '2026-08-03', created: '2026-08-08 15:40', status: 'registered', registeredOm: true, omMms: false, omCms: false, omGis: false },
 ]
 
 const NEW_ASBUILT_TEMPLATES = [
@@ -489,7 +519,7 @@ function Toast({ message, accent }: { message: string; accent: string }) {
 // duplicated inline in both, and SC04's CONSTRUCT and REG_ASSET were missing
 // from each copy, so those steps rendered with an undefined colour.
 const PERSONA_COLOR: Record<PersonaId, string> = {
-  ENG: '#3b82f6', REG: '#f59e0b', MMS: '#10b981', RELIABILITY: '#a78bfa', CONSTRUCT: '#fb923c', REG_ASSET: '#22d3ee', GIS: '#84cc16',
+  ENG: '#3b82f6', REG: '#f59e0b', MMS: '#10b981', CMS: '#a78bfa', CONSTRUCT: '#fb923c', REG_ASSET: '#22d3ee', GIS: '#84cc16',
 }
 
 /**
@@ -555,10 +585,10 @@ function StepsPanel({ steps, persona, accent, dimBg, borderColor, onAction, sele
 // ─── Inbox tables ─────────────────────────────────────────────────────────────
 
 const SEG_STATUS_COLOR: Record<SegmentStatus, string> = {
-  draft: '#6b7280', published: '#3b82f6', validated: '#f59e0b', approved: '#10b981', stored_mms: '#10b981', stored_rel: '#a78bfa',
+  draft: '#6b7280', published: '#3b82f6', validated: '#f59e0b', approved: '#10b981', stored_mms: '#10b981', stored_cms: '#a78bfa',
 }
 const SEG_STATUS_LABEL: Record<SegmentStatus, string> = {
-  draft: 'DRAFT', published: 'PUBLISHED', validated: 'VALIDATED', approved: 'APPROVED', stored_mms: 'STORED', stored_rel: 'STORED',
+  draft: 'DRAFT', published: 'PUBLISHED', validated: 'VALIDATED', approved: 'APPROVED', stored_mms: 'STORED', stored_cms: 'STORED',
 }
 
 // The sandbox's own segment lifecycle. Only three states, and only the engine
@@ -597,10 +627,10 @@ const AB_STATUS_LABEL: Record<AsBuiltStatus, string> = {
 }
 
 const UPD_STATUS_COLOR: Record<UpdateStatus, string> = {
-  pending: '#f59e0b', published: '#3b82f6', rel_updated: '#a78bfa', reg_updated: '#10b981',
+  pending: '#f59e0b', published: '#3b82f6', cms_updated: '#a78bfa', reg_updated: '#10b981',
 }
 const UPD_STATUS_LABEL: Record<UpdateStatus, string> = {
-  pending: 'PENDING', published: 'PUBLISHED', rel_updated: 'REL UPDATED', reg_updated: 'REG UPDATED',
+  pending: 'PENDING', published: 'PUBLISHED', cms_updated: 'CMS UPDATED', reg_updated: 'REG UPDATED',
 }
 
 function Checkbox({ checked, onToggle, accent }: { checked: boolean; onToggle: () => void; accent: string }) {
@@ -623,6 +653,71 @@ function TRow({ children, isSel, onToggle, dimBg }: { children: React.ReactNode;
 const TH = ({ children }: { children: string }) => (
   <th style={{ padding: '8px 8px', textAlign: 'left', fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.1em', fontWeight: 600, whiteSpace: 'nowrap' }}>{children}</th>
 )
+
+// ── Surviving a reload ───────────────────────────────────────────────────────
+//
+// Which workflow, persona and twin you are looking at is a place in the app, not
+// data. Losing it on F5 is disorienting mid-demo, so it is mirrored to
+// sessionStorage: per-tab, so two tabs can sit on different personas, and
+// cleared when the browser closes rather than lingering for weeks.
+//
+// Only navigational state belongs here. Fetched records are deliberately left
+// out: they would go stale against the sandbox and reload in moments anyway.
+const UI_STATE_PREFIX = 'oiie.ui.'
+
+function readPersisted<T>(key: string, fallback: T, isValid: (v: unknown) => boolean): T {
+  try {
+    const raw = sessionStorage.getItem(UI_STATE_PREFIX + key)
+    if (raw === null) return fallback
+
+    const parsed = JSON.parse(raw) as unknown
+    // Validated rather than trusted: a stored persona from an older build may no
+    // longer exist, and restoring it would leave the app on a blank screen with
+    // no obvious way back.
+    return isValid(parsed) ? (parsed as T) : fallback
+  } catch {
+    // Private-browsing modes and disabled storage both throw here. The layout
+    // simply falls back to defaults rather than taking the app down with it.
+    return fallback
+  }
+}
+
+function usePersistedState<T>(key: string, fallback: T, isValid: (v: unknown) => boolean) {
+  const [value, setValue] = useState<T>(() => readPersisted(key, fallback, isValid))
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(UI_STATE_PREFIX + key, JSON.stringify(value))
+    } catch {
+      // Persistence is a convenience; failing to save must never break the view.
+    }
+  }, [key, value])
+
+  return [value, setValue] as const
+}
+
+/**
+ * A coded MMS column: the friendly name with its underlying id kept alongside.
+ *
+ * MMS stores these as bare ids against reference tables, and operators work in
+ * both registers -- they read the name but quote the id. Three cases are
+ * distinguished rather than collapsed into one blank:
+ *
+ *   name + id   the normal resolved case
+ *   id, no name a dangling reference; the reference table has no such row, and
+ *               hiding it would silently misreport the data as empty
+ *   no id       genuinely unset, which is legitimate for a nullable column
+ */
+const CodedValue = ({ name, id }: { name: string | null; id: number | null }) => {
+  if (id === null) return <span style={{ color: 'var(--text-muted)' }}>—</span>
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5 }}>
+      {name ?? <span style={{ color: '#f59e0b' }}>UNRESOLVED</span>}
+      <span style={{ fontSize: '8px', color: 'var(--text-muted)' }}>#{id}</span>
+    </span>
+  )
+}
 
 function SegmentTable({ segments, selected, onToggle, onToggleAll, accent, dimBg }: { segments: Segment[]; selected: Set<string>; onToggle: (id: string) => void; onToggleAll: () => void; accent: string; dimBg: string }) {
   const allSel = segments.length > 0 && segments.every(s => selected.has(s.uuid))
@@ -1293,9 +1388,9 @@ function AsBuiltTable({ assets, selected, onToggle, onToggleAll, accent, dimBg, 
               {showOm && (
                 <td style={{ padding: '9px 8px', display: 'flex', gap: 4 }}>
                   {a.omMms && <Pill label="TAMS" color="#f59e0b" />}
-                  {a.omRel && <Pill label="REL" color="#a78bfa" />}
+                  {a.omCms && <Pill label="CMS" color="#a78bfa" />}
                   {a.omGis && <Pill label="ESRI" color="#34d399" />}
-                  {!a.omMms && !a.omRel && !a.omGis && <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>—</span>}
+                  {!a.omMms && !a.omCms && !a.omGis && <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>—</span>}
                 </td>
               )}
             </TRow>
@@ -1369,6 +1464,135 @@ function SignedOutScreen() {
 }
 
 /**
+ * The row of selectable twins in the context bar.
+ *
+ * Favorites are user-curated and unbounded, so the row can overflow on a narrow
+ * window in a way the original fixed list never did. Rather than restyle the
+ * bar, the tabs keep their exact appearance and scroll horizontally, with the
+ * paging arrows appearing only when there is genuinely something out of view.
+ * With a handful of favorites this renders identically to the old markup.
+ */
+function TwinCarousel({ twins, activeUuid, onSelect }: {
+  twins: ITwin[]
+  activeUuid: string | null
+  onSelect: (twin: ITwin) => void
+}) {
+  const scroller = useRef<HTMLDivElement | null>(null)
+  const [overflow, setOverflow] = useState({ left: false, right: false })
+
+  const sync = useCallback(() => {
+    const el = scroller.current
+    if (!el) return
+    // A pixel of slack: fractional scroll widths otherwise leave the right
+    // arrow enabled forever at the end of the track.
+    const max = el.scrollWidth - el.clientWidth
+    setOverflow({ left: el.scrollLeft > 1, right: el.scrollLeft < max - 1 })
+  }, [])
+
+  useEffect(() => {
+    const el = scroller.current
+    if (!el) return
+    sync()
+    // Overflow depends on the window width as much as on the twin count, so
+    // observe the element rather than only recomputing when the list changes.
+    const ro = new ResizeObserver(sync)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [sync, twins])
+
+  // Keep the selected twin visible when it is changed from elsewhere (the
+  // initial auto-select, for example) so the active tab is never off-screen.
+  useEffect(() => {
+    const el = scroller.current
+    if (!el || !activeUuid) return
+    const tab = el.querySelector(`[data-twin="${CSS.escape(activeUuid)}"]`)
+    tab?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [activeUuid])
+
+  function page(direction: -1 | 1) {
+    const el = scroller.current
+    if (!el) return
+    el.scrollBy({ left: direction * Math.max(el.clientWidth * 0.8, 160), behavior: 'smooth' })
+  }
+
+  if (twins.length === 0) return null
+
+  const arrow = (direction: -1 | 1, enabled: boolean) => (
+    <button
+      onClick={() => page(direction)}
+      disabled={!enabled}
+      aria-label={direction === -1 ? 'Scroll twins left' : 'Scroll twins right'}
+      style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        width: 20, height: '100%', flexShrink: 0,
+        background: 'transparent', border: 'none',
+        color: enabled ? 'var(--text-secondary)' : 'var(--text-muted)',
+        opacity: enabled ? 1 : 0.35,
+        cursor: enabled ? 'pointer' : 'default',
+        fontFamily: 'var(--font-mono)', fontSize: '11px',
+        transition: 'all 0.13s',
+      }}
+    >
+      {direction === -1 ? '‹' : '›'}
+    </button>
+  )
+
+  const hasOverflow = overflow.left || overflow.right
+
+  return (
+    <>
+      {hasOverflow && arrow(-1, overflow.left)}
+      <div
+        ref={scroller}
+        onScroll={sync}
+        style={{
+          display: 'flex', alignItems: 'center', height: '100%',
+          overflowX: 'auto', overflowY: 'hidden',
+          // The bar is only 40px tall, so a scrollbar would eat the tabs.
+          // Paging arrows and wheel/trackpad scrolling stand in for it.
+          scrollbarWidth: 'none',
+          minWidth: 0,
+        }}
+      >
+        {twins.map((tw, i) => {
+          const isActive = activeUuid === tw.uuid
+          return (
+            <button
+              key={tw.uuid}
+              data-twin={tw.uuid}
+              onClick={() => onSelect(tw)}
+              title={tw.fullName}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '0 16px',
+                height: '100%',
+                flexShrink: 0,
+                background: isActive ? 'rgba(255,255,255,0.05)' : 'transparent',
+                borderTop: 'none',
+                borderBottom: isActive ? '2px solid #3b82f6' : '2px solid transparent',
+                borderLeft: i === 0 ? '1px solid var(--border-subtle)' : 'none',
+                borderRight: '1px solid var(--border-subtle)',
+                cursor: 'pointer',
+                transition: 'all 0.13s',
+              }}
+            >
+              <div style={{ width: 6, height: 6, borderRadius: '50%', background: isActive ? '#3b82f6' : 'var(--text-muted)', flexShrink: 0, boxShadow: isActive ? '0 0 6px #3b82f6' : 'none', transition: 'all 0.13s' }} />
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 600, color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>{tw.shortName}</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '8px', color: 'var(--text-muted)', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>{tw.uuid.slice(0, 18)}…</div>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+      {hasOverflow && arrow(1, overflow.right)}
+    </>
+  )
+}
+
+/**
  * Decides whether anything is rendered at all.
  *
  * The app has no offline presence: an unauthenticated visitor is sent straight to
@@ -1429,10 +1653,20 @@ function Workspace({ user }: { user: CurrentUser }) {
   // rather than pretending a plant is selected.
   const [twins, setTwins] = useState<ITwin[]>([])
   const [activeTwin, setActiveTwin] = useState<ITwin | null>(null)
+  // The twin is persisted by id, not as an object: the list is fetched after the
+  // first render, so the selection has to be re-resolved against whatever the
+  // platform actually returns rather than restored from a stale copy.
+  const [persistedTwinId, setPersistedTwinId] = usePersistedState<string | null>(
+    'twinId', null, v => v === null || typeof v === 'string')
   const [twinsError, setTwinsError] = useState<string | null>(null)
+  // The unfiltered count, kept only to tell "no asset twins at all" apart from
+  // "none carrying a district number" in the empty state.
+  const [assetTwinCount, setAssetTwinCount] = useState(0)
   const [twinsLoading, setTwinsLoading] = useState(true)
-  const [workflow, setWorkflow] = useState<WorkflowId>('SC01')
-  const [persona, setPersona] = useState<PersonaId>('ENG')
+  const [workflow, setWorkflow] = usePersistedState<WorkflowId>(
+    'workflow', 'SC01', v => typeof v === 'string' && v in WORKFLOW_STEPS)
+  const [persona, setPersona] = usePersistedState<PersonaId>(
+    'persona', 'ENG', v => PERSONAS.some(x => x.id === v))
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [segments, setSegments] = useState<Segment[]>(SEED_SEGMENTS)
   const [updates, setUpdates] = useState<AssetUpdate[]>(SEED_UPDATES)
@@ -1447,6 +1681,16 @@ function Workspace({ user }: { user: CurrentUser }) {
   // OIIE ecosystem can see. Named engSegments because `segments` above is the
   // seeded mock list and the two must not be confused.
   const [engSegments, setEngSegments] = useState<api.Tag[]>([])
+  // What MMS actually holds for the selected twin. Distinct from the segment
+  // lifecycle above: these rows exist in LIGHT_SYSTEM_INVENTORY whether or not
+  // anything was ever handed over, so an empty segment list does not imply an
+  // empty repository.
+  const [mmsInventory, setMmsInventory] = useState<api.MmsInventory | null>(null)
+  const [mmsLoading, setMmsLoading] = useState(false)
+  const [mmsError, setMmsError] = useState<string | null>(null)
+  // Which light system's detail is open, keyed by LIGHT_SYSTEM_ID. Single-valued:
+  // opening one closes the other, so the grid stays scannable.
+  const [expandedLightSystem, setExpandedLightSystem] = useState<number | null>(null)
   const [engLoading, setEngLoading] = useState(false)
   const [engError, setEngError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -1486,13 +1730,19 @@ function Workspace({ user }: { user: CurrentUser }) {
   useEffect(() => {
     const abort = new AbortController()
 
-    api.listTwins(abort.signal)
+    // Asset twins from the platform, narrowed to the districts this sandbox
+    // models. Sourced from the tenant rather than from favorites so the banner
+    // reflects what exists rather than what the signed-in user has starred.
+    itwin.listITwins('Asset', abort.signal)
       .then(found => {
-        const mapped = found.map(toITwin)
+        const mapped = found.filter(isBannerTwin).map(summaryToITwin)
+        setAssetTwinCount(found.length)
         setTwins(mapped)
-        // Selecting the first twin makes the app usable immediately. Left
-        // unselected, every panel below would render empty and look broken.
-        setActiveTwin(current => current ?? mapped[0] ?? null)
+        // The previously selected twin wins if it is still in the list; otherwise
+        // the first, so the app is usable immediately. Left unselected, every
+        // panel below would render empty and look broken.
+        setActiveTwin(current =>
+          current ?? mapped.find(t => t.uuid === persistedTwinId) ?? mapped[0] ?? null)
         setTwinsError(null)
       })
       .catch(err => {
@@ -1504,7 +1754,16 @@ function Workspace({ user }: { user: CurrentUser }) {
       })
 
     return () => abort.abort()
+    // Deliberately mount-only. persistedTwinId is read for its initial value to
+    // restore the prior selection; re-running when it changes would fight the
+    // user's own clicks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Mirror the live selection back to storage so the next reload finds it.
+  useEffect(() => {
+    if (activeTwin) setPersistedTwinId(activeTwin.uuid)
+  }, [activeTwin, setPersistedTwinId])
 
   // ── Loading the segments ─────────────────────────────────────────────────
 
@@ -1537,6 +1796,42 @@ function Workspace({ user }: { user: CurrentUser }) {
     void refreshSegments(abort.signal)
     return () => abort.abort()
   }, [refreshSegments])
+
+  // ── Loading MMS's inventory ────────────────────────────────────────────────
+  //
+  // Fetched whenever MMS is the persona, for whichever twin is selected. The
+  // repository holds these rows independently of the handover workflows, so they
+  // are shown on their own terms rather than as the result of a scenario run.
+  const refreshMmsInventory = useCallback(async (signal?: AbortSignal) => {
+    if (!activeTwin) {
+      setMmsInventory(null)
+      return
+    }
+
+    setMmsLoading(true)
+
+    try {
+      const result = await api.listMmsLocations(activeTwin.uuid, signal)
+      if (signal?.aborted) return
+      setMmsInventory(result)
+      setMmsError(null)
+    } catch (err) {
+      if (signal?.aborted) return
+      setMmsError(err instanceof Error ? err.message : String(err))
+      // Cleared rather than left in place: stale rows under a new twin would
+      // read as that twin's inventory.
+      setMmsInventory(null)
+    } finally {
+      if (!signal?.aborted) setMmsLoading(false)
+    }
+  }, [activeTwin])
+
+  useEffect(() => {
+    if (persona !== 'MMS') return
+    const abort = new AbortController()
+    void refreshMmsInventory(abort.signal)
+    return () => abort.abort()
+  }, [persona, refreshMmsInventory])
 
   // Switching twins abandons any edit in progress. The segment being edited
   // belongs to the twin that was selected, and leaving it loaded would let a
@@ -1677,7 +1972,7 @@ function Workspace({ user }: { user: CurrentUser }) {
       // registered, and the O&M systems only see what AR has released.
       const registered = asBuilt.filter(a => a.installationSite === tw && (a.status === 'registered' || a.status === 'om_published'))
       if (persona === 'REG_ASSET') return registered
-      if (persona === 'MMS' || persona === 'RELIABILITY' || persona === 'GIS') return registered.filter(a => a.status === 'om_published')
+      if (persona === 'MMS' || persona === 'CMS' || persona === 'GIS') return registered.filter(a => a.status === 'om_published')
       return []
     }
     if (workflow !== 'SC04') return []
@@ -1694,7 +1989,7 @@ function Workspace({ user }: { user: CurrentUser }) {
     if (persona === 'REG') return segments.filter(s => s.registrationSite === tw && (s.status === 'published' || s.status === 'validated'))
     if (persona === 'MMS') return segments.filter(s => s.registrationSite === tw && (s.status === 'approved' || s.storedMms))
     if (persona === 'GIS') return segments.filter(s => s.registrationSite === tw && (s.status === 'approved' || s.storedGis))
-    if (persona === 'RELIABILITY') return segments.filter(s => s.registrationSite === tw && (s.status === 'approved' || s.storedRel))
+    if (persona === 'CMS') return segments.filter(s => s.registrationSite === tw && (s.status === 'approved' || s.storedCms))
     return []
   }
 
@@ -1702,8 +1997,8 @@ function Workspace({ user }: { user: CurrentUser }) {
     if (workflow !== 'SC11' || !activeTwin) return []
     const tw = activeTwin.shortName
     if (persona === 'MMS') return updates.filter(u => u.iTwinShortName === tw)
-    if (persona === 'RELIABILITY') return updates.filter(u => u.iTwinShortName === tw && u.status !== 'pending')
-    if (persona === 'REG') return updates.filter(u => u.iTwinShortName === tw && (u.status === 'published' || u.status === 'rel_updated' || u.status === 'reg_updated'))
+    if (persona === 'CMS') return updates.filter(u => u.iTwinShortName === tw && u.status !== 'pending')
+    if (persona === 'REG') return updates.filter(u => u.iTwinShortName === tw && (u.status === 'published' || u.status === 'cms_updated' || u.status === 'reg_updated'))
     return []
   }
 
@@ -1760,7 +2055,7 @@ function Workspace({ user }: { user: CurrentUser }) {
       if (!ids.length) { flash('Select validated segments to approve'); return }
       setSegments(prev => prev.map(s => ids.includes(s.uuid) ? { ...s, status: 'approved' } : s))
       setSelected(new Set())
-      flash(`${ids.length} segment(s) approved → TAMS, ESRI & Reliability`)
+      flash(`${ids.length} segment(s) approved → TAMS, ESRI & CMS`)
       return
     }
 
@@ -1768,9 +2063,9 @@ function Workspace({ user }: { user: CurrentUser }) {
       const ids = selIds.filter(id => segments.find(s => s.uuid === id)?.status === 'approved')
       if (!ids.length) { flash('Select approved segments to store'); return }
       // Explicit per-persona flags: this was an if/else that treated anything
-      // not MMS as Reliability, so a third O&M consumer would silently have
-      // written to REL's records.
-      const storeField = persona === 'MMS' ? 'storedMms' : persona === 'GIS' ? 'storedGis' : 'storedRel'
+      // not MMS as CMS, so a third O&M consumer would silently have
+      // written to CMS's records.
+      const storeField = persona === 'MMS' ? 'storedMms' : persona === 'GIS' ? 'storedGis' : 'storedCms'
       setSegments(prev => prev.map(s => ids.includes(s.uuid) ? { ...s, [storeField]: true } : s))
       setSelected(new Set())
       flash(`${ids.length} segment(s) stored as assets`)
@@ -1791,7 +2086,7 @@ function Workspace({ user }: { user: CurrentUser }) {
       setAssetIdx(i => i + 1)
       const seg = approvedSegs[0]
       const id = `UPD-${String(updCounter++).padStart(3, '0')}`
-      setUpdates(prev => [...prev, { id, segmentUuid: seg.uuid, segmentShortName: seg.shortName, iTwinShortName: activeTwin.shortName, assetType: tmpl.assetType, serialNumber: tmpl.serial + Math.floor(10000 + Math.random() * 90000), installedBy: 'Current User', installedAt: now(), status: 'pending', relUpdated: false, regUpdated: false }])
+      setUpdates(prev => [...prev, { id, segmentUuid: seg.uuid, segmentShortName: seg.shortName, iTwinShortName: activeTwin.shortName, assetType: tmpl.assetType, serialNumber: tmpl.serial + Math.floor(10000 + Math.random() * 90000), installedBy: 'Current User', installedAt: now(), status: 'pending', cmsUpdated: false, regUpdated: false }])
       flash(`${id} — ${tmpl.assetType} installed on ${seg.shortName}`)
       return
     }
@@ -1801,19 +2096,19 @@ function Workspace({ user }: { user: CurrentUser }) {
       if (!ids.length) { flash('Select pending updates to publish'); return }
       setUpdates(prev => prev.map(u => ids.includes(u.id) ? { ...u, status: 'published' } : u))
       setSelected(new Set())
-      flash(`${ids.length} update(s) published → RELIABILITY & REG`)
+      flash(`${ids.length} update(s) published → CMS & REG`)
       return
     }
 
     if (action === 'UPDATE RECORDS') {
-      if (persona === 'RELIABILITY') {
+      if (persona === 'CMS') {
         const ids = selIds.filter(id => updates.find(u => u.id === id)?.status === 'published')
         if (!ids.length) { flash('Select published updates to apply'); return }
-        setUpdates(prev => prev.map(u => ids.includes(u.id) ? { ...u, status: 'rel_updated', relUpdated: true } : u))
+        setUpdates(prev => prev.map(u => ids.includes(u.id) ? { ...u, status: 'cms_updated', cmsUpdated: true } : u))
         setSelected(new Set())
         flash(`${ids.length} record(s) updated with fitted asset`)
       } else if (persona === 'REG') {
-        const ids = selIds.filter(id => { const u = updates.find(u => u.id === id); return u && (u.status === 'published' || u.status === 'rel_updated') })
+        const ids = selIds.filter(id => { const u = updates.find(u => u.id === id); return u && (u.status === 'published' || u.status === 'cms_updated') })
         if (!ids.length) { flash('Select published updates to apply'); return }
         setUpdates(prev => prev.map(u => ids.includes(u.id) ? { ...u, status: 'reg_updated', regUpdated: true } : u))
         setSelected(new Set())
@@ -1841,7 +2136,7 @@ function Workspace({ user }: { user: CurrentUser }) {
       setNewAbIdx(i => i + 1)
       const uuid = makeUuid()
       const serial = `SN-${tmpl.equipmentTag.replace(/[^A-Z0-9]/g, '')}-${Math.floor(10000 + Math.random() * 90000)}`
-      setAsBuilt(prev => [...prev, { uuid, equipmentTag: tmpl.equipmentTag, description: tmpl.description, equipmentClass: tmpl.equipmentClass, manufacturer: tmpl.manufacturer, modelNumber: tmpl.modelNumber, serialNumber: serial, installationSite: activeTwin.shortName, installDate: now().slice(0, 10), created: now(), status: 'draft', registeredOm: false, omMms: false, omRel: false, omGis: false }])
+      setAsBuilt(prev => [...prev, { uuid, equipmentTag: tmpl.equipmentTag, description: tmpl.description, equipmentClass: tmpl.equipmentClass, manufacturer: tmpl.manufacturer, modelNumber: tmpl.modelNumber, serialNumber: serial, installationSite: activeTwin.shortName, installDate: now().slice(0, 10), created: now(), status: 'draft', registeredOm: false, omMms: false, omCms: false, omGis: false }])
       flash(`As-built record ${tmpl.equipmentTag} created`)
       return
     }
@@ -1884,7 +2179,7 @@ function Workspace({ user }: { user: CurrentUser }) {
     if (action === 'STORE ASSETS') {
       const ids = selIds.filter(id => asBuilt.find(a => a.uuid === id)?.status === 'om_published')
       if (!ids.length) { flash('Select published assets to store'); return }
-      const key = persona === 'MMS' ? 'omMms' : persona === 'RELIABILITY' ? 'omRel' : 'omGis'
+      const key = persona === 'MMS' ? 'omMms' : persona === 'CMS' ? 'omCms' : 'omGis'
       setAsBuilt(prev => prev.map(a => ids.includes(a.uuid) ? { ...a, [key]: true } : a))
       setSelected(new Set())
       flash(`${ids.length} asset(s) stored in ${personaAlias(persona)}`)
@@ -1915,7 +2210,7 @@ function Workspace({ user }: { user: CurrentUser }) {
       if (persona === 'REG') return 'PROPOSALS AWAITING STEWARDSHIP DECISION'
       if (persona === 'MMS') return 'APPROVED LOCATIONS · TAMS INBOX'
       if (persona === 'GIS') return 'APPROVED LOCATIONS · ESRI INBOX'
-      return 'SEGMENT DATA · RELIABILITY INBOX'
+      return 'SEGMENT DATA · CMS INBOX'
     }
     if (workflow === 'SC04') {
       if (persona === 'ENG') return 'AS-BUILT ASSETS · AUTHORED BY BIC'
@@ -1932,7 +2227,7 @@ function Workspace({ user }: { user: CurrentUser }) {
       if (px.id === 'REG') return segments.filter(s => s.status === 'published' || s.status === 'validated').length
       if (px.id === 'MMS') return segments.filter(s => s.status === 'approved' || s.storedMms).length
       if (px.id === 'GIS') return segments.filter(s => s.status === 'approved' || s.storedGis).length
-      return segments.filter(s => s.status === 'approved' || s.storedRel).length
+      return segments.filter(s => s.status === 'approved' || s.storedCms).length
     }
     if (workflow === 'SC05') {
       const registered = asBuilt.filter(a => a.status === 'registered' || a.status === 'om_published')
@@ -1945,8 +2240,8 @@ function Workspace({ user }: { user: CurrentUser }) {
       return asBuilt.filter(a => a.status === 'construct_published' || a.status === 'registered' || a.status === 'om_published').length
     }
     if (px.id === 'MMS') return updates.length
-    if (px.id === 'RELIABILITY') return updates.filter(u => u.status !== 'pending').length
-    return updates.filter(u => u.status === 'published' || u.status === 'rel_updated' || u.status === 'reg_updated').length
+    if (px.id === 'CMS') return updates.filter(u => u.status !== 'pending').length
+    return updates.filter(u => u.status === 'published' || u.status === 'cms_updated' || u.status === 'reg_updated').length
   }
 
   return (
@@ -2004,44 +2299,23 @@ function Workspace({ user }: { user: CurrentUser }) {
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#f87171' }}>{twinsError}</span>
         )}
         {!twinsLoading && !twinsError && twins.length === 0 && (
-          // A twin is created implicitly by the first write that names one, so an
-          // empty registry is a normal state on a fresh database rather than a
-          // fault. Saying so beats an empty bar that reads as a broken screen.
+          // No twins is a normal state rather than a fault, so say what to do
+          // about it instead of leaving a bar that reads as a broken screen.
+          // Having none at all and having none that qualify need different
+          // remedies, so they are called out separately.
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
-            no twins registered — create one via POST /admin/eng/twins
+            {assetTwinCount === 0
+              ? 'no asset iTwins visible — check the signed-in account has access'
+              : `none of ${assetTwinCount} asset iTwin${assetTwinCount === 1 ? '' : 's'} carry a district number — expected one of ${[...BANNER_TWIN_NUMBERS].join(', ')}`}
           </span>
         )}
-        {twins.map((tw, i) => {
-          const isActive = activeTwin?.uuid === tw.uuid
-          return (
-            <button
-              key={tw.uuid}
-              onClick={() => { setActiveTwin(tw); setSelected(new Set()) }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '0 16px',
-                height: '100%',
-                background: isActive ? 'rgba(255,255,255,0.05)' : 'transparent',
-                borderTop: 'none',
-                borderBottom: isActive ? '2px solid #3b82f6' : '2px solid transparent',
-                borderLeft: i === 0 ? '1px solid var(--border-subtle)' : 'none',
-                borderRight: '1px solid var(--border-subtle)',
-                cursor: 'pointer',
-                transition: 'all 0.13s',
-              }}
-            >
-              <div style={{ width: 6, height: 6, borderRadius: '50%', background: isActive ? '#3b82f6' : 'var(--text-muted)', flexShrink: 0, boxShadow: isActive ? '0 0 6px #3b82f6' : 'none', transition: 'all 0.13s' }} />
-              <div style={{ textAlign: 'left' }}>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 600, color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)', letterSpacing: '0.06em' }}>{tw.shortName}</div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '8px', color: 'var(--text-muted)', letterSpacing: '0.04em' }}>{tw.uuid.slice(0, 18)}…</div>
-              </div>
-            </button>
-          )
-        })}
+        <TwinCarousel
+          twins={twins}
+          activeUuid={activeTwin?.uuid ?? null}
+          onSelect={tw => { setActiveTwin(tw); setSelected(new Set()) }}
+        />
         {activeTwin && (
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 16, flexShrink: 0 }}>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.06em' }}>ACTIVE:</span>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#3b82f6', fontWeight: 600 }}>{activeTwin.fullName}</span>
           </div>
@@ -2105,6 +2379,113 @@ function Workspace({ user }: { user: CurrentUser }) {
                   WORKFLOW STEPS — {p.alias}
                 </div>
                 <StepsPanel steps={steps} persona={persona} accent={p.accent} dimBg={p.dimBg} borderColor={p.borderColor} onAction={handleAction} selectedCount={selCount} />
+              </section>
+            )}
+
+            {/* ── MMS inventory: what the repository actually holds ─────────── */}
+            {persona === 'MMS' && (
+              <section>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.14em', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span>MMS INVENTORY</span>
+                  <span style={{ background: p.dimBg, color: p.accent, padding: '1px 8px', borderRadius: '3px', fontWeight: 600 }}>
+                    {mmsInventory?.locations.length ?? 0} LIGHT SYSTEMS
+                  </span>
+                  {mmsInventory?.ownerName && (
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '8px', letterSpacing: '0.1em' }}>
+                      OWNER_ID {mmsInventory.ownerId} · {mmsInventory.ownerName.toUpperCase()}
+                    </span>
+                  )}
+                  <span style={{ color: 'var(--text-muted)', fontSize: '8px', letterSpacing: '0.1em', marginLeft: 4 }}>
+                    LIVE — GET /admin/mms/locations
+                  </span>
+                  <button
+                    onClick={() => void refreshMmsInventory()}
+                    disabled={mmsLoading}
+                    style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--border-mid)', borderRadius: '3px', color: 'var(--text-secondary)', cursor: mmsLoading ? 'default' : 'pointer', fontSize: '9px', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', padding: '3px 10px', opacity: mmsLoading ? 0.5 : 1 }}
+                  >
+                    REFRESH
+                  </button>
+                </div>
+                <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: '6px', overflow: 'hidden' }}>
+                  {mmsError ? (
+                    <div style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#ef4444' }}>
+                      {mmsError}
+                    </div>
+                  ) : mmsLoading ? (
+                    <div style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
+                      LOADING…
+                    </div>
+                  ) : !mmsInventory?.resolved ? (
+                    // Unresolved is a registry state, not a failure: no MMS owner
+                    // is related to this twin in ws-CIR, so the inventory cannot be
+                    // scoped and showing all of it would leak another district's.
+                    <div style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.7 }}>
+                      NO MMS OWNER RELATED TO THIS ITWIN
+                      {mmsInventory?.reason && (
+                        <div style={{ fontSize: '9px', marginTop: 4 }}>{mmsInventory.reason}</div>
+                      )}
+                      <div style={{ fontSize: '9px', marginTop: 4 }}>
+                        RELATE IT WITH POST /admin/mms/owners/relate
+                      </div>
+                    </div>
+                  ) : mmsInventory.locations.length === 0 ? (
+                    <div style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
+                      OWNER RESOLVED, NO INVENTORY ROWS
+                    </div>
+                  ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: '10px' }}>
+                      <thead>
+                        <tr style={{ background: 'var(--bg-inset)', color: 'var(--text-muted)', fontSize: '9px', letterSpacing: '0.1em' }}>
+                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>LIGHT SYSTEM NAME</th>
+                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>CLASS</th>
+                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>STATUS</th>
+                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>OWNER</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {mmsInventory.locations.map(loc => {
+                          const open = expandedLightSystem === loc.lightSystemId
+
+                          return (
+                            <Fragment key={loc.lightSystemId}>
+                              <tr style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                                <td style={{ padding: '7px 12px' }}>
+                                  {/* The name carries the navigation: LIGHT_SYSTEM_ID is MMS's
+                                      internal key, so it is kept out of the grid and surfaced
+                                      in the detail instead, where it is wanted for reference
+                                      rather than scanning. */}
+                                  <button
+                                    onClick={() => setExpandedLightSystem(open ? null : loc.lightSystemId)}
+                                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: p.accent, textAlign: 'left', textDecoration: 'underline', textUnderlineOffset: '2px' }}
+                                  >
+                                    {loc.lightSystemName}
+                                  </button>
+                                </td>
+                                <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>
+                                  <CodedValue name={loc.classCode} id={loc.classCodeId} />
+                                </td>
+                                <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>
+                                  <CodedValue name={loc.status} id={loc.statusId} />
+                                </td>
+                                <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>
+                                  <CodedValue name={loc.ownerId === null ? null : loc.owner} id={loc.ownerId} />
+                                </td>
+                              </tr>
+                              {open && (
+                                <tr style={{ background: 'var(--bg-inset)' }}>
+                                  <td colSpan={4} style={{ padding: '10px 12px', color: 'var(--text-secondary)', fontSize: '9px', letterSpacing: '0.06em' }}>
+                                    LIGHT_SYSTEM_ID {loc.lightSystemId}
+                                    <span style={{ color: 'var(--text-muted)' }}> · MMS INTERNAL KEY</span>
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
               </section>
             )}
 

@@ -130,16 +130,19 @@ public sealed class MmsWorkOrderService(
 
         await using var db = factory.Create(MmsService.ParticipantId);
 
-        var location = await db.Set<FunctionalLocationRecord>()
+        // Matched by LIGHT_SYSTEM_ID or by its alternate key. The foreign-identifier
+        // match that used to be possible here is gone: the real schema has no column
+        // for one, so a caller quoting the sender's identifier can no longer be
+        // served without going through ws-CIR.
+        var location = await db.Set<LightSystemInventory>()
             .FirstOrDefaultAsync(
-                l => l.EquipmentNumber == functionalLocation
-                    || l.ForeignIdInSource == functionalLocation
-                    || l.Designation == functionalLocation, ct);
+                l => l.LightSystemId.ToString() == functionalLocation
+                    || l.LightSystemName == functionalLocation, ct);
 
         if (location is null)
         {
             throw new InvalidOperationException(
-                $"MMS holds no functional location '{functionalLocation}'. " +
+                $"MMS holds no light system '{functionalLocation}'. " +
                 "Use Case 5 assumes Use Case 1 or 10 has provisioned it first.");
         }
 
@@ -158,9 +161,9 @@ public sealed class MmsWorkOrderService(
             State = WorkOrderState.Open,
             EquipmentNumber = equipmentNumber,
 
-            // Stored as MMS's own number regardless of how it was named here, so the
+            // Stored as MMS's own key regardless of how it was named here, so the
             // work order refers to the location the way MMS does.
-            FunctionalLocationNumber = location.EquipmentNumber,
+            FunctionalLocationNumber = location.LightSystemId.ToString(),
             Description = description
         };
 

@@ -11,12 +11,37 @@ engine in-process but serves no API routes, so its buttons call the Sandbox API 
 HTTP using `Sandbox:ApiBaseUrl`. **The API must be running for the UI's reset and
 scenario-launch actions to work** — that is the one dependency the split introduces.
 
-`WorkflowOrchestration` is the React interactive UI (`http://localhost:8443`, via
+`WorkflowOrchestration` is the React interactive UI (`https://localhost:3000`, via
 `npm run dev`). It talks only to the Sandbox API, never to SimHost, and Vite proxies
 `/admin` to `https://localhost:7241` so the browser stays on one origin in
-development. Point it elsewhere with `SANDBOX_API`. The two UIs serve different
-audiences: SimHost drives end-to-end automated scenario runs, this one is for
-interactive use.
+development. HTTPS and port 3000 are not incidental: the Bentley IMS redirect URI is
+registered against that exact origin, so authentication fails on any other. Point the
+API elsewhere with `SANDBOX_API`. The two UIs serve different audiences: SimHost
+drives end-to-end automated scenario runs, this one is for interactive use.
+
+### MMS inventory panel
+
+Selecting the MMS persona shows what `LIGHT_SYSTEM_INVENTORY` actually holds for the
+selected iTwin, from `GET /admin/mms/locations?twin=…`. This is independent of the
+segment handover workflows: the rows exist whether or not anything was ever handed
+over, so an empty segment queue does not mean an empty repository.
+
+The twin is resolved to an `OWNER_ID` through ws-CIR rather than matched on a column
+(DR-008, DR-009). Three distinct states are shown, and the difference matters:
+
+- **resolved with rows** — the normal case.
+- **resolved, no rows** — the owner exists but holds no inventory.
+- **unresolved** — no MMS owner is related to this twin in the registry. No rows are
+  shown; falling back to unfiltered would leak one district's inventory to another.
+  Fix by relating the owner: `POST /admin/mms/owners/relate`.
+
+Only two seeded owners have inventory: `OWNER_ID` 2 (7200 - Metro Traffic, 9 rows) and
+`OWNER_ID` 8 (9600 - District 6, 4 rows). A twin mapped to any other owner correctly
+shows resolved-but-empty.
+
+Scoped reads take ~1.9s. That is a known ISBM round-trip cost, not a database problem
+— see DR-010 before attempting to optimise it.
+
 
 ## Day zero
 
@@ -90,7 +115,7 @@ cross-reference metadata in the file header, not part of the name.
 | `sc01-design-release` | ENG releases a named version | REG-LOCATION only |
 | `sc02-operations-release` | a steward approves at REG-LOCATION | MMS |
 | `sc01-greenfield-allocation` | ENG publishes without an authored identity | REG-LOCATION |
-| `sc11-asset-install` | MMS publishes an install or removal event | OM-RELIABILITY |
+| `sc11-asset-install` | MMS publishes an install or removal event | CMS |
 
 Run order matters, and the engine enforces it rather than papering over it:
 
@@ -197,7 +222,7 @@ The leak worth guarding is promotion, which selects every unpublished tag it can
 see. Unscoped, it sweeps another plant's design into the release and publishes it.
 Bruno requests 27-28 assert exactly that.
 
-Only ENG is twin-scoped today. REG-LOCATION, MMS and OM-RELIABILITY are not.
+Only ENG is twin-scoped today. REG-LOCATION, MMS and CMS are not.
 
 ## When something is wrong
 

@@ -1,7 +1,7 @@
 # SimHost
 
 The sandbox. Four simulated participants — ENG, REG-LOCATION, MMS and
-OM-RELIABILITY — exchange CCOM BODs over the live ws-ISBM provider and resolve
+CMS — exchange CCOM BODs over the live ws-ISBM provider and resolve
 identity through the live ws-CIR provider. It is the only thing in the repository
 that proves the round trip, and the only place where the claim "the data arrived"
 can be checked against rows rather than logs.
@@ -125,7 +125,7 @@ Isolation is enforced by EF global query filters rather than by remembering a
 the correlator MMS and CIR resolve on, so scoping it by twin would break identity
 resolution between participants.
 
-Only ENG is twin-scoped. REG-LOCATION, MMS and OM-RELIABILITY are not, and the
+Only ENG is twin-scoped. REG-LOCATION, MMS and CMS are not, and the
 handover scenarios run entirely in the default twin.
 
 The isolation behaviour is exercised by Bruno requests 20-28 under
@@ -156,7 +156,7 @@ scenario they realise; the use case each belongs to is recorded in the file's
   safe: it asserts relative code sequences rather than literal `P-001`, so it does not
   depend on being the first run against the database.
 - `sc11-asset-install.yaml` — Scenario 11 (UC05): MMS publishes asset install and
-  removal events to OM-RELIABILITY. Requires `sc02-operations-release` and does not
+  removal events to CMS. Requires `sc02-operations-release` and does not
   reset. It does not perform the handover itself: authoring a tag and approving a
   proposal are engineering acts, and a maintenance process has no business doing
   them. Run without the handover, it fails on its first assertion with no wait.

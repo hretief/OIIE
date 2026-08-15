@@ -9,11 +9,11 @@ skinparam BoxPadding 12
 
 actor "Maintenance technician" as TechUser
 actor "Maintenance planner" as PlannerUser
-actor "Reliability engineer" as RelUser
+actor "Condition monitoring engineer" as RelUser
 
 box "SimHost — simulated participants"
   participant "MMS" as MMS
-  participant "OM-RELIABILITY" as OM
+  participant "CMS" as OM
 end box
 
 participant "ws-ISBM provider" as ISBM
@@ -79,7 +79,7 @@ OM -> OM : record AssetInstallationEvent\nEventType = ecc99353-… (installation
 OM -> OM : Cirid = NULL
 note right of OM
   It cannot say what the asset is. No registry has
-  reconciled the identifier and OM-RELIABILITY holds
+  reconciled the identifier and CMS holds
   no reference data, so the gap is left visible
   rather than filled with a guess.
 end note
@@ -101,7 +101,7 @@ note right of OM
   Appended, not overwritten. A "currently installed"
   field would now say the pump was never there, and
   the six-month service interval — the only thing a
-  reliability system wanted from this feed — would
+  condition monitoring system wanted from this feed — would
   be unrecoverable.
 end note
 deactivate OM

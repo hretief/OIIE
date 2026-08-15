@@ -13,18 +13,22 @@ using SimHost.Infrastructure.Sql;
 namespace SimHost.Personalities.Mms;
 
 /// <summary>
-/// Creates maintenance records from segments arriving on the O&amp;M channel.
+/// Creates light system inventory rows from segments arriving on the O&amp;M channel.
 ///
 /// MMS is the end of the chain and the participant with the least context. It
 /// receives LOC-000001 from REG-LOCATION and has no idea what that is — no shared
 /// key, no prior integration, nothing but a string from a system it has never heard
-/// of. It stores the foreign identifier raw and leaves Cirid null.
+/// of.
 ///
-/// That null is the point. Until a registry resolves it, MMS cannot tell whether
-/// this is new equipment or something it already holds under a different name, and
-/// a maintenance planner would eventually raise a duplicate work order. Building
-/// this before the CIR exists is deliberate: the resolution only means something
-/// once the problem it solves has been seen.
+/// It cannot even write that string down. The customer schema has no column for a
+/// foreign identifier, a FederationId or a CIRID, so the sender's identity is not
+/// retained anywhere locally: the inbound name becomes LIGHT_SYSTEM_NAME and
+/// everything else about where the row came from survives only in provenance and in
+/// ws-CIR. Matching on re-receipt is therefore by name alone, which is weaker than
+/// matching on a foreign key and will fail if the sender renames something.
+///
+/// That weakness is the honest consequence of the constraint rather than a defect to
+/// paper over, and it is precisely the problem the registry exists to solve.
 /// </summary>
 public sealed class MmsSegmentsHandler(
     ITagIdentityService identities,
@@ -48,7 +52,7 @@ public sealed class MmsSegmentsHandler(
             return BodHandlingResult.Rejected("The BOD carried no segments.");
         }
 
-        var nextNumber = await NextEquipmentNumberAsync(db, ct);
+        var nextId = await NextLightSystemIdAsync(db, ct);
         var created = 0;
         var mapper = mappers.For(participant);
         var mapped = 0;
@@ -64,20 +68,19 @@ public sealed class MmsSegmentsHandler(
                 continue;
             }
 
-            // The only match available without a registry: an exact foreign
-            // identifier seen before. A second system describing the same physical
-            // thing under a different identifier is invisible here.
-            var existing = await db.Set<FunctionalLocationRecord>()
-                .FirstOrDefaultAsync(r =>
-                    r.ForeignSourceId == foreignSourceId && r.ForeignIdInSource == foreignId, ct);
+            // The name is all MMS can match on: LIGHT_SYSTEM_NAME is the alternate
+            // key and there is no column holding what the sender called this. Two
+            // systems describing the same light system under different names remain
+            // invisible to each other until the registry relates them.
+            var lightSystemName = segment.FullName ?? segment.ShortName ?? foreignId;
+
+            var existing = await db.Set<LightSystemInventory>()
+                .FirstOrDefaultAsync(r => r.LightSystemName == lightSystemName, ct);
 
             if (existing is not null)
             {
-                existing.Designation = segment.FullName ?? segment.ShortName;
-                existing.UpdatedAt = DateTimeOffset.UtcNow;
-
                 var updated = Ingest(
-                    participant, db, mapper, segment, existing.EquipmentNumber,
+                    participant, db, mapper, segment, existing.LightSystemId.ToString(),
                     foreignSourceId, messageId);
 
                 mapped += updated.MappedCount;
@@ -85,29 +88,28 @@ public sealed class MmsSegmentsHandler(
                 continue;
             }
 
-            var equipmentNumber = nextNumber.ToString();
-
-            var record = new FunctionalLocationRecord
+            var row = new LightSystemInventory
             {
-                // Adopted, never minted. MMS is a legacy consumer, not a master of
-                // identity: the sender has already said what this thing is, and
-                // issuing a competing identity would be the third identity for one
-                // pump. Empty when the sender asserted none, which leaves the record
-                // visibly unidentified rather than falsely identified.
-                FederationId = segment.UUID,
-                EquipmentNumber = equipmentNumber,
-                Designation = segment.FullName ?? segment.ShortName,
-                PlannerGroup = "MP1",
-                CostCentre = "CC-4400",
-                ForeignSourceId = foreignSourceId,
-                ForeignIdInSource = foreignId,
-                Cirid = null
+                LightSystemId = nextId,
+                LightSystemName = lightSystemName,
+
+                // Undetermined and Proposed, because that is what MMS actually knows.
+                // The sender's classification is not MMS's classification, and
+                // guessing a class code would assert a taxonomy decision nobody made.
+                // The real value is set by a planner once the system is surveyed.
+                LightSystemClassCodeId = UndeterminedClassCodeId,
+                LightSystemStatusId = ProposedStatusId,
+
+                // Left null deliberately. OWNER_ID is MMS's context key and only a
+                // steward's registry assertion can say which owner a foreign context
+                // corresponds to; inferring it here would invent that relation.
+                OwnerId = null
             };
 
-            nextNumber++;
+            nextId++;
             created++;
 
-            db.Set<FunctionalLocationRecord>().Add(record);
+            db.Set<LightSystemInventory>().Add(row);
 
             // MMS keeps what it was sent, understood or not.
             //
@@ -118,20 +120,19 @@ public sealed class MmsSegmentsHandler(
             // it flagged means the value is still there when someone teaches MMS what it
             // means.
             var ingestion = Ingest(
-                participant, db, mapper, segment, record.EquipmentNumber,
+                participant, db, mapper, segment, row.LightSystemId.ToString(),
                 foreignSourceId, messageId);
 
             mapped += ingestion.MappedCount;
             unmapped += ingestion.UnmappedCount;
 
-            // The legacy equipment number is registered against the adopted identity.
-            // This is the case the whole model is for: a system with its own numbering
-            // that predates any federation, joined to the identity rather than
-            // renumbered to match it.
-            if (record.FederationId != Guid.Empty)
+            // The registry is told which local key now stands for the sender's
+            // identity. This is the only durable record of the correspondence, since
+            // no MMS column can hold it.
+            if (segment.UUID != Guid.Empty)
             {
                 var assignment = identities.RegisterCode(
-                    record.FederationId, MmsService.ParticipantId, equipmentNumber);
+                    segment.UUID, MmsService.ParticipantId, row.LightSystemId.ToString());
                 assignment.AdoptedFromRemote = true;
                 db.Codes.Add(assignment);
             }
@@ -139,8 +140,8 @@ public sealed class MmsSegmentsHandler(
             db.Provenance.Add(new ProvenanceEntry
             {
                 MessageId = messageId,
-                EntityType = nameof(FunctionalLocationRecord),
-                EntityKey = record.EquipmentNumber,
+                EntityType = nameof(LightSystemInventory),
+                EntityKey = row.LightSystemId.ToString(),
                 Action = ProvenanceAction.Created,
                 Actor = "system",
                 ChangeSummary = JsonSerializer.Serialize(new
@@ -190,7 +191,7 @@ public sealed class MmsSegmentsHandler(
             .ToList();
 
         var ingestion = participant.Ingestor.Ingest(
-            nameof(FunctionalLocationRecord),
+            nameof(LightSystemInventory),
             equipmentNumber,
             ingestible,
             EffectivePropertySet.Empty,
@@ -218,24 +219,24 @@ public sealed class MmsSegmentsHandler(
     }
 
     /// <summary>
-    /// Legacy numeric keys from the system's own sequence. Starting at 234441 so the
-    /// first record is 234441 rather than 1 — a key that looks like a real
-    /// maintenance system's, not like a demo's.
+    /// The next LIGHT_SYSTEM_ID, allocated as MAX+1 in keeping with the sandbox's
+    /// single-writer assumption. See MmsInventoryWriter for why this is not safe
+    /// against a concurrently writing customer system.
     /// </summary>
-    private static async Task<int> NextEquipmentNumberAsync(
+    private static async Task<long> NextLightSystemIdAsync(
         ParticipantDbContext db, CancellationToken ct)
     {
-        var numbers = await db.Set<FunctionalLocationRecord>()
-            .Select(r => r.EquipmentNumber)
-            .ToListAsync(ct);
-
-        var highest = numbers
-            .Select(n => int.TryParse(n, out var value) ? value : 0)
-            .DefaultIfEmpty(234440)
-            .Max();
+        var highest = await db.Set<LightSystemInventory>()
+            .MaxAsync(r => (long?)r.LightSystemId, ct) ?? 0;
 
         return highest + 1;
     }
+
+    /// <summary>LIGHT_SYSTEM_CLASS_CODE_ID 9, 'Undetermined'.</summary>
+    private const long UndeterminedClassCodeId = 9;
+
+    /// <summary>ASSET_STATUS_ID 3, 'Proposed' — received but not yet surveyed.</summary>
+    private const long ProposedStatusId = 3;
 }
 
 public sealed class MmsService

@@ -38,7 +38,7 @@ public class SegmentConnectionTests
             LogicalID = "urn:oiie-sandbox:eng",
             ComponentID = "SimHost"
         };
-        bod.ApplicationArea.BODID = "corr-rel-0001";
+        bod.ApplicationArea.BODID = "corr-cms-0001";
         bod.ApplicationArea.CreationDateTime = Instant.FromUtc(2026, 8, 1, 9, 14, 0);
 
         bod.With(new SegmentMesh

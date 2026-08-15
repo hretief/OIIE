@@ -34,7 +34,7 @@ requires:
 
 participants:
   - mms
-  - om-reliability
+  - cms
 
 setup:
   # Deliberately no reset. The functional location this scenario installs against is
@@ -50,19 +50,19 @@ setup:
     - uri: /OIIE-SANDBOX/Enterprise/Site/OandM-Events
       type: Publication
       subscribers:
-        - om-reliability
+        - cms
 
 steps:
   # -- Precondition: the handover has already happened ---------------------------
   #
   # Checked first and without a wait. Nothing in this scenario can create this row,
   # so waiting for it would only delay the same failure. The work order below
-  # resolves the location on these same columns, so this asserts precisely what it
-  # will need rather than the weaker 'REG-LOCATION sent something once'.
+  # resolves the location on this same key, so this asserts precisely what it will
+  # need rather than the weaker 'REG-LOCATION sent something once'.
   - at: mms
     assert: store_contains
-    entity: FunctionalLocationRecord
-    where: "ForeignSourceId = 'REG-LOCATION' AND (ForeignIdInSource = 'P-101' OR Designation = 'P-101' OR EquipmentNumber = 'P-101')"
+    entity: LightSystemInventory
+    where: "LIGHT_SYSTEM_NAME = 'P-101'"
 
   # The topology came with it. A reliability analyst reading an install event against
   # this pump needs to know what feeds it, and that edge is part of what scenario 2
@@ -113,7 +113,7 @@ steps:
 
   # Sign-off is the publication trigger, not completion. Nothing has been
   # published while the order sits Completed.
-  - at: om-reliability
+  - at: cms
     assert: message_not_received
     channel: /OIIE-SANDBOX/Enterprise/Site/OandM-Events
     verb: Sync
@@ -140,37 +140,37 @@ steps:
     where: "SerialNumber = 'SN-88213' AND FunctionalLocationNumber IS NOT NULL"
 
   # -- The O&M system receives ---------------------------------------------------
-  - at: om-reliability
+  - at: cms
     assert: message_received
     channel: /OIIE-SANDBOX/Enterprise/Site/OandM-Events
     verb: Sync
     noun: AssetSegmentEvents
     within: 60s
 
-  - at: om-reliability
+  - at: cms
     assert: bod_valid
 
   # The event carries the timestamp of the physical work, not of the message. The
   # order was entered after the fact, so a receiver that recorded arrival time
   # would be wrong by the length of the delay -- and every time-in-service figure
   # built on it would inherit the error.
-  - at: om-reliability
+  - at: cms
     assert: store_contains
     entity: AssetInstallationEvent
     where: "EventKind = 'Install' AND OccurredAt = '2026-03-04T08:15:00Z'"
     within: 60s
 
   # Scenario 11's optional context survived the trip.
-  - at: om-reliability
+  - at: cms
     assert: store_contains
     entity: AssetInstallationEvent
     where: "WorkOrderNumber = 'WO-40001' AND PerformedBy = 'technician.fourie'"
     within: 60s
 
-  # And it still cannot say what the asset is. OM-RELIABILITY holds no reference
+  # And it still cannot say what the asset is. CMS holds no reference
   # data and no registry has reconciled anything, so the install is recorded
   # against an identifier it cannot yet relate to anything else it knows.
-  - at: om-reliability
+  - at: cms
     assert: store_contains
     entity: AssetInstallationEvent
     where: "WorkOrderNumber = 'WO-40001' AND Cirid IS NULL"
@@ -213,20 +213,20 @@ steps:
     where: "SerialNumber = 'SN-88213' AND FunctionalLocationNumber IS NULL"
     within: 60s
 
-  - at: om-reliability
+  - at: cms
     assert: store_contains
     entity: AssetInstallationEvent
     where: "EventKind = 'Removal' AND WorkOrderNumber = 'WO-40002'"
     within: 60s
 
   # Both events survive. The append-only log is what makes the six-month service
-  # interval recoverable, which is the entire reason a reliability system wants
+  # interval recoverable, which is the entire reason a condition monitoring system wants
   # this feed rather than a periodic snapshot of what is installed today.
   #
   # Asserted as the surviving install rather than as a count of two, because
   # store_contains has no count argument and the install row is the one an
   # overwriting model would have destroyed.
-  - at: om-reliability
+  - at: cms
     assert: store_contains
     entity: AssetInstallationEvent
     where: "AssetSerialNumber = 'SN-88213' AND EventKind = 'Install'"

@@ -86,6 +86,7 @@ public class Segment : Entity
         FullName = element.Child(nameof(FullName)).SafeValue();
         Description = element.Child(nameof(Description)).SafeValue();
         Type = GetChild(nameof(Type), e => new SegmentType(e));
+        RegistrationSite = GetChild(nameof(RegistrationSite), e => new Site(e));
         IsGroup = element.Child(nameof(IsGroup)).SafeBoolean();
         ParentComponent = GetChildren(nameof(ParentComponent), e => new SegmentComponent(e));
         ChildComponent = GetChildren(nameof(ChildComponent), e => new SegmentComponent(e));
@@ -103,20 +104,28 @@ public class Segment : Entity
     [XmlElement(Order = 7)]
     public SegmentType? Type { get; set; }
 
+    /// <summary>
+    /// The site that registered this segment. In the sandbox this carries the iTwin
+    /// context: a segment belongs to exactly one plant, and CCOM already has a place
+    /// to say so, which is why the twin travels here rather than in the BOD envelope.
+    /// </summary>
+    [XmlElement(Order = 8)]
+    public Site? RegistrationSite { get; set; }
+
     [XmlIgnore]
     public bool? IsGroup { get; set; }
 
-    [XmlElement("IsGroup", Order = 8)]
+    [XmlElement("IsGroup", Order = 9)]
     public string? IsGroupText
     {
         get => IsGroup?.ToString().ToLowerInvariant();
         set => IsGroup = bool.TryParse(value, out var v) ? v : null;
     }
 
-    [XmlElement("ParentComponent", Order = 9)]
+    [XmlElement("ParentComponent", Order = 10)]
     public List<SegmentComponent> ParentComponent { get; set; } = [];
 
-    [XmlElement("ChildComponent", Order = 10)]
+    [XmlElement("ChildComponent", Order = 11)]
     public List<SegmentComponent> ChildComponent { get; set; } = [];
 
     public bool ShouldSerializeIsGroupText() => IsGroup.HasValue;
@@ -124,6 +133,29 @@ public class Segment : Entity
     public bool ShouldSerializeChildComponent() => ChildComponent.Count > 0;
 
     public override string ToString() => $"{ShortName} ({IDInInfoSource})";
+}
+
+/// <summary>
+/// An enterprise-defined plant, facility or platform. CCOM models a Site as a
+/// specialisation of <see cref="Segment"/>, so it inherits the naming and hierarchy
+/// members rather than redeclaring them.
+///
+/// The sandbox uses it for one purpose: naming the iTwin a segment or asset belongs
+/// to. The registered-content members of the schema — RegisteredSegment,
+/// RegisteredAsset and the rest — are deliberately not modelled, because a site
+/// referenced as context should identify itself and nothing more. Carrying its
+/// inventory inside every noun that points at it would nest the whole plant in each
+/// message.
+/// </summary>
+public class Site : Segment
+{
+    public Site()
+    {
+    }
+
+    public Site(XElement element) : base(element)
+    {
+    }
 }
 
 /// <summary>Parent/child link between segments — the breakdown structure edge.</summary>
@@ -165,6 +197,7 @@ public class Asset : Entity
         FullName = element.Child(nameof(FullName)).SafeValue();
         Description = element.Child(nameof(Description)).SafeValue();
         Type = GetChild(nameof(Type), e => new AssetType(e));
+        RegistrationSite = GetChild(nameof(RegistrationSite), e => new Site(e));
         SerialNumber = element.Child(nameof(SerialNumber)).SafeValue();
         Model = GetChild(nameof(Model), e => new Model(e));
     }
@@ -181,13 +214,20 @@ public class Asset : Entity
     [XmlElement(Order = 7)]
     public AssetType? Type { get; set; }
 
+    /// <summary>
+    /// The site that registered this asset, carrying the iTwin context as it does on
+    /// <see cref="Segment"/>.
+    /// </summary>
+    [XmlElement(Order = 8)]
+    public Site? RegistrationSite { get; set; }
+
     // Model before SerialNumber. The CCOM sequence runs Type, RegistrationSite,
     // Manufacturer, Model, ... , SerialNumber, so the obvious pairing of the two
     // identifying fields is the wrong order and the schema rejects it.
-    [XmlElement(Order = 8)]
+    [XmlElement(Order = 9)]
     public Model? Model { get; set; }
 
-    [XmlElement(Order = 9)]
+    [XmlElement(Order = 10)]
     public string? SerialNumber { get; set; }
 
     public override string ToString() => $"{ShortName} ({IDInInfoSource})";

@@ -119,11 +119,13 @@ public sealed class IdentityLineageService(
                 .Select(l => new Row(l.FederationId, l.LocationCode, l.Description, false))
                 .ToListAsync(ct),
 
-            "mms" => await db.Set<FunctionalLocationRecord>()
-                .AsNoTracking()
-                .Select(f => new Row(f.FederationId, f.EquipmentNumber, f.Designation, false))
-                .ToListAsync(ct),
-
+            // MMS is absent by necessity, not oversight. Lineage here is grouped by a
+            // locally held FederationId, and the real MMS schema has no column for
+            // one — its LIGHT_SYSTEM_ID is joined to the shared identity only inside
+            // ws-CIR. Showing MMS would mean resolving every row through the registry,
+            // which is a different and much more expensive query than this one.
+            // Listing it with empty identities would be worse: it would report MMS as
+            // holding nothing identifiable when in fact it holds plenty.
             _ => []
         };
 

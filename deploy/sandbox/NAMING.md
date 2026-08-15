@@ -37,7 +37,7 @@ Participant ids use hyphens (route segments); schemas and logins use underscores
 | `reg-product` | `reg_product` | `sb_reg_product` |
 | `reg-material` | `reg_material` | `sb_reg_material` |
 | `mms` | `mms` | `sb_mms` |
-| `om-reliability` | `om_reliability` | `sb_om_reliability` |
+| `CMS` | `cms` | `sb_cms` |
 | `rdl` | `rdl` | `sb_rdl` |
 
 Two non-participant schemas:
@@ -210,7 +210,7 @@ check, which reads like a broker fault rather than a provisioning gap.
 indefinitely. `Sandbox__PersonalitiesPath` must therefore be `PersonalityPacks`,
 never `Personalities` — the latter was a folder an earlier deployment left behind,
 and because it parsed cleanly the app reported a smaller participant roster with
-no error at all. The scenario then failed with "`om-reliability` is not a known
+no error at all. The scenario then failed with "`CMS` is not a known
 participant", which points at the scenario file rather than at the deployment that
 actually caused it.
 

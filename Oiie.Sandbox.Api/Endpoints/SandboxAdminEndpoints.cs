@@ -17,7 +17,7 @@ using SimHost.Infrastructure.Isbm;
 using SimHost.Infrastructure.Sql;
 using SimHost.Personalities.Eng;
 using SimHost.Personalities.Mms;
-using SimHost.Personalities.OmReliability;
+using SimHost.Personalities.Cms;
 using SimHost.Personalities.RegLocation;
 
 namespace Oiie.Sandbox.Api.Endpoints;
@@ -78,6 +78,7 @@ app.MapPost("/admin/reset", async (
     ISandboxSchemaInitializer sandboxInitializer,
     IIsbmClientAccessor clients,
     IIsbmSessionStoreAccessor stores,
+    IParticipantDbContextFactory contextFactory,
     ClassFixtureLoader loader,
     ClassificationRefresher refresher,
     IConfiguration configuration,
@@ -199,12 +200,32 @@ app.MapPost("/admin/reset", async (
         // broken rather than empty.
         var fixtures = await loader.LoadAsync(participant, fixtureRoot, ct);
 
+        // CMS's owner domain is reference data in the same sense, but it is not a
+        // classification fixture: it is the local key space the registry resolves
+        // against, so it is seeded directly rather than through classes.yaml.
+        //
+        // MMS is seeded the same way but with more of it: its lookup tables and a
+        // sample of LIGHT_SYSTEM_INVENTORY are the customer's real rows, so they are
+        // reproduced rather than generated.
+        var owners = 0;
+        if (participant.ParticipantId == CmsService.ParticipantId)
+        {
+            await using var ownerDb = contextFactory.Create(participant.ParticipantId);
+            owners = await ContextOwnerSeeder.SeedCmsAsync(ownerDb, ct);
+        }
+        else if (participant.ParticipantId == MmsService.ParticipantId)
+        {
+            await using var mmsDb = contextFactory.Create(participant.ParticipantId);
+            owners = await ContextOwnerSeeder.SeedMmsAsync(mmsDb, ct);
+        }
+
         steps.Add(new
         {
             participant.ParticipantId,
             schema = participant.Schema,
             classes = fixtures.Classes,
-            propertyDefinitions = fixtures.Definitions
+            propertyDefinitions = fixtures.Definitions,
+            contextOwners = owners
         });
     }
 
@@ -1217,24 +1238,233 @@ app.MapGet("/admin/{participantId}/cir/resolve", async (
 });
 
 app.MapGet("/admin/mms/locations", async (
-    IParticipantDbContextFactory factory, CancellationToken ct) =>
+    IParticipantDbContextFactory factory, MmsContextResolver resolver,
+    string? twin, CancellationToken ct) =>
 {
     await using var db = factory.Create(MmsService.ParticipantId);
 
-    var records = await db.Set<SimHost.Domain.Mms.FunctionalLocationRecord>()
-        .OrderBy(r => r.EquipmentNumber)
+    // The twin is resolved to an OWNER_ID through ws-CIR rather than matched against
+    // a column: LIGHT_SYSTEM_INVENTORY has no iTwin column and cannot be given one.
+    // An unresolvable twin yields no owner, and the correct answer is then an empty
+    // result with a reason attached — not every row, which would show one district's
+    // inventory to another.
+    long? ownerFilter = null;
+    string? resolvedOwnerName = null;
+
+    if (!string.IsNullOrWhiteSpace(twin))
+    {
+        var context = await resolver.ResolveOwnerIdAsync(twin, ct);
+
+        if (!context.IsResolved)
+        {
+            return Results.Ok(new
+            {
+                twin,
+                resolved = false,
+                reason = context.Reason,
+                ownerId = (long?)null,
+                ownerName = (string?)null,
+                locations = Array.Empty<object>()
+            });
+        }
+
+        ownerFilter = context.OwnerId;
+        resolvedOwnerName = context.OwnerName;
+    }
+
+    var query = db.Set<SimHost.Domain.Mms.LightSystemInventory>().AsQueryable();
+
+    if (ownerFilter is { } ownerId)
+    {
+        query = query.Where(r => r.OwnerId == ownerId);
+    }
+
+    var classNames = await db.Set<SimHost.Domain.Mms.LightSystemClassCode>()
+        .AsNoTracking()
+        .ToDictionaryAsync(c => c.LightSystemClassCodeId, c => c.LightSystemClassCodeName, ct);
+
+    var statusNames = await db.Set<SimHost.Domain.Mms.SetupAssetStatus>()
+        .AsNoTracking()
+        .ToDictionaryAsync(s => s.AssetStatusId, s => s.AssetStatusName, ct);
+
+    var ownerNames = await db.Set<SimHost.Domain.Mms.SetupOwner>()
+        .AsNoTracking()
+        .ToDictionaryAsync(o => o.OwnerId, o => o.OwnerName, ct);
+
+    var rows = await query
+        .AsNoTracking()
+        .OrderBy(r => r.LightSystemId)
+        .ToListAsync(ct);
+
+    var locations = rows.Select(r => new
+    {
+        r.LightSystemId,
+        r.LightSystemName,
+
+        // Both the resolved name and the raw id travel together. A name alone
+        // cannot distinguish "resolved to nothing" from "reference data is
+        // missing the row", and the id is what an MMS operator quotes.
+        classCodeId = r.LightSystemClassCodeId,
+        classCode = classNames.GetValueOrDefault(r.LightSystemClassCodeId),
+        statusId = r.LightSystemStatusId,
+        status = r.LightSystemStatusId is { } s ? statusNames.GetValueOrDefault(s) : null,
+        r.OwnerId,
+
+        // Distinguished from a merely unrecognised owner id: a null OWNER_ID is a
+        // light system that belongs to nobody and can never resolve to a twin.
+        owner = r.OwnerId is { } o ? ownerNames.GetValueOrDefault(o) : "no owner"
+    });
+
+    // The owner is echoed back so a caller can see which district the twin scoped
+    // to. Without it a filtered result is indistinguishable from an unfiltered one,
+    // and the resolution that produced it is invisible.
+    return Results.Ok(new
+    {
+        twin,
+        resolved = string.IsNullOrWhiteSpace(twin) || ownerFilter is not null,
+        reason = (string?)null,
+        ownerId = ownerFilter,
+        ownerName = resolvedOwnerName,
+        locations
+    });
+});
+
+/// Relates an MMS OWNER_ID to a context another participant registered.
+app.MapPost("/admin/mms/owners/relate", async (
+    CirRegistrationService registration,
+    long ownerId, string sourceId, string idInSource,
+    CancellationToken ct) =>
+{
+    var result = await registration.RelateMmsOwnerAsync(ownerId, sourceId, idInSource, ct);
+
+    return result.Faults.Count > 0
+        ? Results.BadRequest(new { result.Faults })
+        : Results.Ok(new { related = result.EquivalencesAsserted });
+});
+
+app.MapGet("/admin/cms/assets", async (
+    IParticipantDbContextFactory factory, CmsContextResolver resolver,
+    string? twin, CancellationToken ct) =>
+{
+    await using var db = factory.Create(CmsService.ParticipantId);
+
+    var query = db.Set<SimHost.Domain.Cms.MonitoredAssetRecord>().AsQueryable();
+
+    // The twin is resolved to a CIRID and then to CMS's own owner code, rather than
+    // matched against a column. CMS has no iTwin column by design: the caller's twin
+    // GUID means nothing here until the registry relates it to an owner CMS knows.
+    //
+    // An unresolvable twin yields no owner code, and the correct answer is then an
+    // empty result with a reason — not every row, and not a silent match on null.
+    string? ownerCode = null;
+
+    if (!string.IsNullOrWhiteSpace(twin))
+    {
+        ownerCode = await resolver.ResolveOwnerCodeAsync(twin, ct);
+
+        if (ownerCode is null)
+        {
+            return Results.Ok(new
+            {
+                records = Array.Empty<object>(),
+                unresolvedContext = twin,
+                detail = "No CMS context owner is related to that twin. " +
+                         "Register and relate the owner before filtering by it."
+            });
+        }
+
+        query = query.Where(r => r.OwnerCode == ownerCode);
+    }
+
+    var records = await query
+        .OrderBy(r => r.AssetCode)
         .Select(r => new
         {
-            r.EquipmentNumber,
+            r.AssetCode,
             r.Designation,
-            r.PlannerGroup,
+            r.SerialNumber,
+            r.InstalledAtLocationCode,
+            r.InstalledAt,
+            r.OwnerCode,
+            assertedContext = r.ForeignOwnerSourceId + ":" + r.ForeignOwnerIdInSource,
             foreignIdentifier = r.ForeignSourceId + ":" + r.ForeignIdInSource,
             r.Cirid,
             resolved = r.Cirid != null
         })
         .ToListAsync(ct);
 
-    return Results.Ok(records);
+    return Results.Ok(new { records, resolvedOwnerCode = ownerCode });
+});
+
+app.MapGet("/admin/cms/locations", async (
+    IParticipantDbContextFactory factory, CmsContextResolver resolver,
+    string? twin, CancellationToken ct) =>
+{
+    await using var db = factory.Create(CmsService.ParticipantId);
+
+    var query = db.Set<SimHost.Domain.Cms.MonitoredLocationRecord>().AsQueryable();
+
+    string? ownerCode = null;
+
+    if (!string.IsNullOrWhiteSpace(twin))
+    {
+        ownerCode = await resolver.ResolveOwnerCodeAsync(twin, ct);
+
+        if (ownerCode is null)
+        {
+            return Results.Ok(new
+            {
+                records = Array.Empty<object>(),
+                unresolvedContext = twin,
+                detail = "No CMS context owner is related to that twin. " +
+                         "Register and relate the owner before filtering by it."
+            });
+        }
+
+        query = query.Where(r => r.OwnerCode == ownerCode);
+    }
+
+    var records = await query
+        .OrderBy(r => r.LocationCode)
+        .Select(r => new
+        {
+            r.LocationCode,
+            r.Designation,
+            r.OwnerCode,
+            assertedContext = r.ForeignOwnerSourceId + ":" + r.ForeignOwnerIdInSource,
+            foreignIdentifier = r.ForeignSourceId + ":" + r.ForeignIdInSource,
+            r.Cirid,
+            resolved = r.Cirid != null
+        })
+        .ToListAsync(ct);
+
+    return Results.Ok(new { records, resolvedOwnerCode = ownerCode });
+});
+
+/// Relates a CMS owner code to a context another participant registered.
+app.MapPost("/admin/cms/owners/relate", async (
+    CirRegistrationService service,
+    string ownerCode, string sourceId, string idInSource,
+    CancellationToken ct) =>
+{
+    var result = await service.RelateCmsOwnerAsync(ownerCode, sourceId, idInSource, ct);
+
+    return result.Faults.Count > 0
+        ? Results.BadRequest(new { result.Faults })
+        : Results.Ok(new { related = result.EquivalencesAsserted });
+});
+
+app.MapGet("/admin/cms/owners", async (
+    IParticipantDbContextFactory factory, CancellationToken ct) =>
+{
+    await using var db = factory.Create(CmsService.ParticipantId);
+
+    var owners = await db.Set<SimHost.Domain.Cms.ContextOwnerRecord>()
+        .OrderBy(o => o.OwnerCode)
+        .Select(o => new { o.OwnerCode, o.OwnerName, o.Cirid, related = o.Cirid != null })
+        .ToListAsync(ct);
+
+    return Results.Ok(owners);
 });
 
 app.MapGet("/admin/reg-location/stewardship", async (

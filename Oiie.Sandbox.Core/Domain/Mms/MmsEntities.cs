@@ -1,64 +1,19 @@
 namespace SimHost.Domain.Mms;
 
 /// <summary>
-/// A functional location as the maintenance system knows it.
+/// A serialised physical asset as the sandbox models it.
 ///
-/// MMS is a legacy system with legacy keys: numeric, meaningless, and assigned by
-/// its own sequence. It has no idea what LOC-000001 or TIC-106 are, which is the
-/// entire point — three systems, three identifiers, one physical thing.
-/// </summary>
-public class FunctionalLocationRecord
-{
-    public long Id { get; set; }
-
-    /// <summary>
-    /// The identity as adopted from the inbound message. MMS never mints: it is not a
-    /// master of identity, it is a legacy system holding its own codes for things
-    /// other people originated. Empty means nothing has told it what this is yet.
-    /// </summary>
-    public Guid FederationId { get; set; }
-
-    /// <summary>
-    /// MMS's legacy code, e.g. 234443. Registered against the FederationId rather
-    /// than standing in for it — this is exactly the legacy-code case CIR resolves.
-    /// </summary>
-    public string EquipmentNumber { get; set; } = string.Empty;
-
-    public string? Designation { get; set; }
-
-    public string? CostCentre { get; set; }
-
-    public string? PlannerGroup { get; set; }
-
-    /// <summary>
-    /// Foreign identifier as received, kept raw. Until something resolves it, this
-    /// is all MMS has — a string from a system it has never heard of.
-    /// </summary>
-    public string? ForeignSourceId { get; set; }
-
-    public string? ForeignIdInSource { get; set; }
-
-    /// <summary>
-    /// Set once the registry resolves the foreign identifier to a shared identity.
-    /// Null means unresolved, which is visibly different from having no identity.
-    /// </summary>
-    public Guid? Cirid { get; set; }
-
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
-
-    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
-}
-
-/// <summary>
-/// A serialised physical asset as the maintenance system knows it.
+/// NOTE: this is NOT customer schema. No equipment table has been supplied, and
+/// LIGHT_SYSTEM_INVENTORY has no serial number or nameplate data to stand in for
+/// one. It is retained only so Scenario 11's install/removal machinery keeps
+/// working until the real work-order and equipment tables are known, and it must
+/// not be mistaken for something the customer has.
 ///
-/// Unlike <see cref="FunctionalLocationRecord"/>, this is a thing MMS genuinely
-/// originates: the serial number is read off a nameplate by a technician, and no
-/// upstream system has ever named it. So MMS does mint a FederationId here, which is
-/// not a contradiction of "MMS never mints" — that rule is about identity for things
-/// other systems already own. The distinction matters: minting for a foreign
-/// location would create a competing identity, whereas refusing to mint for an asset
-/// only it has seen would leave the asset unidentifiable downstream.
+/// Because it is ours rather than theirs, it may hold a FederationId: MMS genuinely
+/// originates a serialised asset read off a nameplate, and nothing upstream has
+/// ever named it. That is the opposite of the LIGHT_SYSTEM_INVENTORY case, where
+/// the row describes something other systems already know about and identity must
+/// therefore come from the registry.
 /// </summary>
 public class EquipmentRecord
 {
@@ -66,16 +21,13 @@ public class EquipmentRecord
 
     public string EquipmentNumber { get; set; } = string.Empty;
 
-    /// <summary>
-    /// Minted by MMS, because MMS is the originating system for serialised assets.
-    /// </summary>
     public Guid FederationId { get; set; }
 
     public string? Designation { get; set; }
 
     /// <summary>
-    /// The location this asset is currently installed at, or null when removed and
-    /// not yet reinstalled. Null is a real state, not missing data — an asset in the
+    /// The LIGHT_SYSTEM_ID this asset is installed at, as a string, or null when
+    /// removed and not yet reinstalled. Null is a real state: an asset in the
     /// workshop is genuinely installed nowhere.
     /// </summary>
     public string? FunctionalLocationNumber { get; set; }
@@ -89,6 +41,96 @@ public class EquipmentRecord
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// A light system as the maintenance system actually records it.
+///
+/// This maps dbo.LIGHT_SYSTEM_INVENTORY column for column, and the absences are
+/// the significant part. There is no FederationId, no Cirid and no foreign
+/// identifier, because the customer schema has no column for any of them and we
+/// may not add one. Adding a column here would put a second, competing identity
+/// inside a schema that is not ours — which is the mistake DR-008 records.
+/// Shared identity therefore lives only in ws-CIR, registered against
+/// LIGHT_SYSTEM_ID and resolved on read.
+/// </summary>
+public class LightSystemInventory
+{
+    /// <summary>
+    /// LIGHT_SYSTEM_ID. The only key MMS has, so it is also the only thing CIR can
+    /// register an entry against.
+    /// </summary>
+    public long LightSystemId { get; set; }
+
+    public string LightSystemName { get; set; } = string.Empty;
+
+    public long LightSystemClassCodeId { get; set; }
+
+    public long? LightSystemStatusId { get; set; }
+
+    /// <summary>
+    /// OWNER_ID — MMS's context key, the counterpart of an iTwin id in ENG.
+    ///
+    /// Nullable in the real schema, and that null is a genuine state rather than
+    /// missing data: a row with no owner can never resolve to a twin. Such rows
+    /// should surface as explicitly context-less, not vanish from a filtered view,
+    /// because silently dropping them would misreport the inventory as smaller
+    /// than it is.
+    /// </summary>
+    public long? OwnerId { get; set; }
+}
+
+/// <summary>
+/// dbo.LIGHT_SYSTEM_CLASS_CODE. Reference data owned by the customer; the sandbox
+/// reads it and never writes it.
+/// </summary>
+public class LightSystemClassCode
+{
+    public long LightSystemClassCodeId { get; set; }
+
+    public string LightSystemClassCodeName { get; set; } = string.Empty;
+
+    public bool ActiveFlag { get; set; } = true;
+
+    public string? UserUpdate { get; set; }
+
+    public DateTime? DateUpdate { get; set; }
+}
+
+/// <summary>
+/// dbo.SETUP_ASSET_STATUS. Shared across asset types, which is why it is not
+/// prefixed LIGHT_SYSTEM_.
+/// </summary>
+public class SetupAssetStatus
+{
+    public long AssetStatusId { get; set; }
+
+    public string AssetStatusName { get; set; } = string.Empty;
+
+    public bool ActiveFlag { get; set; } = true;
+
+    public string? UserUpdate { get; set; }
+
+    public DateTime? DateUpdate { get; set; }
+}
+
+/// <summary>
+/// dbo.SETUP_OWNER — the districts and units that own inventory.
+///
+/// This is the table an iTwin resolves to. The resolution is registry-mediated:
+/// nothing here records which twin an owner corresponds to, and nothing should.
+/// </summary>
+public class SetupOwner
+{
+    public long OwnerId { get; set; }
+
+    public string OwnerName { get; set; } = string.Empty;
+
+    public bool ActiveFlag { get; set; } = true;
+
+    public string? UserUpdate { get; set; }
+
+    public DateTime? DateUpdate { get; set; }
 }
 
 /// <summary>Whether a work order installed an asset or removed one.</summary>
@@ -114,6 +156,10 @@ public enum WorkOrderState { Open, Completed, SignedOff }
 /// change and let MMS reconcile it against recent orders. That is deliberately
 /// absent: without it, MMS publishes on the technician's word alone, which is
 /// exactly the unverified case that Scenario 10 exists to improve on.
+///
+/// NOTE: no customer work-order table has been supplied, so this is a sandbox-only
+/// construct. Scenario 11 is parked pending the real table names; it is retained
+/// rather than deleted so the scenario can be revived without being rebuilt.
 /// </summary>
 public class WorkOrder
 {
@@ -160,9 +206,11 @@ public class WorkOrder
 /// Endpoints are held as the registry's codes rather than resolved to MMS's own
 /// equipment numbers. MMS did not originate either end and has no authority to
 /// restate the relationship in its own vocabulary; the codes are what it was told,
-/// and <see cref="FunctionalLocationRecord.ForeignIdInSource"/> is how they join to
-/// anything local. Storing an edge whose ends MMS cannot yet see is therefore
-/// normal, not an error.
+/// and ws-CIR resolution is how they join to anything local. Storing an edge whose
+/// ends MMS cannot yet see is therefore normal, not an error.
+///
+/// NOTE: no customer table has been supplied for this yet, so it remains a
+/// sandbox-only construct and is not part of the real MMS schema.
 /// </summary>
 public class LocationRelationshipRecord
 {
@@ -170,7 +218,7 @@ public class LocationRelationshipRecord
 
     /// <summary>
     /// The edge's identity as adopted from the sender, never reminted — the same
-    /// rule that governs <see cref="FunctionalLocationRecord.FederationId"/>.
+    /// rule that governs <see cref="EquipmentRecord.FederationId"/>.
     /// </summary>
     public Guid FederationId { get; set; }
 

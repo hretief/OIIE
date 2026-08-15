@@ -16,7 +16,7 @@ using SimHost.Infrastructure.Isbm;
 using SimHost.Infrastructure.Sql;
 using SimHost.Personalities.Eng;
 using SimHost.Personalities.Mms;
-using SimHost.Personalities.OmReliability;
+using SimHost.Personalities.Cms;
 using SimHost.Personalities.RegLocation;
 
 namespace SimHost.Application;
@@ -198,6 +198,9 @@ public static class SandboxCoreRegistration
         services.AddSingleton<CirTelemetry>();
         services.AddSingleton<CirClient>();
         services.AddSingleton<CirRegistrationService>();
+        services.AddSingleton<CmsContextResolver>();
+        services.AddSingleton<MmsContextResolver>();
+        services.AddSingleton<MmsInventoryWriter>();
         services.AddSingleton<ClassFixtureLoader>();
         services.AddSingleton<ClassificationRefresher>();
 
@@ -215,11 +218,11 @@ public static class SandboxCoreRegistration
         services.AddSingleton<IBodHandler, MmsSegmentConnectionsHandler>();
 
         // OIIE Scenario 11. MMS publishes asset install/removal events for the first time —
-        // through phase 1 it only consumed — and OM-RELIABILITY is the "O&M Systems" actor
+        // through phase 1 it only consumed — and CMS is the "O&M Systems" actor
         // that receives them.
         services.AddSingleton<IBodBuilder, MmsAssetSegmentEventsBuilder>();
         services.AddSingleton<MmsWorkOrderService>();
-        services.AddSingleton<IBodHandler, OmAssetSegmentEventsHandler>();
+        services.AddSingleton<IBodHandler, CmsAssetSegmentEventsHandler>();
 
         return services;
     }

@@ -291,14 +291,18 @@ steps:
 
   # The end of the chain, and the payoff.
   #
-  # In sc02-operations-release this same row arrives with Cirid IS NULL and MMS has no idea what it is
-  # holding until the registry is asked. Here it arrives already identified, because
-  # the identity was minted once at the design tool and carried the whole way. MMS
-  # still holds its own equipment number -- a third code -- but not a third identity.
+  # In sc02-operations-release this same row arrives and MMS has no idea what it is
+  # holding until the registry is asked. Here the identity was minted once at the
+  # design tool and carried the whole way.
+  #
+  # The row itself can no longer show that difference: LIGHT_SYSTEM_INVENTORY has no
+  # FederationId column, so the arriving identity is recorded as a code assignment
+  # instead and asserted below. The row assertion is now only that the light system
+  # arrived at all.
   - at: mms
     assert: store_contains
-    entity: FunctionalLocationRecord
-    where: "ForeignSourceId = 'REG-LOCATION' AND FederationId <> '00000000-0000-0000-0000-000000000000'"
+    entity: LightSystemInventory
+    where: "LIGHT_SYSTEM_NAME = 'P-101'"
     within: 60s
 
   # MMS registered its legacy-style number against the adopted identity rather than

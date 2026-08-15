@@ -80,7 +80,7 @@ sanctions it are separate questions.
 | `docs/sequence-end-to-end.puml` | the whole path, current state |
 | `docs/sequence-sc01-sc02-handover.puml` | ENG → REG-LOCATION → MMS handover (Scenarios 1 and 2, UC01) |
 | `docs/sequence-sc01-greenfield-allocation.puml` | allocator behaviour on an empty store (Scenario 1, UC02) |
-| `docs/sequence-sc11-asset-install.puml` | MMS → OM-RELIABILITY install/removal events (Scenario 11, UC05) |
+| `docs/sequence-sc11-asset-install.puml` | MMS → CMS install/removal events (Scenario 11, UC05) |
 | `docs/sequence-uc10-as-built-handover.puml` | as-built asset handover to REG-ASSET (Scenarios 4 and 5) |
 | `docs/decision-records/` | why things are the way they are |
 | `schemas/README.md` | the XSD packages and their provenance |

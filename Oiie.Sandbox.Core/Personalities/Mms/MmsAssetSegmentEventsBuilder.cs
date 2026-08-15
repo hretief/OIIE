@@ -89,10 +89,10 @@ public sealed class MmsAssetSegmentEventsBuilder : IBodBuilder
                 .AsNoTracking()
                 .FirstOrDefaultAsync(e => e.EquipmentNumber == order.EquipmentNumber, ct);
 
-            var location = await db.Set<FunctionalLocationRecord>()
+            var location = await db.Set<LightSystemInventory>()
                 .AsNoTracking()
                 .FirstOrDefaultAsync(
-                    l => l.EquipmentNumber == order.FunctionalLocationNumber, ct);
+                    l => l.LightSystemId.ToString() == order.FunctionalLocationNumber, ct);
 
             var install = order.EventKind == AssetEventKind.Install;
 
@@ -155,13 +155,26 @@ public sealed class MmsAssetSegmentEventsBuilder : IBodBuilder
                 // as the identity would hand the consumer a code only MMS can resolve,
                 // and the whole point of carrying the FederationId is that the
                 // consumer can recognise the location without asking anyone.
+                // The identity is looked up rather than read off the row. The real
+                // inventory table has no FederationId column, so the only local
+                // record of what a light system corresponds to elsewhere is the code
+                // assignment made when it was ingested. Empty means MMS has never
+                // been told, which leaves the consumer to resolve the id through
+                // ws-CIR instead of being handed an identity that was invented here.
+                var locationKey = location.LightSystemId.ToString();
+
+                var locationIdentity = await db.Codes.AsNoTracking()
+                    .Where(c => c.ParticipantId == MmsService.ParticipantId && c.Code == locationKey)
+                    .Select(c => (Guid?)c.FederationId)
+                    .FirstOrDefaultAsync(ct) ?? Guid.Empty;
+
                 evt.Segment = new Segment
                 {
-                    UUID = location.FederationId,
-                    IDInInfoSource = location.EquipmentNumber,
+                    UUID = locationIdentity,
+                    IDInInfoSource = locationKey,
                     InfoSource = infoSource,
-                    ShortName = location.EquipmentNumber,
-                    FullName = location.Designation
+                    ShortName = locationKey,
+                    FullName = location.LightSystemName
                 };
             }
 

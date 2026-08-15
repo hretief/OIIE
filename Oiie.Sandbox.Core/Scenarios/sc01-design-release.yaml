@@ -225,8 +225,8 @@ steps:
 
   - at: mms
     assert: store_not_contains
-    entity: FunctionalLocationRecord
-    where: "ForeignSourceId = 'REG-LOCATION'"
+    entity: LightSystemInventory
+    where: "LIGHT_SYSTEM_NAME LIKE 'P-101%'"
 
   - at: mms
     assert: store_not_contains

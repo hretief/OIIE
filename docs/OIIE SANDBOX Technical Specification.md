@@ -170,7 +170,7 @@ Sandbox/
       Fixtures/
       Screens/
     construct/  reg-location/  reg-asset/  reg-product/  reg-material/  mms/
-    om-reliability/
+    cms/
     rdl/                            MIMOSA RDL — class and property definitions
   Scenarios/
     sc01-design-release.yaml
@@ -231,7 +231,7 @@ Acceptance: the existing CIR 15/15 integration assertions and 104 unit tests pas
 | **ENG** | Engineering design authority — model-based tag/segment source | 1, 27 | 1 |
 | **REG-LOCATION** | Functional location / breakdown structure registry, with stewardship gate | 1, 2, 27, 28 | 1 |
 | **MMS** | Maintenance management system — consumes engineering structure, publishes asset install/removal events | 2, 11, 33 | 1 |
-| **OM-RELIABILITY** | O&M system — consumes asset installation and removal events | 11 | 1 |
+| **CMS** | Condition Monitoring System — O&M system consuming asset installation and removal events | 11 | 1 |
 | **CONSTRUCT** | Construction / commissioning — as-built asset source | 4, 40 | 2 |
 | **REG-ASSET** | Serialised asset registry, install/remove events | 4, 5, 33 | 2 |
 | **RDL** | Reference data library — publishes class and property definitions | 34, 35 | 2 |
@@ -244,7 +244,7 @@ Scenario numbers refer to the OIIE Systems Landscape scenario table (`02List_of_
 
 **MMS publishes.** Under Scenario 11 the maintenance system is the *source* of asset installation and removal events, not merely a receiver of engineering structure. It therefore holds both roles: it subscribes on the engineering provisioning path and publishes on the operational events path.
 
-**OM-RELIABILITY exists because the O&M Systems actor had no seat.** Scenario 11 requires a receiver distinct from the publisher, and overloading REG-LOCATION with that role would have made the scenario prove nothing — a participant cannot demonstrate interoperability by publishing to itself. It is deliberately thin: it holds no reference data and no fixtures, because a reliability system receiving its first event genuinely cannot say what the asset is.
+**CMS exists because the O&M Systems actor had no seat.** Scenario 11 requires a receiver distinct from the publisher, and overloading REG-LOCATION with that role would have made the scenario prove nothing — a participant cannot demonstrate interoperability by publishing to itself. It holds no reference data and no fixtures, because a condition monitoring system receiving its first event genuinely cannot say what the asset is. What it does accumulate is its own asset and location records, built from the events it receives, so that it has a repository rather than only an inbox.
 
 **RDL is in phase 2, not phase 3.** Classification (§6.5) makes graceful degradation and definition propagation demonstrable, and both require a participant that governs and publishes definitions. It impersonates the **MIMOSA RDL**, keeping the demonstration inside the OpenO&M family — the choice of library is deliberately not a proof point at this phase, so no external library content or dependency is taken on. Class and property keys are written as resolvable URIs so the structure is realistic without the fixtures claiming to be the published library.
 
@@ -313,7 +313,7 @@ Cost control: per-developer databases are provisioned on request and deprovision
 One SQL schema per participant, with a dedicated SQL login per participant granted access **only** to its own schema.
 
 ```
-reg_location  reg_asset  reg_product  reg_material  eng  construct  mms  om_reliability  rdl
+reg_location  reg_asset  reg_product  reg_material  eng  construct  mms  cms  rdl
 sandbox       (orchestration, scenario runs, assertions)
 tower         (read-only cross-schema views — the single sanctioned exception)
 ```
@@ -460,7 +460,7 @@ Spine tables, indicative and not exhaustive:
 | `reg_product` | `Model`, `ModelRevision`, `ModelRelationship`, `Ecn`, `EcnAffectedModel` |
 | `reg_material` | `MaterialMaster`, `MaterialModelLink`, `Requisition`, `RequisitionLine` |
 | `mms` | `EquipmentRecord`, `FunctionalLocationRecord`, `WorkOrder` |
-| `om_reliability` | `AssetInstallationEvent` |
+| `cms` | `AssetInstallationEvent`, `MonitoredLocationRecord`, `MonitoredAssetRecord` |
 | `rdl` | `PublishedClass`, `PublishedProperty`, `LibraryVersion` (authoring side; see §6.5) |
 
 Per-personality attribute tables (`TagAttribute`, `AssetAttribute`, `LocationAttribute` in version 0.1) are removed — attributes are now handled uniformly by the property model.
@@ -1178,7 +1178,7 @@ Consistent with existing practice: tests run immediately after each substantive 
 | Phase | Scope | Exit criteria |
 |---|---|---|
 | **0** | Extract `Oiie.Isbm.Client` from CIR; shared session helper; CIR refactored to consume it | Existing CIR 15/15 integration and 104 unit tests pass unchanged |
-| **1** | SimHost runtime; persistence including the §6.5 tables and chain-resolution engine; outbox/inbox; BOD dispatcher and validator; headless runner; ENG, REG-LOCATION, MMS, **OM-RELIABILITY**; `sc01-design-release`, `sc02-operations-release`, `sc11-asset-install` | scenarios 1, 2 and 11 pass in CI end to end; entities classify and resolve an effective property set, with a minimal fixture hierarchy |
+| **1** | SimHost runtime; persistence including the §6.5 tables and chain-resolution engine; outbox/inbox; BOD dispatcher and validator; headless runner; ENG, REG-LOCATION, MMS, **CMS**; `sc01-design-release`, `sc02-operations-release`, `sc11-asset-install` | scenarios 1, 2 and 11 pass in CI end to end; entities classify and resolve an effective property set, with a minimal fixture hierarchy |
 CIR merge tooling; `identity-merge`, `rdl-graceful-degradation`
 | **3** | REG-PRODUCT, REG-MATERIAL; attribute BODs; `uc04-product-pull`, `uc12-rfi-models`, `eng-delta-publish`, `reclassification` | All phase-3 scenarios pass in CI |
 | **4** | Full UI: domain screens, BOD renderer, identity panel, control tower, cluster graph, CIR explorer, kiosk mode, SignalR; snapshot/restore | SC-2 and SC-4 met; demo rehearsed end to end |

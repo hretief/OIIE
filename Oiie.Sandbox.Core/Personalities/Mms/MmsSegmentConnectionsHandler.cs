@@ -21,7 +21,7 @@ namespace SimHost.Personalities.Mms;
 /// equipment numbers. MMS originated neither end and has no standing to restate the
 /// relationship in its own vocabulary — the same reason it stores a foreign
 /// identifier raw instead of resolving it. Joining an edge to local records is the
-/// registry's job via <see cref="FunctionalLocationRecord.ForeignIdInSource"/>, and
+/// registry's job, resolving LIGHT_SYSTEM_ID through ws-CIR, and
 /// an edge naming a location MMS has not been told about yet is stored anyway rather
 /// than dropped: message order is not something a receiver should depend on, and the
 /// segment may simply be behind it.

@@ -92,6 +92,52 @@ public static class CirBods
     }
 
     /// <summary>
+    /// ChangeEntryCIRID: collapse several shared identities onto one (§3.1.4).
+    ///
+    /// This is the counterpart to <see cref="ProcessEquivalentEntries"/>, and the
+    /// distinction is which entries already exist. CreateEquivalentEntries resolves
+    /// an existing entry and *inserts* the new one beside it, so it faults with
+    /// DuplicateEntry when both sides are already registered. That is the normal
+    /// case once each participant has registered its own context owners
+    /// independently — neither side is new, and there is nothing left to insert.
+    ///
+    /// ChangeEntryCIRID instead re-points entries that already carry one identity
+    /// onto another, which is how two independently registered entries become one
+    /// thing without either being re-created.
+    ///
+    /// The verb has no response BOD: §3.1.4 defines no faults, and an OldCIRID
+    /// matching nothing is a no-op. Callers therefore confirm by re-resolving
+    /// rather than by inspecting an acknowledgement.
+    /// </summary>
+    public static XDocument ChangeEntryCirid(
+        IReadOnlyList<Guid> oldCirids,
+        Guid newCirid,
+        string senderLogicalId,
+        string correlationId,
+        Instant? creationDateTime = null)
+    {
+        var payload = new XElement(Cir + "UpdateEntryCIRID");
+
+        foreach (var old in oldCirids)
+        {
+            payload.Add(new XElement(Cir + "OldCIRID", old));
+        }
+
+        payload.Add(new XElement(Cir + "NewCIRID", newCirid));
+
+        var root = new XElement(Cir + "ChangeEntryCIRID",
+            new XAttribute(XNamespace.Xmlns + "cir", Namespaces.Cir),
+            new XAttribute(XNamespace.Xmlns + "oa", Namespaces.Oagis),
+            new XAttribute("releaseID", "1.2.1"),
+            ApplicationArea(senderLogicalId, correlationId, null, creationDateTime),
+            new XElement(Cir + "DataArea",
+                new XElement(Oagis + "Change"),
+                payload));
+
+        return new XDocument(root);
+    }
+
+    /// <summary>
     /// GetRegistry: ask what the registry knows.
     ///
     /// An empty filter list matches everything, so callers resolving one identifier

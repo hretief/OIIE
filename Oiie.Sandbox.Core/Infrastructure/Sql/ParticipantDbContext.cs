@@ -3,7 +3,7 @@ using SimHost.Application.Identity;
 using SimHost.Domain.Common;
 using SimHost.Domain.Eng;
 using SimHost.Domain.Mms;
-using SimHost.Domain.OmReliability;
+using SimHost.Domain.Cms;
 using SimHost.Domain.RegLocation;
 
 namespace SimHost.Infrastructure.Sql;
@@ -333,37 +333,92 @@ public class ParticipantDbContext : DbContext
                 ConfigureMms(modelBuilder);
                 break;
 
-            case "om_reliability":
-                ConfigureOmReliability(modelBuilder);
+            case "cms":
+                ConfigureCms(modelBuilder);
                 break;
         }
     }
 
+    /// <summary>
+    /// The maintenance system, mapped to the customer's actual schema.
+    ///
+    /// Table and column names are the customer's, not ours, and no column exists
+    /// here that they did not define. In particular there is no FederationId and no
+    /// Cirid: MMS stores no shared identity at all, and everything cross-system is
+    /// resolved through ws-CIR against LIGHT_SYSTEM_ID at read time.
+    ///
+    /// The SQL schema is deliberately left to HasDefaultSchema rather than pinned to
+    /// dbo. In the customer's database these live in dbo; in the sandbox each
+    /// participant is isolated into its own schema and connects as a contained user
+    /// granted only on that schema, so pinning dbo here would make every MMS query
+    /// fail on permissions. The names are what fidelity requires; the schema is
+    /// deployment context.
+    /// </summary>
     private static void ConfigureMms(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<FunctionalLocationRecord>(entity =>
+        modelBuilder.Entity<LightSystemInventory>(entity =>
         {
-            entity.ToTable("FunctionalLocationRecord");
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.EquipmentNumber).HasMaxLength(32).IsRequired();
-            entity.Property(e => e.Designation).HasMaxLength(400);
-            entity.Property(e => e.CostCentre).HasMaxLength(32);
-            entity.Property(e => e.PlannerGroup).HasMaxLength(32);
-            entity.Property(e => e.ForeignSourceId).HasMaxLength(200);
-            entity.Property(e => e.ForeignIdInSource).HasMaxLength(200);
-            entity.HasIndex(e => e.EquipmentNumber).IsUnique();
-            entity.HasIndex(e => new { e.ForeignSourceId, e.ForeignIdInSource });
-            entity.HasIndex(e => e.Cirid);
+            entity.ToTable("LIGHT_SYSTEM_INVENTORY");
 
-            // Filtered: a record MMS has not yet been told the identity of holds
-            // Guid.Empty, and there can be many of those legitimately. Only real
-            // identities must be unique — two rows under one FederationId would claim
-            // MMS holds the same thing twice.
-            entity.HasIndex(e => e.FederationId)
-                .IsUnique()
-                .HasFilter("[FederationId] <> '00000000-0000-0000-0000-000000000000'");
+            // Assigned, never generated: the sandbox allocates the next value
+            // explicitly so the insert and its CIR registration stay together.
+            entity.HasKey(e => e.LightSystemId);
+            entity.Property(e => e.LightSystemId)
+                .HasColumnName("LIGHT_SYSTEM_ID")
+                .ValueGeneratedNever();
+
+            entity.Property(e => e.LightSystemName)
+                .HasColumnName("LIGHT_SYSTEM_NAME").HasMaxLength(100).IsRequired();
+            entity.Property(e => e.LightSystemClassCodeId)
+                .HasColumnName("LIGHT_SYSTEM_CLASS_CODE_ID").IsRequired();
+            entity.Property(e => e.LightSystemStatusId)
+                .HasColumnName("LIGHT_SYSTEM_STATUS_ID");
+            entity.Property(e => e.OwnerId)
+                .HasColumnName("OWNER_ID");
         });
 
+        modelBuilder.Entity<LightSystemClassCode>(entity =>
+        {
+            entity.ToTable("LIGHT_SYSTEM_CLASS_CODE");
+            entity.HasKey(e => e.LightSystemClassCodeId);
+            entity.Property(e => e.LightSystemClassCodeId)
+                .HasColumnName("LIGHT_SYSTEM_CLASS_CODE_ID").ValueGeneratedNever();
+            entity.Property(e => e.LightSystemClassCodeName)
+                .HasColumnName("LIGHT_SYSTEM_CLASS_CODE_NAME").HasMaxLength(200).IsRequired();
+            entity.Property(e => e.ActiveFlag).HasColumnName("ACTIVE_FLAG").IsRequired();
+            entity.Property(e => e.UserUpdate).HasColumnName("USER_UPDATE").HasMaxLength(100);
+            entity.Property(e => e.DateUpdate).HasColumnName("DATE_UPDATE").HasPrecision(3);
+        });
+
+        modelBuilder.Entity<SetupAssetStatus>(entity =>
+        {
+            entity.ToTable("SETUP_ASSET_STATUS");
+            entity.HasKey(e => e.AssetStatusId);
+            entity.Property(e => e.AssetStatusId)
+                .HasColumnName("ASSET_STATUS_ID").ValueGeneratedNever();
+            entity.Property(e => e.AssetStatusName)
+                .HasColumnName("ASSET_STATUS_NAME").HasMaxLength(200).IsRequired();
+            entity.Property(e => e.ActiveFlag).HasColumnName("ACTIVE_FLAG").IsRequired();
+            entity.Property(e => e.UserUpdate).HasColumnName("USER_UPDATE").HasMaxLength(100);
+            entity.Property(e => e.DateUpdate).HasColumnName("DATE_UPDATE").HasPrecision(3);
+        });
+
+        modelBuilder.Entity<SetupOwner>(entity =>
+        {
+            entity.ToTable("SETUP_OWNER");
+            entity.HasKey(e => e.OwnerId);
+            entity.Property(e => e.OwnerId)
+                .HasColumnName("OWNER_ID").ValueGeneratedNever();
+            entity.Property(e => e.OwnerName)
+                .HasColumnName("OWNER_NAME").HasMaxLength(200).IsRequired();
+            entity.Property(e => e.ActiveFlag).HasColumnName("ACTIVE_FLAG").IsRequired();
+            entity.Property(e => e.UserUpdate).HasColumnName("USER_UPDATE").HasMaxLength(100);
+            entity.Property(e => e.DateUpdate).HasColumnName("DATE_UPDATE").HasPrecision(3);
+        });
+
+        // Sandbox-only below this line: no customer table has been supplied for
+        // equipment, relationships or work orders, so these keep their original
+        // shape rather than pretending to a fidelity they do not have.
         modelBuilder.Entity<EquipmentRecord>(entity =>
         {
             entity.ToTable("EquipmentRecord");
@@ -375,9 +430,6 @@ public class ParticipantDbContext : DbContext
             entity.Property(e => e.ModelNumber).HasMaxLength(64);
             entity.HasIndex(e => e.EquipmentNumber).IsUnique();
             entity.HasIndex(e => e.FunctionalLocationNumber);
-
-            // Unlike a functional location, MMS originates its assets, so every row
-            // has a real identity and the constraint needs no empty-Guid exemption.
             entity.HasIndex(e => e.FederationId).IsUnique();
         });
 
@@ -395,7 +447,7 @@ public class ParticipantDbContext : DbContext
             entity.HasIndex(e => e.FromLocationId);
             entity.HasIndex(e => e.ToLocationId);
 
-            // Same exemption as FunctionalLocationRecord: MMS adopts identity rather
+            // Same exemption as EquipmentRecord: MMS adopts identity rather
             // than minting it, so a sender that asserted none leaves this empty and
             // more than one such row must remain possible.
             entity.HasIndex(e => e.FederationId)
@@ -423,13 +475,30 @@ public class ParticipantDbContext : DbContext
     /// <summary>
     /// The O&amp;M consumer in OIIE Scenario 11.
     ///
-    /// It holds only the event log: no locations, no assets, no reference data of its
-    /// own. That is the honest shape of a system being provisioned entirely by
-    /// publication, and it is what makes the unmapped-value behaviour visible here
+    /// CMS holds the event log plus the asset and location records it builds from
+    /// that log. It has no reference data of its own: everything it knows arrives by
+    /// publication, which is what makes the unmapped-value behaviour visible here
     /// rather than hidden behind a local model that happens to agree.
     /// </summary>
-    private static void ConfigureOmReliability(ModelBuilder modelBuilder)
+    private static void ConfigureCms(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<ContextOwnerRecord>(entity =>
+        {
+            entity.ToTable("ContextOwner");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.OwnerCode).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.OwnerName).HasMaxLength(200).IsRequired();
+
+            // Unique on CMS's own code, mirroring the OWNER_ID uniqueness a real
+            // O&M system enforces on its owner domain table.
+            entity.HasIndex(e => e.OwnerCode).IsUnique();
+
+            // Deliberately not unique: until equivalence is asserted every row here
+            // carries a null Cirid, and a unique constraint would permit exactly one
+            // unresolved owner.
+            entity.HasIndex(e => e.Cirid);
+        });
+
         modelBuilder.Entity<AssetInstallationEvent>(entity =>
         {
             entity.ToTable("AssetInstallationEvent");
@@ -443,6 +512,9 @@ public class ParticipantDbContext : DbContext
             entity.Property(e => e.PerformedBy).HasMaxLength(128);
             entity.Property(e => e.WorkOrderNumber).HasMaxLength(32);
             entity.Property(e => e.SourceParticipant).HasMaxLength(64);
+            entity.Property(e => e.OwnerCode).HasMaxLength(32);
+            entity.Property(e => e.ForeignOwnerSourceId).HasMaxLength(200);
+            entity.Property(e => e.ForeignOwnerIdInSource).HasMaxLength(200);
 
             // Unique on the event identity, not on asset+location: the same asset
             // legitimately returns to the same location after a workshop repair, and a
@@ -451,6 +523,58 @@ public class ParticipantDbContext : DbContext
             entity.HasIndex(e => new { e.AssetFederationId, e.OccurredAt });
             entity.HasIndex(e => e.LocationFederationId);
             entity.HasIndex(e => e.Cirid);
+            entity.HasIndex(e => e.OwnerCode);
+        });
+
+        modelBuilder.Entity<MonitoredLocationRecord>(entity =>
+        {
+            entity.ToTable("MonitoredLocationRecord");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.LocationCode).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.Designation).HasMaxLength(400);
+            entity.Property(e => e.ForeignSourceId).HasMaxLength(200);
+            entity.Property(e => e.ForeignIdInSource).HasMaxLength(200);
+            entity.Property(e => e.OwnerCode).HasMaxLength(32);
+            entity.Property(e => e.ForeignOwnerSourceId).HasMaxLength(200);
+            entity.Property(e => e.ForeignOwnerIdInSource).HasMaxLength(200);
+            entity.HasIndex(e => e.LocationCode).IsUnique();
+            entity.HasIndex(e => new { e.ForeignSourceId, e.ForeignIdInSource });
+            entity.HasIndex(e => e.Cirid);
+            entity.HasIndex(e => e.OwnerCode);
+
+            // Same exemption as MMS: CMS adopts identity rather than minting it, so a
+            // publisher that asserted none leaves this empty, and more than one such
+            // record must remain possible.
+            entity.HasIndex(e => e.FederationId)
+                .IsUnique()
+                .HasFilter("[FederationId] <> '00000000-0000-0000-0000-000000000000'");
+        });
+
+        modelBuilder.Entity<MonitoredAssetRecord>(entity =>
+        {
+            entity.ToTable("MonitoredAssetRecord");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.AssetCode).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.Designation).HasMaxLength(400);
+            entity.Property(e => e.SerialNumber).HasMaxLength(64);
+            entity.Property(e => e.InstalledAtLocationCode).HasMaxLength(32);
+            entity.Property(e => e.ForeignSourceId).HasMaxLength(200);
+            entity.Property(e => e.ForeignIdInSource).HasMaxLength(200);
+            entity.Property(e => e.OwnerCode).HasMaxLength(32);
+            entity.Property(e => e.ForeignOwnerSourceId).HasMaxLength(200);
+            entity.Property(e => e.ForeignOwnerIdInSource).HasMaxLength(200);
+            entity.HasIndex(e => e.AssetCode).IsUnique();
+            entity.HasIndex(e => new { e.ForeignSourceId, e.ForeignIdInSource });
+            entity.HasIndex(e => e.InstalledAtLocationCode);
+            entity.HasIndex(e => e.Cirid);
+            entity.HasIndex(e => e.OwnerCode);
+
+            // Unlike MMS, CMS never originates an asset — it learns of one only when
+            // an event names it — so an unidentified asset is possible here and the
+            // constraint needs the same empty-Guid exemption.
+            entity.HasIndex(e => e.FederationId)
+                .IsUnique()
+                .HasFilter("[FederationId] <> '00000000-0000-0000-0000-000000000000'");
         });
     }
 

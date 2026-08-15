@@ -118,12 +118,17 @@ steps:
   # thing as the other two.
   #
   # The wait matters: this row arrives over the bus, so evaluating it instantly races
-  # delivery. Cirid IS NULL stays true until the register_cir steps below, so waiting
-  # cannot mask a premature link.
+  # delivery.
+  #
+  # This no longer asserts "and unresolved". The real schema has no Cirid column to be
+  # null, so unresolvedness is not a property of the row any more -- it is the absence
+  # of a registry assertion, which the cir_registered step below is what actually
+  # tests. Status 3 is 'Proposed', which is what MMS records for something received
+  # but not yet surveyed.
   - at: mms
     assert: store_contains
-    entity: FunctionalLocationRecord
-    where: "ForeignSourceId = 'REG-LOCATION' AND Cirid IS NULL"
+    entity: LightSystemInventory
+    where: "LIGHT_SYSTEM_STATUS_ID = 3"
     within: 60s
 
   # -- The topology arrives with the locations --------------------------------------
@@ -139,8 +144,8 @@ steps:
 
   # MMS holds the edge in the registry's vocabulary, not its own. It originated
   # neither end and has no standing to restate the relationship, so LOC- codes are
-  # what it stores -- which is also what makes the row joinable back to
-  # FunctionalLocationRecord.ForeignIdInSource.
+  # what it stores. Joining those codes back to a light system now requires ws-CIR:
+  # the real schema has no foreign-identifier column to match them against.
   - at: mms
     assert: store_contains
     entity: LocationRelationshipRecord
@@ -150,10 +155,13 @@ steps:
   # The pump specifically. Scenario 11 raises work orders against it, and asserting
   # only 'some location arrived' would let that scenario fail later with a much less
   # informative message.
+  #
+  # Matched on LIGHT_SYSTEM_NAME because that is the alternate key and the only local
+  # handle on the row: the sender's own identifier is not stored anywhere in MMS.
   - at: mms
     assert: store_contains
-    entity: FunctionalLocationRecord
-    where: "ForeignSourceId = 'REG-LOCATION' AND (ForeignIdInSource = 'P-101' OR Designation = 'P-101' OR EquipmentNumber = 'P-101')"
+    entity: LightSystemInventory
+    where: "LIGHT_SYSTEM_NAME = 'P-101'"
     within: 60s
 
   # -- CIR registration and resolution --------------------------------------------
@@ -170,9 +178,9 @@ steps:
   # participant actually asks: it holds a foreign identifier and wants to know what it
   # names.
   #
-  # This asserts the registry rather than a local column: nothing writes Cirid back
-  # onto FunctionalLocationRecord yet, so asserting that column would report a missing
-  # write-back as a CIR failure.
+  # This asserts the registry rather than a local column, and now necessarily so:
+  # LIGHT_SYSTEM_INVENTORY has no Cirid column to write back to, so the registry is
+  # the only place the resolution exists.
   - at: mms
     assert: cir_registered
     within: 60s

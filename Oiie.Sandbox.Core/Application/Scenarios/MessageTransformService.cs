@@ -17,7 +17,7 @@ public sealed record RecordField(string Label, string? Value);
 /// One row of a participant's own store, flattened to label/value pairs.
 ///
 /// Deliberately not the entity itself: the point of the view is to let someone compare
-/// an ENG Tag against an MMS FunctionalLocationRecord side by side, and those types
+/// an ENG Tag against an MMS LightSystemInventory side by side, and those types
 /// share no base class or column names. Flattening is what makes them comparable.
 /// </summary>
 /// <param name="Absent">
@@ -323,22 +323,51 @@ public sealed class MessageTransformService(
                     break;
 
                 case "mms":
-                    var records = await db.Set<FunctionalLocationRecord>().AsNoTracking()
-                        .Where(f => identities.Contains(f.FederationId))
+                    // MMS holds no FederationId, so it cannot be filtered on one
+                    // directly. The code assignments recorded at ingest are the only
+                    // local bridge from a shared identity to a LIGHT_SYSTEM_ID; the
+                    // durable version of the same link lives in ws-CIR.
+                    var codes = await db.Codes.AsNoTracking()
+                        .Where(c => c.ParticipantId == "mms" && identities.Contains(c.FederationId))
+                        .Select(c => new { c.FederationId, c.Code })
                         .ToListAsync(ct);
 
-                    views.AddRange(records.Select(f => new RecordView(
-                        participantId, nameof(FunctionalLocationRecord),
-                        f.EquipmentNumber, f.FederationId,
+                    if (codes.Count == 0) break;
+
+                    var keys = codes.Select(c => c.Code).ToList();
+
+                    var rows = await db.Set<LightSystemInventory>().AsNoTracking()
+                        .Where(r => keys.Contains(r.LightSystemId.ToString()))
+                        .ToListAsync(ct);
+
+                    var classNames = await db.Set<LightSystemClassCode>().AsNoTracking()
+                        .ToDictionaryAsync(c => c.LightSystemClassCodeId, c => c.LightSystemClassCodeName, ct);
+
+                    var statusNames = await db.Set<SetupAssetStatus>().AsNoTracking()
+                        .ToDictionaryAsync(s => s.AssetStatusId, s => s.AssetStatusName, ct);
+
+                    var ownerNames = await db.Set<SetupOwner>().AsNoTracking()
+                        .ToDictionaryAsync(o => o.OwnerId, o => o.OwnerName, ct);
+
+                    views.AddRange(rows.Select(r => new RecordView(
+                        participantId, nameof(LightSystemInventory),
+                        r.LightSystemId.ToString(),
+                        codes.First(c => c.Code == r.LightSystemId.ToString()).FederationId,
                         new RecordField[]
                         {
-                            new("Equipment number", f.EquipmentNumber),
-                            new("Designation", f.Designation),
-                            new("Cost centre", f.CostCentre),
-                            new("Planner group", f.PlannerGroup),
-                            new("Foreign source", f.ForeignSourceId),
-                            new("Foreign id", f.ForeignIdInSource),
-                            new("CIRID", f.Cirid?.ToString() ?? "unresolved")
+                            new("LIGHT_SYSTEM_ID", r.LightSystemId.ToString()),
+                            new("LIGHT_SYSTEM_NAME", r.LightSystemName),
+                            new("Class code", classNames.GetValueOrDefault(r.LightSystemClassCodeId)),
+                            new("Status", r.LightSystemStatusId is { } s
+                                ? statusNames.GetValueOrDefault(s)
+                                : null),
+
+                            // Null is shown as an explicit absence rather than blank.
+                            // An unowned light system cannot resolve to any iTwin, and
+                            // that is worth seeing rather than glossing over.
+                            new("Owner", r.OwnerId is { } o
+                                ? ownerNames.GetValueOrDefault(o)
+                                : "no owner")
                         })));
                     break;
             }

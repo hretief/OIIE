@@ -381,3 +381,51 @@ export function listLocations(signal?: AbortSignal): Promise<RegLocation[]> {
 export function approveStewardship(): Promise<ApprovalResult> {
   return request<ApprovalResult>('/admin/reg-location/approve', { method: 'POST' })
 }
+
+/**
+ * One MMS light system, as LIGHT_SYSTEM_INVENTORY holds it.
+ *
+ * Each coded column carries both its raw id and the name resolved from MMS's
+ * own reference tables. The pair matters: a null name next to a non-null id is
+ * a dangling reference, which reads very differently from a null id.
+ */
+export interface MmsLocation {
+  lightSystemId: number
+  lightSystemName: string
+  classCodeId: number
+  classCode: string | null
+  statusId: number | null
+  status: string | null
+  ownerId: number | null
+  owner: string
+}
+
+/**
+ * What MMS holds, scoped to one iTwin.
+ *
+ * The twin is resolved to an OWNER_ID through ws-CIR server-side rather than
+ * matched against a column, because LIGHT_SYSTEM_INVENTORY has no iTwin column
+ * and cannot be given one.
+ *
+ * resolved=false is not an error: it means the registry knows no MMS owner for
+ * that twin. The reason explains which, and rows is then empty rather than
+ * unfiltered -- returning everything would show one district's inventory to
+ * another.
+ */
+export interface MmsInventory {
+  twin: string | null
+  resolved: boolean
+  reason: string | null
+  ownerId: number | null
+  ownerName: string | null
+  locations: MmsLocation[]
+}
+
+/** MMS's own inventory for a twin. Omitting the twin returns every row. */
+export function listMmsLocations(
+  iTwinId?: string,
+  signal?: AbortSignal,
+): Promise<MmsInventory> {
+  const query = iTwinId ? `?twin=${encodeURIComponent(iTwinId)}` : ''
+  return request<MmsInventory>(`/admin/mms/locations${query}`, { signal })
+}

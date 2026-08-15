@@ -183,7 +183,17 @@ public sealed class CirClient(
 
         if (cached is not null && cached.IsLive(DateTimeOffset.UtcNow))
         {
-            return new ResolutionResult(cached.Cirid, [], FromCache: true, null);
+            // The CIRID is cached; the equivalence set deliberately is not. What
+            // else shares an identity changes whenever any participant registers or
+            // relinks, and MMS reads the OWNER_ID out of that set rather than from a
+            // local column — so serving an empty list here would report every twin
+            // as unrelated for the lifetime of the cache entry, which is exactly the
+            // symptom a successful relink produced.
+            var equivalents = cached.Cirid is { } cachedCirid
+                ? await FindEquivalentsAsync(participant, cachedCirid, ct)
+                : [];
+
+            return new ResolutionResult(cached.Cirid, equivalents, FromCache: true, null);
         }
 
         var config = participant.Config;
@@ -260,6 +270,122 @@ public sealed class CirClient(
 
         var response = await ExchangeAsync(participant, document, correlationId, ct);
         return response?.AllEntries.ToList() ?? [];
+    }
+
+    /// <summary>
+    /// Collapses several CIRIDs onto one, via ws-CIR ChangeEntryCIRID.
+    ///
+    /// This is the correct verb for relating two entries that both already exist.
+    /// ProcessEquivalentEntries inserts, so using it here answers DuplicateEntryFault
+    /// rather than linking the pair.
+    ///
+    /// The local identity cache is dropped for the affected CIRIDs, because a
+    /// cached row still pointing at a collapsed identity would keep answering with
+    /// the identity that was just superseded.
+    /// </summary>
+    public async Task<RegistrationResult> RelinkCiridAsync(
+        ParticipantContext participant,
+        IReadOnlyList<Guid> stale,
+        Guid newCirid,
+        CancellationToken ct = default)
+    {
+        if (stale.Count == 0)
+        {
+            return new RegistrationResult(0, [], string.Empty);
+        }
+
+        var correlationId = Guid.NewGuid().ToString();
+
+        var document = CirBods.ChangeEntryCirid(
+            stale, newCirid, participant.Config.LogicalId, correlationId);
+
+        await SendAsync(participant, document, correlationId, ct);
+
+        await using var db = factory.Create(participant.ParticipantId);
+
+        var cached = await db.IdentityMap
+            .Where(m => m.Cirid != null && stale.Contains(m.Cirid.Value))
+            .ToListAsync(ct);
+
+        foreach (var entry in cached)
+        {
+            entry.Cirid = newCirid;
+            entry.ResolvedAt = DateTimeOffset.UtcNow;
+        }
+
+        if (cached.Count > 0)
+        {
+            await db.SaveChangesAsync(ct);
+        }
+
+        logger.LogInformation(
+            "{ParticipantId} relinked {Count} CIRID(s) onto {NewCirid}.",
+            participant.ParticipantId, stale.Count, newCirid);
+
+        return new RegistrationResult(stale.Count, [], correlationId);
+    }
+
+    /// <summary>
+    /// Posts a request and returns without waiting for a response.
+    ///
+    /// For the BODs that declare no response (§3.1.4 ChangeEntryCIRID and the
+    /// Cancel verbs). Reusing <see cref="ExchangeAsync"/> for these would block
+    /// for the full timeout and then report a failure, because the absence of a
+    /// reply is correct behaviour here rather than a symptom.
+    ///
+    /// The exchange is still recorded, so a change that appears not to have taken
+    /// effect can be traced to the exact request that was sent.
+    /// </summary>
+    private async Task SendAsync(
+        ParticipantContext participant,
+        System.Xml.Linq.XDocument request,
+        string correlationId,
+        CancellationToken ct)
+    {
+        var channelUri = participant.Config.Cir.ChannelUri;
+
+        if (string.IsNullOrWhiteSpace(channelUri))
+        {
+            logger.LogError(
+                "{ParticipantId} has no CIR channel configured.", participant.ParticipantId);
+            return;
+        }
+
+        var client = clients.For(participant.ParticipantId);
+
+        var sessionId = await sessions.GetOrOpenAsync(
+            participant.ParticipantId, IsbmSessionKind.ConsumerRequest, channelUri, [], ct);
+
+        var topic = participant.Config.Cir.RequestTopic;
+
+        var exchange = new CirExchange
+        {
+            ParticipantId = participant.ParticipantId,
+            Bod = request.Root!.Name.LocalName,
+            CorrelationId = correlationId,
+            ChannelUri = channelUri,
+            Topic = topic,
+            RequestXml = request.ToString(System.Xml.Linq.SaveOptions.None)
+        };
+
+        await telemetry.SaveAsync(exchange, ct);
+
+        var requestMessageId = await client.PostRequestAsync(
+            sessionId, request.Root!, [topic], null, ct);
+
+        exchange.RequestMessageId = requestMessageId;
+        exchange.ConsumerSessionId = sessionId;
+
+        // Recorded as sent rather than answered: no reply is expected, so waiting
+        // for one would misreport correct behaviour as a timeout.
+        exchange.Outcome = "Sent";
+
+        await telemetry.SaveAsync(exchange, ct);
+
+        logger.LogDebug(
+            "{ParticipantId} sent {Bod} on topic {Topic} as {RequestMessageId} [{CorrelationId}]",
+            participant.ParticipantId, request.Root!.Name.LocalName, topic,
+            requestMessageId, correlationId);
     }
 
     /// <summary>

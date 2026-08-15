@@ -28,7 +28,7 @@ GO
 DECLARE @schemas TABLE (name SYSNAME);
 INSERT INTO @schemas (name) VALUES
     ('eng'), ('construct'), ('reg_location'), ('reg_asset'),
-    ('reg_product'), ('reg_material'), ('mms'), ('om_reliability'), ('rdl'),
+    ('reg_product'), ('reg_material'), ('mms'), ('cms'), ('rdl'),
     ('sandbox'), ('tower');
 
 DECLARE @schema SYSNAME, @sql NVARCHAR(MAX);
@@ -67,7 +67,7 @@ INSERT INTO @participants (schema_name, user_name) VALUES
     -- The O&M Systems actor of OIIE Scenario 11. Confined like every other
     -- participant: it receives asset events over the bus and must not be able to
     -- read MMS's work orders directly, or the scenario would prove nothing.
-    ('om_reliability', 'sb_om_reliability'),
+    ('cms', 'sb_cms'),
     ('rdl',          'sb_rdl');
 
 DECLARE @schemaName SYSNAME, @userName SYSNAME, @stmt NVARCHAR(MAX);

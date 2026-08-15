@@ -115,13 +115,13 @@ $participants = [ordered]@{
 
     # The "O&M Systems" actor of OIIE Scenario 11, which receives asset
     # installation and removal events published by MMS.
-    'om-reliability' = 'om_reliability'
+    'cms' = 'cms'
     'rdl'          = 'rdl'
 }
 
 $expectedSchemas = @(
     'eng', 'construct', 'reg_location', 'reg_asset',
-    'reg_product', 'reg_material', 'mms', 'om_reliability',
+    'reg_product', 'reg_material', 'mms', 'cms',
     'rdl', 'sandbox', 'tower'
 )
 

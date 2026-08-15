@@ -1,9 +1,9 @@
-participantId: om-reliability
-displayName: OM-RELIABILITY - Reliability and Condition Management
-schema: om_reliability
-sourceId: OM-RELIABILITY
+participantId: cms
+displayName: CMS - Condition Monitoring System
+schema: cms
+sourceId: CMS
 sourceOwnerId: ACME-OPERATIONS
-logicalId: urn:oiie-sandbox:om-reliability
+logicalId: urn:oiie-sandbox:cms
 accentColour: "#7c3aed"
 releaseMode: Manual
 identifierStyle: surrogate
@@ -13,7 +13,8 @@ identifierStyle: surrogate
 #
 # Subscriber only, and deliberately so. Scenario 11 is one-directional: the
 # maintenance system announces what changed and interested O&M systems listen. A
-# reliability system that answered back would be implementing a different scenario.
+# condition monitoring system that answered back would be implementing a different
+# scenario.
 #
 # Note the channel. Scenario 11 specifies ISO18435 D1.3 for operational events,
 # whereas the engineering provisioning flow of Scenarios 2 and 5 uses D0.2. Reusing
@@ -29,7 +30,7 @@ channels:
 
 isbm:
   baseUrl: https://isbm-func-44p2f3n6dv7p4.azurewebsites.net/api
-  tokenSecretName: sandbox-isbm-token-om-reliability
+  tokenSecretName: sandbox-isbm-token-cms
 
 cir:
   # The CIR provider's own request channel and topic, taken from its deployed

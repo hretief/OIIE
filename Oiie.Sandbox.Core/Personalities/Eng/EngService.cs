@@ -592,6 +592,16 @@ public sealed class SyncSegmentsBuilder : IBodBuilder
             ShortName = participant.Config.SourceId
         };
 
+        // The twins the published tags belong to, resolved once. Every segment
+        // carries its twin as RegistrationSite so downstream O&M systems can scope
+        // what they receive: without it a consumer holding two plants cannot tell
+        // which one a pump belongs to, and CCOM already has the element for saying so.
+        var twinIds = tags.Select(t => t.ITwinId).Distinct().ToList();
+        var twins = await db.ITwins
+            .AsNoTracking()
+            .Where(t => twinIds.Contains(t.Id))
+            .ToDictionaryAsync(t => t.Id, ct);
+
         foreach (var tag in tags)
         {
             var segment = new Segment
@@ -606,7 +616,8 @@ public sealed class SyncSegmentsBuilder : IBodBuilder
                 InfoSource = infoSource,
                 ShortName = tag.TagNumber,
                 FullName = tag.ServiceDescription,
-                Description = tag.ServiceDescription
+                Description = tag.ServiceDescription,
+                RegistrationSite = BuildSite(tag.ITwinId, twins, infoSource)
             };
 
             if (tag.ClassKey is { Length: > 0 })
@@ -662,6 +673,34 @@ public sealed class SyncSegmentsBuilder : IBodBuilder
         }
 
         return bod.CreateDocument();
+    }
+
+    /// <summary>
+    /// The twin as a CCOM Site, for the RegistrationSite of a published segment.
+    ///
+    /// The twin identity is used directly as the Site UUID rather than derived: the
+    /// twin already has a stable identity that other systems know it by, and minting
+    /// a second one for the same plant would defeat the point of sending it.
+    ///
+    /// Returns null for a twin ENG cannot find, which leaves the segment unscoped
+    /// rather than scoped to something invented.
+    /// </summary>
+    private static Site? BuildSite(
+        Guid twinId, Dictionary<Guid, ITwin> twins, InfoSource infoSource)
+    {
+        if (!twins.TryGetValue(twinId, out var twin))
+        {
+            return null;
+        }
+
+        return new Site
+        {
+            UUID = twin.Id,
+            IDInInfoSource = twin.Code is { Length: > 0 } ? twin.Code : twin.Id.ToString(),
+            InfoSource = infoSource,
+            ShortName = twin.Code,
+            FullName = twin.Name
+        };
     }
 
     /// <summary>Leaf-first ancestor chain for a class this participant holds.</summary>
