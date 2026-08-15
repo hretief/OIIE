@@ -560,7 +560,15 @@ function PipelineBanner({ steps, activePersona }: { steps: WorkflowStep[]; activ
 // ─── Steps panel ─────────────────────────────────────────────────────────────
 
 function StepsPanel({ steps, persona, accent, dimBg, borderColor, onAction, selectedCount }: {
-  steps: WorkflowStep[]; persona: PersonaId; accent: string; dimBg: string; borderColor: string; onAction: (a: string) => void; selectedCount: number
+  steps: WorkflowStep[]; persona: PersonaId; accent: string; dimBg: string; borderColor: string; onAction: (a: string) => void
+  /**
+   * How many rows the persona has ticked in whatever list is driving them.
+   *
+   * For most personas that is the mock inbox; for REG stewardship it is the live
+   * queue read from the registry. Either way an action needs a subject, so zero
+   * disables the button.
+   */
+  selectedCount: number
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -1029,17 +1037,37 @@ function PublishDesignPanel({ accent, dimBg, pendingCount, busy, result, onPromo
  * bindings and unmapped properties are called out rather than hidden behind a
  * row count.
  */
-function StewardshipTable({ items, accent, loading, error }: {
+function StewardshipTable({ items, accent, loading, error, selected, onToggle, onToggleAll }: {
   items: api.StewardshipItem[]
   accent: string
   loading: boolean
   error: string | null
+  selected: Set<number>
+  onToggle: (id: number) => void
+  onToggleAll: () => void
 }) {
+  // Only a proposal can be acted on. An approved or rejected row stays visible
+  // as the record of what was decided, but offering a checkbox against it would
+  // imply a decision can be retaken here, which it cannot.
+  const selectable = items.filter(i => i.state === 'Proposed')
+  const allSelected = selectable.length > 0 && selectable.every(i => selected.has(i.id))
+
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
         <thead>
           <tr style={{ borderBottom: '1px solid var(--border-mid)' }}>
+            <th style={{ padding: '7px 8px 7px 14px', width: 28 }}>
+              <input
+                type="checkbox"
+                aria-label="Select every proposal"
+                title="Select every proposal"
+                disabled={selectable.length === 0}
+                checked={allSelected}
+                onChange={onToggleAll}
+                style={{ accentColor: accent, cursor: selectable.length === 0 ? 'default' : 'pointer' }}
+              />
+            </th>
             <TH>SOURCE ID</TH>
             <TH>FROM</TH>
             <TH>PROPOSED NAME</TH>
@@ -1051,16 +1079,26 @@ function StewardshipTable({ items, accent, loading, error }: {
         </thead>
         <tbody>
           {error ? (
-            <tr><td colSpan={7} style={{ padding: '32px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '11px', color: '#f87171' }}>{error}</td></tr>
+            <tr><td colSpan={8} style={{ padding: '32px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '11px', color: '#f87171' }}>{error}</td></tr>
           ) : loading ? (
-            <tr><td colSpan={7} style={{ padding: '48px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>loading queue&hellip;</td></tr>
+            <tr><td colSpan={8} style={{ padding: '48px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>loading queue&hellip;</td></tr>
           ) : items.length === 0 ? (
-            <tr><td colSpan={7} style={{ padding: '48px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
+            <tr><td colSpan={8} style={{ padding: '48px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
               <div style={{ opacity: 0.4, fontSize: 24, marginBottom: 8 }}>◎</div>
               Nothing proposed — publish a Named Version from ENG
             </td></tr>
           ) : items.map(item => (
             <tr key={item.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+              <td style={{ padding: '9px 8px 9px 14px' }}>
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${item.sourceIdentifier}`}
+                  disabled={item.state !== 'Proposed'}
+                  checked={selected.has(item.id)}
+                  onChange={() => onToggle(item.id)}
+                  style={{ accentColor: accent, cursor: item.state === 'Proposed' ? 'pointer' : 'default' }}
+                />
+              </td>
               <td style={{ padding: '9px 14px', fontFamily: 'var(--font-mono)', fontSize: '11px', color: accent, fontWeight: 600 }}>{item.sourceIdentifier}</td>
               <td style={{ padding: '9px 8px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>{item.sourceParticipant}</td>
               <td style={{ padding: '9px 8px', fontSize: '11px', color: 'var(--text-primary)', maxWidth: 220 }}>{item.proposedName || '—'}</td>
@@ -1710,6 +1748,12 @@ function Workspace({ user }: { user: CurrentUser }) {
   const [stewardship, setStewardship] = useState<api.StewardshipItem[]>([])
   const [stewardshipLoading, setStewardshipLoading] = useState(false)
   const [stewardshipError, setStewardshipError] = useState<string | null>(null)
+  // Approval is a live call, tracked separately from the queue read so the
+  // button can report its own progress without blanking the table.
+  const [approving, setApproving] = useState(false)
+  // Which proposals the steward has chosen. Held by id rather than by row so a
+  // queue refresh does not silently move the selection onto a different item.
+  const [selectedProposals, setSelectedProposals] = useState<Set<number>>(new Set())
 
   // ENG's reference data, offered in the class picker.
   const [engClasses, setEngClasses] = useState<api.ClassDefinition[]>([])
@@ -1866,6 +1910,12 @@ function Workspace({ user }: { user: CurrentUser }) {
       if (signal?.aborted) return
       setStewardship(items)
       setStewardshipError(null)
+
+      // Selections are dropped once the row they named is no longer proposed.
+      // Keeping them would let a steward approve something they can no longer
+      // see, and the count beside the button would stop matching the table.
+      const stillProposed = new Set(items.filter(i => i.state === 'Proposed').map(i => i.id))
+      setSelectedProposals(prev => new Set([...prev].filter(id => stillProposed.has(id))))
     } catch (err) {
       if (signal?.aborted) return
       setStewardshipError(err instanceof Error ? err.message : String(err))
@@ -1875,9 +1925,57 @@ function Workspace({ user }: { user: CurrentUser }) {
     }
   }, [])
 
-  // Loaded when the REG persona is being viewed rather than on mount, so the
-  // queue is re-read on arrival instead of showing whatever it held when the
-  // page was opened. Segments published since would otherwise be missing.
+  function toggleProposal(id: number) {
+    setSelectedProposals(prev => {
+      const next = new Set(prev)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
+  }
+
+  /** Select every proposal, or clear the selection if they are all already chosen. */
+  function toggleAllProposals() {
+    const proposed = stewardship.filter(s => s.state === 'Proposed').map(s => s.id)
+    setSelectedProposals(prev =>
+      proposed.every(id => prev.has(id)) ? new Set() : new Set(proposed))
+  }
+
+  /**
+   * The stewardship decision: promote the chosen proposals into the registry and
+   * on to O&M.
+   *
+   * Only what the steward selected is sent. Approving the whole queue whenever
+   * anything was selected would decide on their behalf about rows they were
+   * still considering, and approval is not reversible from here.
+   *
+   * The queue is re-read afterwards so the states shown are the registry's, not
+   * a guess, and MMS is re-read too since approval is what puts the location
+   * within its reach.
+   */
+  async function approveProposals() {
+    const ids = stewardship
+      .filter(s => s.state === 'Proposed' && selectedProposals.has(s.id))
+      .map(s => s.id)
+
+    if (ids.length === 0) { flash('Select a proposal to approve'); return }
+
+    setApproving(true)
+    try {
+      const result = await api.approveStewardship(ids)
+      setSelectedProposals(new Set())
+      await refreshStewardship()
+      // Approval republishes to the O&M channel, so what MMS holds has changed.
+      if (activeTwin) await refreshMmsInventory()
+      flash(`${result.approved} approved — ${result.locationCodes.length} location code(s) minted`)
+    } catch (err) {
+      // Surfaced against the queue rather than as a toast: an approval that
+      // failed is a decision that did not happen, and the reason must stay put.
+      setStewardshipError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setApproving(false)
+    }
+  }
+
   useEffect(() => {
     if (persona !== 'REG') return
 
@@ -2015,7 +2113,11 @@ function Workspace({ user }: { user: CurrentUser }) {
   const ibUpds = inboxUpdates()
   const ibAb = inboxAsBuilt()
   const ibItems: { id: string }[] = usesUpdates ? ibUpds.map(u => ({ id: u.id })) : usesAsBuilt ? ibAb.map(a => ({ id: a.uuid })) : ibSegs.map(s => ({ id: s.uuid }))
-  const selCount = ibItems.filter(x => selected.has(x.id)).length
+  // The stewardship view replaces the mock inbox rather than sitting beside it,
+  // so its selection is what the persona's action operates on.
+  const selCount = showStewardship
+    ? selectedProposals.size
+    : ibItems.filter(x => selected.has(x.id)).length
 
   function toggleItem(id: string) {
     setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -2051,11 +2153,11 @@ function Workspace({ user }: { user: CurrentUser }) {
     }
 
     if (action === 'APPROVE') {
-      const ids = selIds.filter(id => segments.find(s => s.uuid === id)?.status === 'validated')
-      if (!ids.length) { flash('Select validated segments to approve'); return }
-      setSegments(prev => prev.map(s => ids.includes(s.uuid) ? { ...s, status: 'approved' } : s))
-      setSelected(new Set())
-      flash(`${ids.length} segment(s) approved → TAMS, ESRI & CMS`)
+      // Live: the registry decides. Approval admits every proposal in the
+      // stewardship queue, mints location codes and republishes to the O&M
+      // channel, which is what makes the segment reachable from MMS. The old
+      // mock branch flipped a status on seeded rows and never left the browser.
+      void approveProposals()
       return
     }
 
@@ -2500,6 +2602,11 @@ function Workspace({ user }: { user: CurrentUser }) {
                   <span style={{ color: 'var(--text-muted)', fontSize: '8px', letterSpacing: '0.1em', marginLeft: 4 }}>
                     LIVE — GET /admin/reg-location/stewardship
                   </span>
+                  {approving && (
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: p.accent, letterSpacing: '0.1em' }}>
+                      APPROVING&hellip;
+                    </span>
+                  )}
                   {stewardship.some(s => s.classDegraded || s.propertiesUnmapped > 0) && (
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: '#f59e0b', fontWeight: 700, letterSpacing: '0.06em' }}>
                       ⚠ {stewardship.filter(s => s.classDegraded || s.propertiesUnmapped > 0).length} WITH FIDELITY LOSS
@@ -2522,7 +2629,7 @@ function Workspace({ user }: { user: CurrentUser }) {
                   these are proposals until a steward approves them.
                 </div>
                 <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: '6px', overflow: 'hidden' }}>
-                  <StewardshipTable items={stewardship} accent={p.accent} loading={stewardshipLoading} error={stewardshipError} />
+                  <StewardshipTable items={stewardship} accent={p.accent} loading={stewardshipLoading} error={stewardshipError} selected={selectedProposals} onToggle={toggleProposal} onToggleAll={toggleAllProposals} />
                 </div>
               </section>
             )}

@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Oiie.Ccom.Oagis;
 using Oiie.Ccom.Types;
 using SimHost.Application.Bods;
+using SimHost.Application.Cir;
 using SimHost.Application.Classification;
 using SimHost.Application.Identity;
 using SimHost.Application.Participants;
@@ -29,10 +30,19 @@ namespace SimHost.Personalities.Mms;
 ///
 /// That weakness is the honest consequence of the constraint rather than a defect to
 /// paper over, and it is precisely the problem the registry exists to solve.
+///
+/// Because MMS files inventory under OWNER_ID and nothing else, a segment whose
+/// context the registry cannot relate to an owner is refused rather than filed. Such
+/// a row would carry no owner, fall outside every twin-scoped view, and be visible to
+/// nobody afterwards -- accepted by the transport and lost to the business in the same
+/// motion. Refusing keeps the message visible as Rejected with the registry's reason,
+/// so the missing relation is something a steward can act on instead of something
+/// discovered later by counting rows.
 /// </summary>
 public sealed class MmsSegmentsHandler(
     ITagIdentityService identities,
     CcomAttributeMapperFactory mappers,
+    MmsContextResolver context,
     ILogger<MmsSegmentsHandler> logger) : IBodHandler
 {
     public (string Verb, string Noun) Handles => ("Sync", "Segments");
@@ -58,6 +68,36 @@ public sealed class MmsSegmentsHandler(
         var mapped = 0;
         var unmapped = 0;
 
+        // One resolution per distinct twin rather than per segment. The registry
+        // round-trip is the expensive part of this handler and a batch normally
+        // carries many segments from the same plant.
+        var ownerByTwin = new Dictionary<string, OwnerResolution>(StringComparer.OrdinalIgnoreCase);
+
+        // Every context is resolved before anything is written. A segment naming a
+        // context the registry cannot relate to an owner stops the batch here, while
+        // the database is still untouched -- rejecting after a partial write would
+        // leave some rows filed and the message marked Rejected, which is a worse
+        // account of what happened than not writing at all.
+        foreach (var segment in segments)
+        {
+            if (string.IsNullOrWhiteSpace(segment.IDInInfoSource))
+            {
+                continue;
+            }
+
+            var resolution = await ResolveOwnerAsync(segment, ownerByTwin, ct);
+
+            if (resolution.IsBlocked)
+            {
+                logger.LogWarning(
+                    "MMS rejected {Count} segment(s): {Reason} [{CorrelationId}]",
+                    segments.Count, resolution.Reason, envelope.BodId);
+
+                return BodHandlingResult.Rejected(
+                    $"{resolution.Reason}. Relate the iTwin to an OWNER_ID in ws-CIR, then resend.");
+            }
+        }
+
         foreach (var segment in segments)
         {
             var foreignSourceId = segment.InfoSource?.ShortName ?? envelope.SenderLogicalId ?? "unknown";
@@ -74,11 +114,30 @@ public sealed class MmsSegmentsHandler(
             // invisible to each other until the registry relates them.
             var lightSystemName = segment.FullName ?? segment.ShortName ?? foreignId;
 
+            // Which owner this belongs to, asked of the registry rather than
+            // inferred. The segment carries the originator's context as its
+            // RegistrationSite -- an iTwin GUID that MMS has no column for and no
+            // means of interpreting. ws-CIR is the only place the correspondence
+            // between that twin and an OWNER_ID exists, which is precisely the job
+            // the registry was introduced to do.
+            //
+            // Resolved above and cached, so this cannot fail here: a context that
+            // could not be related has already stopped the batch. Null therefore
+            // means the segment asserted no context at all, which files an unowned
+            // row -- the honest record of a sender that named no plant.
+            var ownerId = (await ResolveOwnerAsync(segment, ownerByTwin, ct)).OwnerId;
+
             var existing = await db.Set<LightSystemInventory>()
                 .FirstOrDefaultAsync(r => r.LightSystemName == lightSystemName, ct);
 
             if (existing is not null)
             {
+                // A previously unowned row is adopted once the registry can name its
+                // owner, so relating a twin after the fact repairs what already
+                // arrived instead of requiring a resend. An owner already set is left
+                // alone: reassignment is a stewardship decision, not an ingest one.
+                existing.OwnerId ??= ownerId;
+
                 var updated = Ingest(
                     participant, db, mapper, segment, existing.LightSystemId.ToString(),
                     foreignSourceId, messageId);
@@ -100,10 +159,11 @@ public sealed class MmsSegmentsHandler(
                 LightSystemClassCodeId = UndeterminedClassCodeId,
                 LightSystemStatusId = ProposedStatusId,
 
-                // Left null deliberately. OWNER_ID is MMS's context key and only a
-                // steward's registry assertion can say which owner a foreign context
-                // corresponds to; inferring it here would invent that relation.
-                OwnerId = null
+                // OWNER_ID is MMS's context key, and only a registry assertion can
+                // say which owner a foreign context corresponds to. Resolved above
+                // through ws-CIR rather than inferred here; null when the registry
+                // has nothing to say, which is the state a steward needs to see.
+                OwnerId = ownerId
             };
 
             nextId++;
@@ -148,7 +208,8 @@ public sealed class MmsSegmentsHandler(
                 {
                     foreignSourceId,
                     foreignId,
-                    resolved = false
+                    resolved = ownerId is not null,
+                    ownerId
                 })
             });
         }
@@ -157,10 +218,91 @@ public sealed class MmsSegmentsHandler(
 
         logger.LogInformation(
             "MMS created {Created} record(s) from {Count} segment(s), {Mapped} mapped and " +
-            "{Unmapped} retained unmapped, none resolved [{CorrelationId}]",
-            created, segments.Count, mapped, unmapped, envelope.BodId);
+            "{Unmapped} retained unmapped, {Resolved} of {Contexts} context(s) resolved [{CorrelationId}]",
+            created, segments.Count, mapped, unmapped,
+            ownerByTwin.Values.Count(v => v.OwnerId is not null), ownerByTwin.Count, envelope.BodId);
 
         return BodHandlingResult.Applied(segments.Count, mapped, unmapped);
+    }
+
+    /// <summary>
+    /// The OWNER_ID for the context a segment asserts.
+    ///
+    /// The lookup is by the identifier alone rather than the source that issued it,
+    /// because <see cref="MmsContextResolver"/> already scopes resolution to ENG's
+    /// key space; a non-ENG context therefore resolves to nothing rather than
+    /// colliding with an ENG twin that happens to share an identifier.
+    ///
+    /// Three outcomes are distinguished rather than collapsed into a nullable, because
+    /// they call for different handling. Asserting no context at all is a legitimate
+    /// state and files an unowned row. Asserting a context the registry cannot relate
+    /// to an owner is not: the relation is a steward's act that has not happened yet,
+    /// and filing the row anyway would put it outside every twin-scoped view where
+    /// nobody would ever see it again.
+    ///
+    /// A registry that cannot be reached is reported as unresolvable too. MMS is in no
+    /// position to tell "no relation exists" from "nobody answered", and guessing in
+    /// either direction is worse than saying which happened and stopping.
+    /// </summary>
+    private async Task<OwnerResolution> ResolveOwnerAsync(
+        Segment segment,
+        Dictionary<string, OwnerResolution> cache,
+        CancellationToken ct)
+    {
+        var site = segment.RegistrationSite;
+
+        if (site?.IDInInfoSource is not { Length: > 0 } twinId)
+        {
+            return OwnerResolution.NoContext;
+        }
+
+        if (cache.TryGetValue(twinId, out var cached))
+        {
+            return cached;
+        }
+
+        OwnerResolution outcome;
+
+        try
+        {
+            var resolution = await context.ResolveOwnerIdAsync(twinId, ct);
+
+            outcome = resolution is { IsResolved: true, OwnerId: { } ownerId }
+                ? OwnerResolution.Resolved(ownerId)
+                : OwnerResolution.Unresolvable(twinId, resolution.Reason);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "MMS context resolution failed for {TwinId}.", twinId);
+            outcome = OwnerResolution.Unresolvable(twinId, $"the registry could not be reached ({ex.Message})");
+        }
+
+        cache[twinId] = outcome;
+        return outcome;
+    }
+
+    /// <summary>
+    /// What the registry could say about the context a segment asserted.
+    ///
+    /// <paramref name="Reason"/> is carried rather than re-derived so the rejection a
+    /// steward reads is the registry's own account of why it could not answer, not a
+    /// generic message written at the point of failure.
+    /// </summary>
+    private readonly record struct OwnerResolution(
+        bool HasContext,
+        long? OwnerId,
+        string? Reason)
+    {
+        internal static readonly OwnerResolution NoContext = new(false, null, null);
+
+        internal static OwnerResolution Resolved(long ownerId) => new(true, ownerId, null);
+
+        internal static OwnerResolution Unresolvable(string twinId, string? reason) =>
+            new(true, null, $"context {twinId} is not related to any MMS owner: " +
+                            $"{reason ?? "the registry gave no reason"}");
+
+        /// <summary>True when a context was asserted but no owner could be named.</summary>
+        internal bool IsBlocked => HasContext && OwnerId is null;
     }
 
     /// <summary>

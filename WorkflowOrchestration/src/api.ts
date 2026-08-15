@@ -372,14 +372,18 @@ export function listLocations(signal?: AbortSignal): Promise<RegLocation[]> {
 }
 
 /**
- * Approve every proposal in the queue.
+ * Approve proposals, either a chosen subset or the whole queue.
  *
  * The registry's release event: admits proposals to the authoritative model,
- * assigns LOC- codes, and republishes to the O&M channel. Like promotion this
- * takes no subset -- the endpoint approves the whole queue.
+ * assigns LOC- codes, and republishes to the O&M channel. Passing no ids
+ * approves everything, which is what the batch scenarios rely on; a steward
+ * working through the queue names the ones they have satisfied themselves about.
  */
-export function approveStewardship(): Promise<ApprovalResult> {
-  return request<ApprovalResult>('/admin/reg-location/approve', { method: 'POST' })
+export function approveStewardship(proposalIds?: number[]): Promise<ApprovalResult> {
+  return request<ApprovalResult>('/admin/reg-location/approve', {
+    method: 'POST',
+    body: JSON.stringify({ proposalIds: proposalIds ?? null }),
+  })
 }
 
 /**

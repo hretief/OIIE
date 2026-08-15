@@ -592,6 +592,11 @@ public class ParticipantDbContext : DbContext
             entity.Property(e => e.Area).HasMaxLength(64);
             entity.Property(e => e.SourceParticipant).HasMaxLength(64).IsRequired();
             entity.Property(e => e.SourceIdentifier).HasMaxLength(200).IsRequired();
+            // The originator's twin, carried through the gate so MMS can resolve an
+            // owner. Sized to match the Site fields these are copied from.
+            entity.Property(e => e.ContextSourceId).HasMaxLength(64);
+            entity.Property(e => e.ContextIdInSource).HasMaxLength(200);
+            entity.Property(e => e.ContextName).HasMaxLength(400);
             entity.HasIndex(e => e.LocationCode).IsUnique();
             entity.HasIndex(e => new { e.SourceParticipant, e.SourceIdentifier });
             entity.HasIndex(e => e.FederationId).IsUnique();
@@ -644,6 +649,9 @@ public class ParticipantDbContext : DbContext
             entity.Property(e => e.DecidedBy).HasMaxLength(128);
             entity.Property(e => e.RejectReason).HasMaxLength(1000);
             entity.Property(e => e.LocationCode).HasMaxLength(64);
+            entity.Property(e => e.ContextSourceId).HasMaxLength(64);
+            entity.Property(e => e.ContextIdInSource).HasMaxLength(200);
+            entity.Property(e => e.ContextName).HasMaxLength(400);
             entity.HasIndex(e => e.State);
             entity.HasIndex(e => e.FederationId);
         });

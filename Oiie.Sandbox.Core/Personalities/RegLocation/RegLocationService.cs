@@ -88,6 +88,19 @@ public sealed class SyncSegmentsHandler(
             // the steward decides whether to accept the entity, not what it is.
             var federationId = segment.UUID;
 
+            // The context the sender asserted, as a CCOM Site. Captured as
+            // SourceId + IdInSource and never interpreted here: the value is an
+            // iTwin GUID when ENG published it, and REG-LOCATION recognises neither
+            // that nor any other participant's context key. Relating it to a local
+            // owner is the registry's job.
+            //
+            // Dropped here previously, which is why an approved location reached MMS
+            // with nothing to scope it by and could not be shown against a twin.
+            var site = segment.RegistrationSite;
+            var contextSourceId = site?.InfoSource?.ShortName ?? site?.InfoSource?.FullName;
+            var contextIdInSource = site?.IDInInfoSource ?? site?.ShortName;
+            var contextName = site?.FullName ?? site?.ShortName;
+
             if (string.IsNullOrWhiteSpace(sourceIdentifier))
             {
                 logger.LogWarning("Segment with no IDInInfoSource skipped [{CorrelationId}]", envelope.BodId);
@@ -154,6 +167,9 @@ public sealed class SyncSegmentsHandler(
                 existing.PropertiesMapped = ingestion.MappedCount;
                 existing.PropertiesUnmapped = ingestion.UnmappedCount;
                 existing.SourceMessageId = messageId;
+                existing.ContextSourceId = contextSourceId;
+                existing.ContextIdInSource = contextIdInSource;
+                existing.ContextName = contextName;
                 continue;
             }
 
@@ -163,6 +179,9 @@ public sealed class SyncSegmentsHandler(
                 FederationId = federationId,
                 SourceParticipant = sourceParticipant,
                 SourceIdentifier = sourceIdentifier,
+                ContextSourceId = contextSourceId,
+                ContextIdInSource = contextIdInSource,
+                ContextName = contextName,
                 ProposedName = segment.ShortName ?? segment.FullName,
                 ProposedDescription = segment.Description,
                 RequestedClassKey = requestedClassKey,
@@ -485,13 +504,34 @@ public sealed class RegLocationService(
             .ToListAsync(ct);
     }
 
+    /// <summary>
+    /// Approve proposals, either a chosen subset or the whole queue.
+    ///
+    /// <paramref name="proposalIds"/> null or empty means every proposal, which
+    /// keeps the batch behaviour callers had before selection existed. Naming a
+    /// subset is the normal stewardship case: a steward who is satisfied about one
+    /// location should not have to accept another they are still questioning.
+    ///
+    /// Ids that are absent or already decided are simply not matched rather than
+    /// reported as an error -- a stale selection is a race with another steward, not
+    /// a malformed request.
+    /// </summary>
     public async Task<ApprovalResult> ApproveAllAsync(
-        string channelUri, string? topic, string decidedBy, CancellationToken ct = default)
+        string channelUri, string? topic, string decidedBy,
+        IReadOnlyCollection<long>? proposalIds = null,
+        CancellationToken ct = default)
     {
         await using var db = factory.Create(ParticipantId);
 
-        var proposals = await db.Set<StewardshipItem>()
-            .Where(s => s.State == StewardshipState.Proposed)
+        var query = db.Set<StewardshipItem>()
+            .Where(s => s.State == StewardshipState.Proposed);
+
+        if (proposalIds is { Count: > 0 })
+        {
+            query = query.Where(s => proposalIds.Contains(s.Id));
+        }
+
+        var proposals = await query
             .OrderBy(s => s.CreatedAt)
             .ToListAsync(ct);
 
@@ -539,7 +579,13 @@ public sealed class RegLocationService(
                             ? null
                             : proposal.RequestedClassKey,
                     SourceParticipant = proposal.SourceParticipant,
-                    SourceIdentifier = proposal.SourceIdentifier
+                    SourceIdentifier = proposal.SourceIdentifier,
+                    // The context travels with the location, because that is what a
+                    // downstream consumer scopes on. Approval is a decision about
+                    // admitting the entity, not about relocating it.
+                    ContextSourceId = proposal.ContextSourceId,
+                    ContextIdInSource = proposal.ContextIdInSource,
+                    ContextName = proposal.ContextName
                 });
 
                 // LOC-000412 becomes an additional code for the same identity. The
@@ -558,6 +604,9 @@ public sealed class RegLocationService(
                     string.Equals(proposal.RequestedClassKey, proposal.BoundClassKey, StringComparison.Ordinal)
                         ? null
                         : proposal.RequestedClassKey;
+                existing.ContextSourceId = proposal.ContextSourceId;
+                existing.ContextIdInSource = proposal.ContextIdInSource;
+                existing.ContextName = proposal.ContextName;
                 existing.UpdatedAt = DateTimeOffset.UtcNow;
             }
 

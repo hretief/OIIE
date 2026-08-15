@@ -44,6 +44,24 @@ public class Location
 
     public string SourceIdentifier { get; set; } = string.Empty;
 
+    /// <summary>
+    /// The context the originator asserted, as the InfoSource of the segment's
+    /// RegistrationSite -- "ENG" when engineering published it.
+    ///
+    /// Carried through the gate and never interpreted here. The value is an iTwin
+    /// GUID when ENG sent it and would be an OWNER_ID had MMS sent it; relating
+    /// the two is the registry's job, not this participant's. Retaining it is what
+    /// lets a downstream consumer scope what it receives -- without it a system
+    /// holding two districts cannot tell which one a location belongs to.
+    /// </summary>
+    public string? ContextSourceId { get; set; }
+
+    /// <summary>The identifier within <see cref="ContextSourceId"/>, e.g. the iTwin GUID.</summary>
+    public string? ContextIdInSource { get; set; }
+
+    /// <summary>The context's human-facing name, kept only so it can be displayed.</summary>
+    public string? ContextName { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
@@ -161,6 +179,22 @@ public class StewardshipItem
     public string SourceParticipant { get; set; } = string.Empty;
 
     public string SourceIdentifier { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The context the sender asserted, taken from the segment's RegistrationSite.
+    ///
+    /// Held on the proposal for the same reason <see cref="FederationId"/> is: it
+    /// is part of what arrived, and the steward is deciding whether to accept the
+    /// entity rather than what context it belongs to. Carried onto the Location at
+    /// approval so it survives to republication.
+    /// </summary>
+    public string? ContextSourceId { get; set; }
+
+    /// <summary>The identifier within <see cref="ContextSourceId"/>, e.g. the iTwin GUID.</summary>
+    public string? ContextIdInSource { get; set; }
+
+    /// <summary>The context's human-facing name, kept only so it can be displayed.</summary>
+    public string? ContextName { get; set; }
 
     public string? ProposedName { get; set; }
 

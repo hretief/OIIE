@@ -71,7 +71,17 @@ public sealed class RegLocationSegmentsBuilder(CcomAttributeMapperFactory mapper
                 InfoSource = infoSource,
                 ShortName = location.LocationCode,
                 FullName = location.Name,
-                Description = location.Description
+                Description = location.Description,
+
+                // The context the originator asserted, forwarded unchanged.
+                //
+                // The registry is a gate, not a relabeller: it renames the entity to
+                // its own code but the plant the location sits in is not the
+                // registry's to restate. Forwarding the original Site is what lets a
+                // consumer holding several districts scope what it receives -- and
+                // dropping it here is what previously left MMS with a row it could
+                // not attribute to any owner.
+                RegistrationSite = BuildSite(location)
             };
 
             if (location.ClassKey is { Length: > 0 })
@@ -171,6 +181,43 @@ public sealed class RegLocationSegmentsBuilder(CcomAttributeMapperFactory mapper
             .Where(d => d.Id == definitionId)
             .Select(d => d.DefinitionKey)
             .FirstOrDefault() ?? definitionId.ToString();
+
+    /// <summary>
+    /// The originator's context as a CCOM Site, rebuilt from what the proposal
+    /// carried through the gate.
+    ///
+    /// The InfoSource is the originator's, not REG-LOCATION's: the registry is
+    /// forwarding somebody else's assertion about where this location sits, and
+    /// restamping it as its own would claim the registry knows a context it merely
+    /// relayed. A receiver has to be able to tell whose key space the identifier
+    /// belongs to in order to resolve it.
+    ///
+    /// Returns null when nothing was asserted, which leaves the segment unscoped
+    /// rather than scoped to something invented.
+    /// </summary>
+    private static Site? BuildSite(Location location)
+    {
+        if (location.ContextIdInSource is not { Length: > 0 } idInSource
+            || location.ContextSourceId is not { Length: > 0 } sourceId)
+        {
+            return null;
+        }
+
+        return new Site
+        {
+            UUID = Guid.TryParse(idInSource, out var contextId)
+                ? contextId
+                : CcomUuid.ForValue(location.FederationId, "sandbox:Context"),
+            IDInInfoSource = idInSource,
+            InfoSource = new InfoSource
+            {
+                UUID = CcomUuid.ForInfoSource(sourceId),
+                ShortName = sourceId
+            },
+            ShortName = location.ContextName ?? idInSource,
+            FullName = location.ContextName
+        };
+    }
 }
 
 /// <summary>

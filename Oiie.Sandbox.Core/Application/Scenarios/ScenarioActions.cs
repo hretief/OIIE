@@ -342,7 +342,7 @@ public sealed class ApproveStewardshipAction(
             publisher.ChannelUri,
             publisher.Topics.FirstOrDefault(),
             context.GetString("decidedBy") ?? "steward",
-            ct);
+            ct: ct);
 
         // An empty queue is a failure, not a no-op. The step exists to release something,
         // so approving nothing means the proposal had not arrived yet — and letting that

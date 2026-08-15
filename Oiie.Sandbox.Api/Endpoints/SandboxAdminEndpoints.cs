@@ -1491,14 +1491,18 @@ app.MapGet("/admin/reg-location/stewardship", async (
 // REG-LOCATION's release event: approval admits proposals to the authoritative
 // model, assigns registry identifiers, and republishes.
 app.MapPost("/admin/reg-location/approve", async (
-    RegLocationService service, ParticipantRegistry registry, CancellationToken ct) =>
+    RegLocationService service, ParticipantRegistry registry,
+    ApproveRequest? request, CancellationToken ct) =>
 {
     var publisher = registry.Get(RegLocationService.ParticipantId).Config.Channels
         .FirstOrDefault(c => c.Role == ChannelRole.Publisher)
         ?? throw new InvalidOperationException("REG-LOCATION has no publisher channel configured.");
 
+    // No body, or a body naming nothing, approves the whole queue. The batch
+    // scenarios post neither, and a steward working item by item posts ids.
     var result = await service.ApproveAllAsync(
-        publisher.ChannelUri, publisher.Topics.FirstOrDefault(), "steward", ct);
+        publisher.ChannelUri, publisher.Topics.FirstOrDefault(), "steward",
+        request?.ProposalIds, ct);
 
     return Results.Ok(result);
 });
@@ -2223,3 +2227,6 @@ internal sealed record RegisterTwinRequest(
 internal sealed record PromoteRequest(string Name, Guid? ITwinId = null);
 
 internal sealed record RejectRequest(string Reason);
+
+/// <summary>The proposals a steward chose. Null or empty means the whole queue.</summary>
+internal sealed record ApproveRequest(IReadOnlyCollection<long>? ProposalIds);
