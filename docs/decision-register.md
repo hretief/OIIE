@@ -502,3 +502,51 @@ request/response path at the expense of every subscriber.
 **Open question for the user.** Recorded here rather than acted on, because option 1 changes a
 separate deployed service and option 3 knowingly reopens a bug that was just closed.
 
+---
+
+## DR-011 — Outbox publication is made idempotent by treating the outbound message record as a receipt
+
+**Status:** Decided
+**Date:** 2026-08-15
+**Context:** `OutboxDispatcher` retried `Pending` items until `MaxAttempts`, but the ISBM post and the
+`MessageRecord` that records it are two separate writes. A process that died between them left the item
+`Pending` with the BOD already on the channel, so the retry published it a second time. Retry without an
+idempotency check is not safe merely because attempts are bounded.
+
+### Decision
+
+Before building or posting, `PostAsync` looks for an existing **outbound** `MessageRecord` for the item. If
+one exists, the post already succeeded and only the bookkeeping was lost: the item is closed out against
+that record (`State = Posted`, carrying the original `MessageId` and `OccurredAt`) and logged at warning
+level, rather than resent.
+
+### The match is on verb and noun, not correlation id alone
+
+This is the part worth remembering. `CorrelationId` looks like the natural dedupe key — it is already
+assigned per item and already indexed — but it is **not unique per publication**. One business event
+legitimately produces several outbox items under a single correlation id: `RegLocationService` queues
+segments and then the connections between them that way, deliberately, because a receiver cannot store an
+edge whose endpoints it has not yet been told about (the same ordering rule as DR-007's context handling).
+
+Matching on correlation id alone would therefore classify the connections publication as a duplicate of the
+segments publication and silently drop every edge. The guard matches on `CorrelationId` + `Direction` +
+`Verb` + `Noun`, and `ParticipantDbContext` carries a composite index over exactly that tuple, since the
+lookup now runs before every publication attempt.
+
+### What this does not cover
+
+A crash *during* the post — after the broker accepted the message but before the call returns — is still
+indistinguishable from a failed send, because no receipt was written either way. Closing that fully requires
+the **receiver** to dedupe on `BODID`, which is a change on the consuming side and is not done. The guard
+narrows the window; it does not eliminate it.
+
+### Caveats carried forward
+
+- **Untested.** There is no harness for the dispatcher: `SimHost.Tests` builds `ParticipantDbContext`
+  against a dummy connection string for model inspection only, and there are no fakes for
+  `IIsbmClientAccessor`, `IBodBuilder` or `IIsbmSessionStoreAccessor`. The guard is unexercised on the happy
+  path by construction, since it only fires on a retry after a lost confirmation.
+- **The index needs a day-zero reset to exist.** `ParticipantSchemaInitializer` short-circuits on the
+  `Message` sentinel table, so the composite index is absent from any database created before this change.
+  The guard still works — it is a query, not a schema dependency — but is not index-backed until then.
+

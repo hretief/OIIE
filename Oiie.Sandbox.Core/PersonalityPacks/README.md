@@ -47,6 +47,40 @@ value it does not understand. Holding a definition and holding the class that
 sanctions it are separate questions, and conflating them is what makes
 federation look all-or-nothing when it is not.
 
+## Two kinds of participant
+
+Before writing any code, decide which of these you are building. The difference
+is not cosmetic: it determines whether the participant may store a shared
+identity at all, and that decision is very hard to reverse once rows exist.
+
+**Sandbox-native.** The schema is ours to design. ENG, REG-LOCATION and CMS are
+these. Entities carry a `FederationId` holding the shared identity directly, and
+identity resolution is a local column read.
+
+**Mapped to a real system.** The schema belongs to somebody else and arrived as
+a given. MMS is this: `LIGHT_SYSTEM_INVENTORY`, `SETUP_OWNER` and the rest are
+the customer's tables, reproduced column for column.
+
+For a mapped participant, three rules follow, and they are not negotiable:
+
+- **No new columns.** Not a `FederationId`, not a `Cirid`, not a nullable one
+  "just for us". A column we add is a second identity competing with the
+  system's own, inside a schema we do not own. This is DR-008.
+- **Identity lives in ws-CIR.** The correspondence between the local key and
+  everyone else's is registered in the registry and resolved on read. There is
+  no local shortcut, and adding one is the mistake the rule exists to prevent.
+- **Context is resolved, never joined.** MMS has no iTwin column, so a
+  twin-scoped read resolves the twin to an `OWNER_ID` through CIR *first*, then
+  filters on that. See `MmsContextResolver`.
+
+A mapped participant costs a registry round trip on every context resolution.
+That is the price of not owning the schema, and it is worth paying: it is what
+lets the real system be swapped in for the sandbox one without a migration.
+
+If a table has no counterpart in the real system yet \u2014 as MMS's `WorkOrder` and
+`EquipmentRecord` do not \u2014 mark it clearly in the entity's doc comment as
+sandbox-only, so nobody later mistakes it for customer schema.
+
 ## Adding a new personality
 
 ### 1. Create the pack
@@ -143,9 +177,16 @@ degradation. That is what makes the scenario interesting.
 ### 3. Give it a domain entity
 
 Add a type under `Domain/<Participant>/` and register it in
-`ParticipantDbContext.OnModelCreating`. Every participant entity that
-represents a real-world thing carries a `FederationId` — the shared identity —
-and its own local code, which is *not* the identity:
+`ParticipantDbContext.OnModelCreating`.
+
+Which shape you use depends on whether the participant is **sandbox-native** or
+**mapped to a real system's schema**. Read [Two kinds of
+participant](#two-kinds-of-participant) before choosing — getting this wrong is
+the most expensive mistake on this page, because it is the one that is hardest
+to undo later.
+
+A sandbox-native entity carries a `FederationId` — the shared identity — and its
+own local code, which is *not* the identity:
 
 ```csharp
 public class OperatingPoint
@@ -156,8 +197,75 @@ public class OperatingPoint
 }
 ```
 
+A participant mapped to a real system's schema has **no such column**, because
+the real system has none and you may not add one. Its identity correspondence
+lives in ws-CIR instead. See `Domain/Mms/MmsEntities.cs` for a worked example.
+
 Only ENG mints. Issuing a code is not minting an identity, and conflating the
 two is the error the whole model exists to expose.
+
+### 3b. If it maps a real system's schema
+
+Skip this if the participant is sandbox-native.
+
+Map the real tables and columns exactly, using the owner's names. In
+`ParticipantDbContext`, add a `Configure<Participant>` method and a case in
+`ConfigurePersonality`, then name every table and column explicitly:
+
+```csharp
+entity.ToTable("LIGHT_SYSTEM_INVENTORY");
+entity.HasKey(e => e.LightSystemId);
+entity.Property(e => e.LightSystemId)
+    .HasColumnName("LIGHT_SYSTEM_ID")
+    .ValueGeneratedNever();
+```
+
+Leave the SQL schema to `HasDefaultSchema` rather than pinning `dbo`. In the
+owner's database these live in `dbo`; here each participant is isolated into its
+own schema and connects as a contained user granted only on that schema, so
+pinning `dbo` would fail on permissions. The *names* are what fidelity requires;
+the schema is deployment context.
+
+Then write a context resolver — model it on `MmsContextResolver` — answering
+"which local context key corresponds to this iTwin?" through CIR. Return a
+result that distinguishes *resolved*, *no context asserted*, and *asserted but
+unresolvable*. Collapsing those into a nullable loses the distinction between a
+legitimately context-less row and a missing registry relation, and they need
+different handling.
+
+**An unresolved context must never degrade to "no filter".** Returning every row
+because a twin could not be resolved shows one owner's data under another
+owner's selection. Return empty, with the reason attached.
+
+#### Do not join across the two categories
+
+Every participant schema holds two kinds of table: the participant **spine**
+(`Outbox`, `Provenance`, `CodeAssignment`, `IdentityMap`, `CirExchange`,
+`Message`, `IsbmSession`, `PendingWork`, classification) which every participant
+gets automatically, and the participant's own **domain** tables.
+
+No query may join one category to the other. Read each separately and correlate
+in C#, carrying the local key as a *value*:
+
+```csharp
+var row = await db.Set<LightSystemInventory>()...;   // domain
+db.Codes.Add(identities.RegisterCode(                // spine, keyed by value
+    segment.UUID, participantId, row.LightSystemId.ToString()));
+```
+
+Two reasons. A join binds your adapter to the owner's physical schema, which is
+exactly the coupling that stops the real system being swapped in. And a join
+between a domain table and `IdentityMap` reconstructs, in SQL, the shared
+identity that the no-new-columns rule forbids storing — outside ws-CIR, where no
+registry relink can invalidate it.
+
+**This rule is convention, not enforcement.** Both categories are mapped in the
+single `ParticipantDbContext`, so nothing stops you writing a join across them:
+it compiles, and against a mapped schema like MMS it emits a cross-category join
+into tables the sandbox does not own. Separating the two into distinct contexts
+was considered and deliberately deferred — it touches every participant service —
+so for now the reviewer is the check. If you find yourself reaching for a join
+here, that is the signal to re-open that decision rather than to write it.
 
 ### 4. Handle inbound BODs
 
@@ -239,12 +347,13 @@ participant a filter, and a downstream system may hold a definition you lack.
 
 ### 6. Register it
 
-In `Program.cs`, next to the existing personalities:
+In `SandboxCoreRegistration.AddSandboxCore`, next to the existing personalities
+(**not** in `Program.cs` — that file only calls `AddSandboxCore`):
 
 ```csharp
-builder.Services.AddSingleton<IBodHandler, OpsSegmentsHandler>();
-builder.Services.AddSingleton<IBodBuilder, OpsSegmentsBuilder>();   // if publishing
-builder.Services.AddSingleton<OpsService>();                        // if it has actions
+services.AddSingleton<IBodHandler, OpsSegmentsHandler>();
+services.AddSingleton<IBodBuilder, OpsSegmentsBuilder>();   // if publishing
+services.AddSingleton<OpsService>();                        // if it has actions
 ```
 
 The pack itself needs no registration — `PersonalityLoader.LoadAll` discovers
@@ -292,13 +401,19 @@ survived the trip.
 
 ## Checklist
 
+- [ ] Decided **sandbox-native or mapped** (see [Two kinds of
+      participant](#two-kinds-of-participant)) — do this first
 - [ ] `personality.yaml` with a unique `participantId` and a legal `schema`
 - [ ] Key Vault secret matching `tokenSecretName`
 - [ ] `Fixtures/classes.yaml`, or a deliberate decision to hold no reference data
-- [ ] Domain entity with `FederationId`, registered in `ParticipantDbContext`
+- [ ] Domain entity, registered in `ParticipantDbContext`
+      - sandbox-native: carries `FederationId`
+      - mapped: owner's table and column names, **no added columns**
+- [ ] Mapped only: context resolver returning resolved / no-context / unresolvable
+- [ ] No query joins a domain table to a spine table
 - [ ] `IBodHandler` that **ingests properties**, not just the spine
 - [ ] `IBodBuilder` that **re-emits retained values**, if it publishes
-- [ ] Registrations in `Program.cs`
+- [ ] Registrations in `SandboxCoreRegistration.AddSandboxCore`
 - [ ] Case in `MessageTransformService.ReadRecordsAsync`
 - [ ] Entry in `IdentityLineageService.FlowOrder`
 - [ ] `/admin/schema/reset`

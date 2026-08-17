@@ -4,6 +4,53 @@ Pending work carried between sessions. Decisions belong in
 [decision-register.md](decision-register.md); this file is only for things not
 yet done.
 
+## Test coverage for the outbox idempotency guard
+
+**Status:** not started. The guard itself is implemented and deployed (DR-011);
+only its coverage is outstanding.
+
+`OutboxDispatcher.PostAsync` now refuses to republish an item that already has an
+outbound `MessageRecord`. Nothing exercises it. It cannot be reached from the happy
+path by construction — it only fires on a retry after a lost confirmation — so the
+absence of failures says nothing about whether it works.
+
+The obstacle is that there is no harness for the dispatcher at all. `SimHost.Tests`
+builds `ParticipantDbContext` against a dummy connection string for model inspection
+only, and there are no fakes for `IIsbmClientAccessor`, `IBodBuilder` or
+`IIsbmSessionStoreAccessor`. Writing the first real test for a background service is
+most of this task; the assertion is the small part.
+
+Cases worth covering once a harness exists:
+
+- **Duplicate suppressed:** an item whose `CorrelationId`/`Verb`/`Noun` already has an
+  outbound record is marked `Posted` against that record and never posted again.
+- **Same correlation, different noun:** two items sharing one `CorrelationId` — the
+  `Segments` / `SegmentMeshConnections` pair `RegLocationService` queues — must *both*
+  publish. This is the regression the guard was specifically shaped to avoid and the
+  one most likely to reappear if anyone "simplifies" the match to correlation id alone.
+- **First attempt:** no prior record means a normal post, with the guard invisible.
+
+To force the behaviour manually in the meantime: reset a posted outbox item to
+`Pending` while leaving its `Message` row in place, and watch for the "already posted
+… closing it against that record" warning instead of a second publication.
+
+## CMS schema is defined but not wired up
+
+**Status:** DDL only. `docs/DDL/CMS.SQL` defines the `cms` schema — `Location`,
+`AssetClass`, `Asset` and related tables — and `deploy/sandbox/provision.ps1` already
+provisions a `cms` schema and contained user. The persona exists in the React UI
+(`App.tsx`), which places CMS on the `/OandM-Events` channel rather than MMS's
+`/OandM`.
+
+What does not exist yet is the participant itself: no `ConfigureCms` mapping in
+`ParticipantDbContext`, no personality service, no BOD builders. Until that is added,
+the CMS steps shown in the workflow UI are presentation only.
+
+Build it as a **mapped participant** rather than a sandbox-native one, per
+`Oiie.Sandbox.Core/PersonalityPacks/README.md` — the DDL is a given external shape, so
+the same rule that governs MMS applies: map the tables column-for-column and do not
+extend them.
+
 ## Endpoint-level tests for the MMS read path
 
 **Status:** not started. Agreed at the end of the 2026-08-14 session, deferred so

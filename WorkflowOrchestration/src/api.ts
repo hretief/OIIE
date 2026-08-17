@@ -327,6 +327,10 @@ export interface StewardshipItem {
   propertiesUnmapped: number
   state: StewardshipState
   createdAt: string
+  /** The iTwin the sender asserted, e.g. ENG:02c9fdd8-... */
+  assertedContext: string | null
+  /** The asserted iTwin on its own, for scoping the queue to one twin. */
+  contextIdInSource: string | null
 }
 
 /**
@@ -361,14 +365,28 @@ export interface ApprovalResult {
   correlationId: string | null
 }
 
-/** Proposals awaiting a stewardship decision. */
-export function listStewardship(signal?: AbortSignal): Promise<StewardshipItem[]> {
-  return request<StewardshipItem[]>('/admin/reg-location/stewardship', { signal })
+/**
+ * Proposals awaiting a stewardship decision, scoped to one iTwin.
+ *
+ * Omitting the twin returns every context. The UI always passes one: the queue is
+ * shown beside a twin selector, and an unfiltered queue would list another twin's
+ * proposals under the twin on screen.
+ */
+export function listStewardship(
+  iTwinId?: string,
+  signal?: AbortSignal,
+): Promise<StewardshipItem[]> {
+  const query = iTwinId ? `?twin=${encodeURIComponent(iTwinId)}` : ''
+  return request<StewardshipItem[]>(`/admin/reg-location/stewardship${query}`, { signal })
 }
 
-/** The registry's authoritative locations. */
-export function listLocations(signal?: AbortSignal): Promise<RegLocation[]> {
-  return request<RegLocation[]>('/admin/reg-location/locations', { signal })
+/** The registry's authoritative locations, scoped to one iTwin. */
+export function listLocations(
+  iTwinId?: string,
+  signal?: AbortSignal,
+): Promise<RegLocation[]> {
+  const query = iTwinId ? `?twin=${encodeURIComponent(iTwinId)}` : ''
+  return request<RegLocation[]>(`/admin/reg-location/locations${query}`, { signal })
 }
 
 /**

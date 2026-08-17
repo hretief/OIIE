@@ -1467,10 +1467,15 @@ app.MapGet("/admin/cms/owners", async (
     return Results.Ok(owners);
 });
 
+// Scoped to the twin the caller is looking at. The proposal carries the context
+// the sender asserted, so the filter is a column match here rather than a registry
+// resolution -- a proposal has not been admitted to the model and has no registry
+// identity yet. Omitting the twin returns every context, which the batch scenarios
+// rely on.
 app.MapGet("/admin/reg-location/stewardship", async (
-    RegLocationService service, CancellationToken ct) =>
+    RegLocationService service, string? twin, CancellationToken ct) =>
 {
-    var queue = await service.GetQueueAsync(ct);
+    var queue = await service.GetQueueAsync(twin, ct);
 
     return Results.Ok(queue.Select(s => new
     {
@@ -1484,7 +1489,12 @@ app.MapGet("/admin/reg-location/stewardship", async (
         s.PropertiesMapped,
         s.PropertiesUnmapped,
         state = s.State.ToString(),
-        s.CreatedAt
+        s.CreatedAt,
+
+        // Returned so the caller can tell which twin a row belongs to. Without it a
+        // filtered and an unfiltered queue are indistinguishable in the response.
+        assertedContext = s.ContextSourceId + ":" + s.ContextIdInSource,
+        s.ContextIdInSource
     }));
 });
 
@@ -1512,11 +1522,21 @@ app.MapPost("/admin/reg-location/reject", async (
     Results.Ok(await service.RejectAllAsync(request.Reason, "steward", ct)));
 
 app.MapGet("/admin/reg-location/locations", async (
-    IParticipantDbContextFactory factory, CancellationToken ct) =>
+    IParticipantDbContextFactory factory, string? twin, CancellationToken ct) =>
 {
     await using var db = factory.Create(RegLocationService.ParticipantId);
 
-    var locations = await db.Set<SimHost.Domain.RegLocation.Location>()
+    var query = db.Set<SimHost.Domain.RegLocation.Location>().AsQueryable();
+
+    // Same reasoning as the stewardship queue: the location retains the context it
+    // was published from, and showing every twin's locations under one selection
+    // misrepresents them as belonging to the twin on screen.
+    if (!string.IsNullOrWhiteSpace(twin))
+    {
+        query = query.Where(l => l.ContextIdInSource == twin);
+    }
+
+    var locations = await query
         .OrderBy(l => l.LocationCode)
         .ToListAsync(ct);
 

@@ -1903,10 +1903,18 @@ function Workspace({ user }: { user: CurrentUser }) {
   // ── Loading the stewardship queue ────────────────────────────────────────
 
   const refreshStewardship = useCallback(async (signal?: AbortSignal) => {
+    // Scoped to the selected twin. Without this the queue answers for every twin
+    // at once, so toggling the selector appeared to change nothing -- the rows
+    // were never the selected twin's to begin with.
+    if (!activeTwin) {
+      setStewardship([])
+      return
+    }
+
     setStewardshipLoading(true)
 
     try {
-      const items = await api.listStewardship(signal)
+      const items = await api.listStewardship(activeTwin.uuid, signal)
       if (signal?.aborted) return
       setStewardship(items)
       setStewardshipError(null)
@@ -1923,7 +1931,7 @@ function Workspace({ user }: { user: CurrentUser }) {
     } finally {
       if (!signal?.aborted) setStewardshipLoading(false)
     }
-  }, [])
+  }, [activeTwin])
 
   function toggleProposal(id: number) {
     setSelectedProposals(prev => {

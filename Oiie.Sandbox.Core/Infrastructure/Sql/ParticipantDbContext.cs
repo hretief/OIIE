@@ -116,6 +116,12 @@ public class ParticipantDbContext : DbContext
             entity.Property(e => e.ContentRef).HasMaxLength(400).IsRequired();
             entity.Property(e => e.ValidationStatus).HasMaxLength(16).IsRequired();
             entity.HasIndex(e => e.CorrelationId);
+
+            // Covers the dispatcher's "has this item already been posted?" lookup,
+            // which runs before every publication attempt and must not degrade into
+            // a scan as the message log grows.
+            entity.HasIndex(e => new { e.CorrelationId, e.Direction, e.Verb, e.Noun });
+
             entity.HasIndex(e => new { e.ScenarioRunId, e.OccurredAt });
             entity.HasIndex(e => new { e.ChannelUri, e.OccurredAt });
         });

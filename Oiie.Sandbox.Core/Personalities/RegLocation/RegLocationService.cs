@@ -494,12 +494,34 @@ public sealed class RegLocationService(
 {
     public const string ParticipantId = "reg-location";
 
-    public async Task<IReadOnlyList<StewardshipItem>> GetQueueAsync(CancellationToken ct = default)
+    /// <summary>
+    /// The proposals awaiting a decision, optionally only those asserted against
+    /// one context.
+    ///
+    /// <paramref name="contextIdInSource"/> is the iTwin the sender asserted, held
+    /// on the row itself rather than resolved through the registry: a proposal has
+    /// not been admitted to the model yet, so it has no registry identity to resolve
+    /// by. Null means every context, which is what a batch caller wants.
+    ///
+    /// Filtering matters because the queue is shown beside a twin selector. An
+    /// unfiltered queue lists proposals from every twin under whichever one happens
+    /// to be selected, and a steward then approves a location into a plant they were
+    /// not looking at.
+    /// </summary>
+    public async Task<IReadOnlyList<StewardshipItem>> GetQueueAsync(
+        string? contextIdInSource = null, CancellationToken ct = default)
     {
         await using var db = factory.Create(ParticipantId);
 
-        return await db.Set<StewardshipItem>()
-            .Where(s => s.State == StewardshipState.Proposed)
+        var query = db.Set<StewardshipItem>()
+            .Where(s => s.State == StewardshipState.Proposed);
+
+        if (!string.IsNullOrWhiteSpace(contextIdInSource))
+        {
+            query = query.Where(s => s.ContextIdInSource == contextIdInSource);
+        }
+
+        return await query
             .OrderBy(s => s.CreatedAt)
             .ToListAsync(ct);
     }

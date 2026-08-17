@@ -19,6 +19,36 @@ registered against that exact origin, so authentication fails on any other. Poin
 API elsewhere with `SANDBOX_API`. The two UIs serve different audiences: SimHost
 drives end-to-end automated scenario runs, this one is for interactive use.
 
+### Deployed demo environment
+
+The `demo` environment is deployed and verified healthy:
+
+```
+API : https://oiie-sandbox-demo.azurewebsites.net
+UI  : https://oiie-simhost-demo.azurewebsites.net
+```
+
+Redeploy both with:
+
+```
+cd deploy/sandbox
+.\deploy.ps1 -Environment demo -StorageAccount mndotsandbox
+```
+
+The script verifies the result rather than just reporting a successful upload — the
+last run reported 5 participants, ISBM configured, storage reachable, and 5
+participants connected as their own SQL users. The admin key is reused across
+deployments (`sandbox-admin-key-demo` in the `mndot` vault), so an existing key stays
+valid:
+
+```
+$key = az keyvault secret show --vault-name mndot --name sandbox-admin-key-demo --query value -o tsv
+```
+
+`Isbm__ListenerBaseUrl` is set on the deployed API, so ISBM NotifyListener callbacks
+are testable against it — they are not against a workstation, which has no address the
+provider can reach.
+
 ### MMS inventory panel
 
 Selecting the MMS persona shows what `LIGHT_SYSTEM_INVENTORY` actually holds for the
@@ -191,6 +221,12 @@ A change that adds a **table or a column** needs `/admin/reset/day-zero`. The ot
 resets clear rows within the shape that is already there; only day zero rebuilds the
 shape. Skipping it after a schema change fails at the first query against the new
 column rather than at reset, so the error surfaces a long way from its cause.
+
+The same applies to **indexes**. The composite index backing the outbox idempotency
+guard (DR-011) is absent from any database created before it was added, because
+`/admin/schema/init` short-circuits on the sentinel table. Nothing breaks — the guard
+is a query, not a schema dependency — so this will not announce itself; the lookup
+simply is not index-backed until a day zero runs.
 
 ## iTwins
 

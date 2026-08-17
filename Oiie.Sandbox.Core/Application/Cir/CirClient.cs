@@ -36,7 +36,36 @@ public sealed class CirClient(
     CirTelemetry telemetry,
     ILogger<CirClient> logger)
 {
-    private static readonly TimeSpan ResponsePollInterval = TimeSpan.FromSeconds(1);
+    /// <summary>
+    /// How long to wait before re-reading, given the number of empty reads so far.
+    ///
+    /// A fixed one-second interval made every exchange cost a whole second even when
+    /// the provider answered in tens of milliseconds: the first read happens before
+    /// the provider can possibly have replied, so the answer was always collected on
+    /// the second read, one full second later. Since a context resolution is two
+    /// exchanges, that put a two-second floor under an operation whose real cost is
+    /// the SQL query behind it.
+    ///
+    /// The backoff starts short enough that a local provider is caught on the first
+    /// or second retry, and grows to the original interval so a provider that is
+    /// genuinely absent is not polled hard for the whole timeout. Capping at the old
+    /// value keeps the load during a long wait exactly what it was before.
+    /// </summary>
+    private static TimeSpan NextPollDelay(int emptyReads) => emptyReads switch
+    {
+        0 => TimeSpan.FromMilliseconds(25),
+        1 => TimeSpan.FromMilliseconds(50),
+        2 => TimeSpan.FromMilliseconds(100),
+        3 => TimeSpan.FromMilliseconds(250),
+        4 => TimeSpan.FromMilliseconds(500),
+        _ => TimeSpan.FromSeconds(1)
+    };
+
+    /// <summary>
+    /// How often a still-waiting exchange is logged. Time-based rather than
+    /// poll-count-based: with a variable delay the two are no longer the same thing.
+    /// </summary>
+    private static readonly TimeSpan WaitLogInterval = TimeSpan.FromSeconds(15);
 
     private static string Truncate(string? value, int max = 1500) =>
         string.IsNullOrWhiteSpace(value) ? "(empty)"
@@ -452,8 +481,14 @@ public sealed class CirClient(
             requestMessageId, correlationId);
 
         var timeout = participant.Config.Cir.ResponseTimeout;
-        var deadline = DateTimeOffset.UtcNow.Add(timeout);
-        var waited = 0;
+        var startedAt = DateTimeOffset.UtcNow;
+        var deadline = startedAt.Add(timeout);
+
+        // Counted separately: the first drives the backoff, the second is what the
+        // telemetry and the log messages report. A poll is no longer a second, so
+        // one counter can no longer stand for both.
+        var emptyReads = 0;
+        var nextWaitLog = startedAt.Add(WaitLogInterval);
 
         while (DateTimeOffset.UtcNow < deadline)
         {
@@ -462,6 +497,36 @@ public sealed class CirClient(
             if (message?.Content is not null)
             {
                 var response = CirResponse.Parse(new System.Xml.Linq.XDocument(message.Content));
+
+                // The provider has been observed answering one request with another's
+                // reply: a GetRegistry filtered on one CIRID came back carrying a
+                // different CIRID's entries, echoing a BODID we never sent. Accepting
+                // that silently is the worst outcome available, because the answer is
+                // well-formed and plausible -- an equivalence lookup simply fails to
+                // find the sibling it was asking about, and the caller concludes the
+                // two identities are unrelated when the registry says they are.
+                //
+                // So a reply is only ours if it echoes our BODID. Anything else is
+                // dropped and the poll continues until the real answer arrives or the
+                // deadline passes. A response that echoes nothing at all is accepted:
+                // OriginalApplicationArea is optional, and refusing those would break
+                // every provider that omits it.
+                if (response.OriginalBodId is { Length: > 0 } echoed
+                    && !string.Equals(echoed, correlationId, StringComparison.OrdinalIgnoreCase))
+                {
+                    logger.LogWarning(
+                        "{ParticipantId} discarded a CIR response echoing {Echoed} while waiting " +
+                        "for {CorrelationId}; it answers a different request.",
+                        participant.ParticipantId, echoed, correlationId);
+
+                    // Removed, or the same foreign reply is re-read on every poll and
+                    // the wait can only end in a timeout.
+                    await client.RemoveResponseAsync(sessionId, requestMessageId, ct);
+
+                    await Task.Delay(NextPollDelay(emptyReads), ct);
+                    emptyReads++;
+                    continue;
+                }
 
                 logger.LogInformation(
                     "{ParticipantId} received {Verb} with {FaultCount} fault(s) [{CorrelationId}]: {Raw}",
@@ -488,16 +553,19 @@ public sealed class CirClient(
                 return null;
             }
 
-            await Task.Delay(ResponsePollInterval, ct);
-            waited++;
+            await Task.Delay(NextPollDelay(emptyReads), ct);
+            emptyReads++;
 
             // Logged periodically so a long wait is visibly a wait rather than a
             // hang, and so a cold provider is distinguishable from a silent one.
-            if (waited % 15 == 0)
+            if (DateTimeOffset.UtcNow >= nextWaitLog)
             {
                 logger.LogInformation(
                     "{ParticipantId} still waiting for a CIR response after {Seconds}s [{CorrelationId}]",
-                    participant.ParticipantId, waited, correlationId);
+                    participant.ParticipantId,
+                    (int)(DateTimeOffset.UtcNow - startedAt).TotalSeconds, correlationId);
+
+                nextWaitLog = DateTimeOffset.UtcNow.Add(WaitLogInterval);
             }
         }
 
@@ -505,7 +573,7 @@ public sealed class CirClient(
         // to, rather than that the provider is slow: an undelivered request looks
         // exactly like an unanswered one.
         exchange.Outcome = "NoResponse";
-        exchange.WaitedSeconds = waited;
+        exchange.WaitedSeconds = (int)(DateTimeOffset.UtcNow - startedAt).TotalSeconds;
 
         // The case this record was added for: nothing came back, and the request XML
         // is now the only thing that can be handed to whoever owns the provider.

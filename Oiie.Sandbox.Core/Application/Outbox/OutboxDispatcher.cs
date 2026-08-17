@@ -130,6 +130,47 @@ public sealed class OutboxDispatcher : BackgroundService
 
         try
         {
+            // A retry only means "no confirmation was recorded", which is not the same
+            // as "nothing was sent". The post at the end of this method and the record
+            // of it are two separate writes, so a process that dies between them leaves
+            // the item Pending with the BOD already on the channel -- and a plain retry
+            // would publish it a second time.
+            //
+            // The outbound record is therefore treated as the receipt: if one already
+            // exists for this item, the post succeeded and only the bookkeeping was
+            // lost. The item is closed out against that record rather than resent.
+            //
+            // Matched on verb and noun as well as correlation id, because one business
+            // event legitimately produces several items under a single correlation id --
+            // RegLocationService publishes segments and then their connections that way.
+            // Matching on correlation id alone would treat the second as a duplicate of
+            // the first and silently drop it.
+            var alreadyPosted = await db.Messages
+                .AsNoTracking()
+                .Where(m => m.CorrelationId == item.CorrelationId
+                    && m.Direction == MessageDirection.Outbound
+                    && m.Verb == item.Verb
+                    && m.Noun == item.Noun)
+                .Select(m => new { m.MessageId, m.OccurredAt })
+                .FirstOrDefaultAsync(ct);
+
+            if (alreadyPosted is not null)
+            {
+                item.State = OutboxState.Posted;
+                item.MessageId = alreadyPosted.MessageId;
+                item.PostedAt = alreadyPosted.OccurredAt;
+                item.LastError = null;
+
+                await db.SaveChangesAsync(ct);
+
+                _logger.LogWarning(
+                    "Outbox item {Id} was already posted as {MessageId} for {ParticipantId}; " +
+                    "closing it against that record instead of publishing {Verb}{Noun} again.",
+                    item.Id, alreadyPosted.MessageId, participant.ParticipantId, item.Verb, item.Noun);
+
+                return;
+            }
+
             // A participant-specific builder wins over a generic one, so a shared
             // fallback can coexist with personality-specific mappings.
             var candidates = _builders

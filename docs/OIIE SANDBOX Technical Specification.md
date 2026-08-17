@@ -439,6 +439,8 @@ CREATE TABLE <schema>.IsbmCursor (...);    -- last-read message per session
 
 *`Held` outbox state* is the paused-dispatcher state, distinct from `Pending`.
 
+*Publication is idempotent on retry.* The post to ISBM and the `Message` row recording it are two separate writes, so a process that dies between them would otherwise republish on retry. Before posting, the dispatcher looks for an existing outbound `Message` for the item and, finding one, closes the outbox row against it instead of sending again. The match is on `CorrelationId` + `Direction` + `Verb` + `Noun`, not correlation id alone — one business event legitimately queues several items under one correlation id, so a narrower key would silently drop the later ones. See DR-011.
+
 ### 6.4 Domain tables — the typed spine
 
 Each personality's domain tables carry a **typed spine**: identity, hierarchy, lifecycle, and the relationships the runtime itself reasons about. `Asset.AssetNumber`, `Asset.ParentAssetId`, `AssetSegmentEvent.EventType`, `Tag.TagNumber`. These are stable, indexed, and determine the shape of the screens.
@@ -1168,6 +1170,13 @@ Two consequences worth noting:
 | `SimHost.Tests` | Runtime units — outbox dispatcher, inbox dedup, identity cache TTL and invalidation, correlation propagation, reset completeness |
 | `Mappers.Tests` | Per-personality domain ↔ BOD mapping, including round-trip and schema validation of generated documents |
 | `Ecosystem.Tests` | xUnit wrappers invoking the headless scenario runner; one test per scenario file |
+
+**As built, this table is aspirational in one respect.** `SimHost.Tests` exists and passes, but its
+coverage is structural — schema fidelity and identity semantics — and it contains no tests for the
+outbox dispatcher or any other background service. There is no harness for one: contexts are built
+against a dummy connection string for model inspection, and no fakes exist for `IIsbmClientAccessor`,
+`IBodBuilder` or `IIsbmSessionStoreAccessor`. The gap is tracked in `open-items.md`; it is why two
+read-path bugs reached the 2026-08-14 demo and why the DR-011 idempotency guard ships unexercised.
 
 Consistent with existing practice: tests run immediately after each substantive change, with raw output shared.
 

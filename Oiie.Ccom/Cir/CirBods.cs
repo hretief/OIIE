@@ -220,6 +220,16 @@ public sealed record CirResponse(
     public bool HasFaults => Faults.Count > 0;
 
     /// <summary>
+    /// The BODID of the request this response answers, echoed by the provider in
+    /// Show/OriginalApplicationArea.
+    ///
+    /// <see cref="BodId"/> is the response's own identifier and is newly minted per
+    /// reply, so it can never identify the request. Only this value can, and without
+    /// it a caller cannot tell its own answer from another exchange's.
+    /// </summary>
+    public string? OriginalBodId { get; init; }
+
+    /// <summary>
     /// Every child element of a fault, flattened. Fault shapes vary and guessing at
     /// Message or Description alone loses whatever the provider actually said.
     /// </summary>
@@ -276,7 +286,16 @@ public sealed record CirResponse(
 
         return new CirResponse(verb, bodId, registries, faults)
         {
-            RawXml = root.ToString(SaveOptions.DisableFormatting)
+            RawXml = root.ToString(SaveOptions.DisableFormatting),
+
+            // Nested under the verb element (Show/Acknowledge), not beside it, and the
+            // verb name varies -- so the lookup is by local name at any depth within
+            // the DataArea rather than a fixed path.
+            OriginalBodId = dataArea?
+                .Descendants()
+                .FirstOrDefault(e => e.Name.LocalName == "OriginalApplicationArea")
+                .Child("BODID")
+                .SafeValue()
         };
     }
 
