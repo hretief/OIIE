@@ -1085,7 +1085,7 @@ function StewardshipTable({ items, accent, loading, error, selected, onToggle, o
           ) : items.length === 0 ? (
             <tr><td colSpan={8} style={{ padding: '48px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
               <div style={{ opacity: 0.4, fontSize: 24, marginBottom: 8 }}>◎</div>
-              Nothing proposed — publish a Named Version from ENG
+              Nothing to show under this filter — publish a Named Version from ENG
             </td></tr>
           ) : items.map(item => (
             <tr key={item.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
@@ -1130,6 +1130,24 @@ function StewardshipTable({ items, accent, loading, error, selected, onToggle, o
 
 const STEWARDSHIP_COLOR: Record<string, string> = {
   Proposed: '#f59e0b', Approved: '#10b981', Rejected: '#ef4444',
+}
+
+/**
+ * Which stewardship rows REG-LOCATION shows.
+ *
+ * Defaults to what is still outstanding, for the same reason ENG defaults to
+ * pending: the queue is a place of work, and rows already decided are not
+ * actionable. The toggle is there because a steward also needs to confirm what
+ * they admitted, which was previously invisible -- approving made a row vanish
+ * with nothing to show it had ever been there.
+ */
+type StewardshipFilter = api.StewardshipFilter
+
+const STEWARDSHIP_FILTERS: StewardshipFilter[] = ['Proposed', 'Approved', 'all']
+
+/** 'all' is the server's wording; the button should not shout it back verbatim. */
+function stewardshipFilterLabel(f: StewardshipFilter): string {
+  return f === 'all' ? 'ALL' : f.toUpperCase()
 }
 
 /**
@@ -1726,6 +1744,12 @@ function Workspace({ user }: { user: CurrentUser }) {
   const [mmsInventory, setMmsInventory] = useState<api.MmsInventory | null>(null)
   const [mmsLoading, setMmsLoading] = useState(false)
   const [mmsError, setMmsError] = useState<string | null>(null)
+  // What CMS's own ASSET table holds. Deliberately unscoped: these rows are the
+  // customer's asset register, and the panel exists to show all of it rather
+  // than only what the registry currently relates to the selected twin.
+  const [cmsAssets, setCmsAssets] = useState<api.CmsAsset[]>([])
+  const [cmsLoading, setCmsLoading] = useState(false)
+  const [cmsError, setCmsError] = useState<string | null>(null)
   // Which light system's detail is open, keyed by LIGHT_SYSTEM_ID. Single-valued:
   // opening one closes the other, so the grid stays scannable.
   const [expandedLightSystem, setExpandedLightSystem] = useState<number | null>(null)
@@ -1754,6 +1778,10 @@ function Workspace({ user }: { user: CurrentUser }) {
   // Which proposals the steward has chosen. Held by id rather than by row so a
   // queue refresh does not silently move the selection onto a different item.
   const [selectedProposals, setSelectedProposals] = useState<Set<number>>(new Set())
+  // Which stewardship rows are on screen. Held here rather than in the table so a
+  // change re-fetches: the state filter is applied by the registry, not by the
+  // client, and approved rows are simply not in an unfiltered response.
+  const [stewardshipFilter, setStewardshipFilter] = useState<StewardshipFilter>('Proposed')
 
   // ENG's reference data, offered in the class picker.
   const [engClasses, setEngClasses] = useState<api.ClassDefinition[]>([])
@@ -1877,6 +1905,36 @@ function Workspace({ user }: { user: CurrentUser }) {
     return () => abort.abort()
   }, [persona, refreshMmsInventory])
 
+  // ── Loading CMS's asset register ────────────────────────────────────────────
+  //
+  // Read without a twin filter. CMS assets are created as identification-only
+  // placeholders when a segment is accepted, and the operator wants to see every
+  // one of them, so scoping here would hide rows for reasons that belong to the
+  // registry rather than to CMS.
+  const refreshCmsAssets = useCallback(async (signal?: AbortSignal) => {
+    setCmsLoading(true)
+
+    try {
+      const result = await api.listCmsAssets(undefined, signal)
+      if (signal?.aborted) return
+      setCmsAssets(result.records)
+      setCmsError(null)
+    } catch (err) {
+      if (signal?.aborted) return
+      setCmsError(err instanceof Error ? err.message : String(err))
+      setCmsAssets([])
+    } finally {
+      if (!signal?.aborted) setCmsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (persona !== 'CMS') return
+    const abort = new AbortController()
+    void refreshCmsAssets(abort.signal)
+    return () => abort.abort()
+  }, [persona, refreshCmsAssets])
+
   // Switching twins abandons any edit in progress. The segment being edited
   // belongs to the twin that was selected, and leaving it loaded would let a
   // save write it into the wrong iModel.
@@ -1914,7 +1972,7 @@ function Workspace({ user }: { user: CurrentUser }) {
     setStewardshipLoading(true)
 
     try {
-      const items = await api.listStewardship(activeTwin.uuid, signal)
+      const items = await api.listStewardship(activeTwin.uuid, stewardshipFilter, signal)
       if (signal?.aborted) return
       setStewardship(items)
       setStewardshipError(null)
@@ -1931,7 +1989,7 @@ function Workspace({ user }: { user: CurrentUser }) {
     } finally {
       if (!signal?.aborted) setStewardshipLoading(false)
     }
-  }, [activeTwin])
+  }, [activeTwin, stewardshipFilter])
 
   function toggleProposal(id: number) {
     setSelectedProposals(prev => {
@@ -2492,6 +2550,73 @@ function Workspace({ user }: { user: CurrentUser }) {
               </section>
             )}
 
+            {/* ── CMS assets: what the customer's ASSET table actually holds ── */}
+            {persona === 'CMS' && (
+              <section>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.14em', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span>CMS ASSET REGISTER</span>
+                  <span style={{ background: p.dimBg, color: p.accent, padding: '1px 8px', borderRadius: '3px', fontWeight: 600 }}>
+                    {cmsAssets.length} ASSETS
+                  </span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '8px', letterSpacing: '0.1em', marginLeft: 4 }}>
+                    LIVE — GET /admin/cms/customer-assets
+                  </span>
+                  <button
+                    onClick={() => void refreshCmsAssets()}
+                    disabled={cmsLoading}
+                    style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--border-mid)', borderRadius: '3px', color: 'var(--text-secondary)', cursor: cmsLoading ? 'default' : 'pointer', fontSize: '9px', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', padding: '3px 10px', opacity: cmsLoading ? 0.5 : 1 }}
+                  >
+                    REFRESH
+                  </button>
+                </div>
+                <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: '6px', overflow: 'hidden' }}>
+                  {cmsError ? (
+                    <div style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#ef4444' }}>
+                      {cmsError}
+                    </div>
+                  ) : cmsLoading ? (
+                    <div style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
+                      LOADING…
+                    </div>
+                  ) : cmsAssets.length === 0 ? (
+                    <div style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
+                      NO ASSETS IN CMS
+                    </div>
+                  ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: '10px' }}>
+                      <thead>
+                        <tr style={{ background: 'var(--bg-inset)', color: 'var(--text-muted)', fontSize: '9px', letterSpacing: '0.1em' }}>
+                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>ASSET TAG</th>
+                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>NAME</th>
+                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>DESCRIPTION</th>
+                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>STATUS</th>
+                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>SITE_ID</th>
+                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>DETAIL</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cmsAssets.map(asset => (
+                          <tr key={asset.assetId} style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                            <td style={{ padding: '7px 12px', color: p.accent }}>{asset.assetTag}</td>
+                            <td style={{ padding: '7px 12px' }}>{asset.assetName ?? '—'}</td>
+                            <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>{asset.description ?? '—'}</td>
+                            <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>{asset.operationalStatus ?? '—'}</td>
+                            <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>{asset.siteId}</td>
+                            <td style={{ padding: '7px 12px', color: 'var(--text-muted)' }}>
+                              {/* Placeholder is the honest state of a segment-derived
+                                  asset: identification only, until CONSTRUCT supplies
+                                  the nameplate through REG-ASSET. */}
+                              {asset.placeholder ? 'PLACEHOLDER' : 'COMPLETE'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </section>
+            )}
+
             {/* ── MMS inventory: what the repository actually holds ─────────── */}
             {persona === 'MMS' && (
               <section>
@@ -2604,9 +2729,17 @@ function Workspace({ user }: { user: CurrentUser }) {
               <section>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.14em', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span>STEWARDSHIP QUEUE</span>
+                  {/* Counted by state rather than by row so the badge keeps meaning
+                      the same thing under every filter: how much is still
+                      outstanding, and how much has been admitted. */}
                   <span style={{ background: p.dimBg, color: p.accent, padding: '1px 8px', borderRadius: '3px', fontWeight: 600 }}>
                     {stewardship.filter(s => s.state === 'Proposed').length} PROPOSED
                   </span>
+                  {stewardship.some(s => s.state === 'Approved') && (
+                    <span style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981', padding: '1px 8px', borderRadius: '3px', fontWeight: 600 }}>
+                      {stewardship.filter(s => s.state === 'Approved').length} APPROVED
+                    </span>
+                  )}
                   <span style={{ color: 'var(--text-muted)', fontSize: '8px', letterSpacing: '0.1em', marginLeft: 4 }}>
                     LIVE — GET /admin/reg-location/stewardship
                   </span>
@@ -2620,21 +2753,43 @@ function Workspace({ user }: { user: CurrentUser }) {
                       ⚠ {stewardship.filter(s => s.classDegraded || s.propertiesUnmapped > 0).length} WITH FIDELITY LOSS
                     </span>
                   )}
-                  <button
-                    onClick={() => void refreshStewardship()}
-                    disabled={stewardshipLoading}
-                    style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--border-mid)', borderRadius: '3px', color: 'var(--text-secondary)', cursor: stewardshipLoading ? 'default' : 'pointer', fontSize: '9px', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', padding: '3px 10px', opacity: stewardshipLoading ? 0.5 : 1 }}
-                  >
-                    REFRESH
-                  </button>
+                  <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    {STEWARDSHIP_FILTERS.map(f => (
+                      <button
+                        key={f}
+                        onClick={() => setStewardshipFilter(f)}
+                        style={{
+                          background: stewardshipFilter === f ? p.dimBg : 'transparent',
+                          border: `1px solid ${stewardshipFilter === f ? p.accent : 'var(--border-subtle)'}`,
+                          borderRadius: '3px',
+                          color: stewardshipFilter === f ? p.accent : 'var(--text-muted)',
+                          cursor: 'pointer',
+                          fontSize: '9px',
+                          fontFamily: 'var(--font-mono)',
+                          letterSpacing: '0.1em',
+                          padding: '3px 10px',
+                        }}
+                      >
+                        {stewardshipFilterLabel(f)}
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => void refreshStewardship()}
+                      disabled={stewardshipLoading}
+                      style={{ marginLeft: 6, background: 'none', border: '1px solid var(--border-mid)', borderRadius: '3px', color: 'var(--text-secondary)', cursor: stewardshipLoading ? 'default' : 'pointer', fontSize: '9px', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', padding: '3px 10px', opacity: stewardshipLoading ? 0.5 : 1 }}
+                    >
+                      REFRESH
+                    </button>
+                  </div>
                 </div>
-                {/* The queue is registry-wide, not twin-scoped: the endpoint takes
-                    no iTwin, and proposals carry the sender's identifier rather
-                    than a twin. Said plainly so the iTwin selector above is not
-                    read as filtering this table. */}
+                {/* Scoped to the selected iTwin: proposals carry the context the
+                    sender asserted, and the endpoint filters on it. Said plainly
+                    so the state toggle is not misread as the only filter at
+                    work here. */}
                 <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.5 }}>
-                  Everything ENG has published, across all iTwins. Arrival is not acceptance —
-                  these are proposals until a steward approves them.
+                  What ENG has published into the selected iTwin. Arrival is not acceptance —
+                  these are proposals until a steward approves them. Switch to APPROVED or ALL
+                  to see what has already been admitted.
                 </div>
                 <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: '6px', overflow: 'hidden' }}>
                   <StewardshipTable items={stewardship} accent={p.accent} loading={stewardshipLoading} error={stewardshipError} selected={selectedProposals} onToggle={toggleProposal} onToggleAll={toggleAllProposals} />

@@ -72,6 +72,41 @@ shows resolved-but-empty.
 Scoped reads take ~1.9s. That is a known ISBM round-trip cost, not a database problem
 — see DR-010 before attempting to optimise it.
 
+### CMS asset register panel
+
+Selecting the CMS persona lists every row in `cms.Asset`, from
+`GET /admin/cms/customer-assets`. The panel deliberately passes no `twin`: the
+question it answers is what CMS holds, not what the registry currently relates to
+the twin on screen. The endpoint does accept `?twin=…` and resolves it through
+ws-CIR, if a scoped read is wanted.
+
+Do not confuse it with `GET /admin/cms/assets`, which is the monitored-asset view
+derived from Scenario 11 events. Different table, different question.
+
+Assets created from an approved segment are identification-only placeholders —
+no serial, manufacturer, model or commission date until CONSTRUCT supplies them
+through REG-ASSET. The panel shows those as `PLACEHOLDER`, derived from the
+absent serial and commission date rather than stored as a status.
+
+Note the asset tag is the registry's minted code (`LOC-000001`), not the source
+segment identifier; the segment tag lands in `AssetName`.
+
+### REG-LOCATION stewardship filter
+
+The stewardship panel defaults to `PROPOSED`, which is the working queue. Toggle
+to `APPROVED` or `ALL` to see decided rows.
+
+This is a server-side filter, not a client one: `GET /admin/reg-location/stewardship`
+takes `?state=` (`Proposed`, `Approved`, `Rejected`, or `all`) and defaults to
+`Proposed`. Before this existed, approving a segment made it disappear from the
+only view that had ever shown it, with nothing left to confirm the decision.
+
+An unrecognised state is a 400 with the allowed values rather than a silent
+fallback to the default.
+
+So an empty `PROPOSED` queue on an environment where work has been approved is
+correct, not a fault. Check `ALL` before concluding anything is missing.
+
 
 ## Day zero
 
@@ -252,6 +287,8 @@ actually crossed the wire, retrieved from the payload store.
 | A step shows no BODs | Either it emitted none, or its result envelope carried the correlation id somewhere the timeline does not look. Compare against the **Message flow** tab, which is built from the participant stores independently |
 | A scenario aborts before its first step | The subscription precondition. Declared subscriptions were not open — usually a reset that did not reopen them |
 | `sc02` fails on its stewardship precondition | `sc01` has not run, or its queue was consumed by an earlier `sc02` |
+| The stewardship queue looks empty after approving | Expected. The panel defaults to `PROPOSED`; approved rows are only returned for `?state=Approved` or `?state=all` |
+| An approved segment is not visible in CMS | Check the CMS asset register panel, not the monitored-asset view. The segment becomes a placeholder row in `cms.Asset` under a minted `LOC-…` tag, with the segment identifier in `AssetName` |
 | `sc11` reports MMS holds no functional location | Its inline handover did not complete. The scenario provisions the location itself; if that failed, the later steps have nothing to attach to |
 | `/admin/schema/seed` reports `0 class(es)` for every participant | The fixture path resolved somewhere the packs are not. Personality packs live in `Oiie.Sandbox.Core` and are *linked* into each host's build output, so under `dotnet run` they sit beside the assembly rather than under the content root. `SandboxCoreRegistration.ResolveContentPath` tries the content root and then the output directory — anything resolving `Sandbox:PersonalitiesPath` must go through it. Symptom is doubly confusing because the registry loads correctly at startup, so `/admin/eng/class-catalog` returns classes while seeding reports none |
 

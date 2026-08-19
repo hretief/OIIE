@@ -1849,10 +1849,39 @@ app.MapGet("/admin/cms/owners", async (
 // The twin is named by GUID. It is the only identifier a twin has that does not
 // change: the code and name are display labels the owning system may edit, so
 // matching on those would break this queue on a rename.
+//
+// state defaults to Proposed, which is the working queue. Passing "all" returns
+// decided rows too, so a steward can see what was approved beside what is still
+// outstanding rather than watching rows vanish on approval.
 app.MapGet("/admin/reg-location/stewardship", async (
-    RegLocationService service, string? twin, CancellationToken ct) =>
+    RegLocationService service, string? twin, string? state, CancellationToken ct) =>
 {
-    var queue = await service.GetQueueAsync(twin, ct);
+    SimHost.Domain.RegLocation.StewardshipState? filter;
+
+    if (string.IsNullOrWhiteSpace(state))
+    {
+        filter = SimHost.Domain.RegLocation.StewardshipState.Proposed;
+    }
+    else if (string.Equals(state, "all", StringComparison.OrdinalIgnoreCase))
+    {
+        filter = null;
+    }
+    else if (Enum.TryParse<SimHost.Domain.RegLocation.StewardshipState>(state, true, out var parsed))
+    {
+        filter = parsed;
+    }
+    else
+    {
+        // Named but unrecognised is a caller error, not a reason to silently fall
+        // back to the default and return a queue they did not ask for.
+        return Results.BadRequest(new
+        {
+            error = $"Unknown stewardship state '{state}'.",
+            allowed = new[] { "Proposed", "Approved", "Rejected", "all" }
+        });
+    }
+
+    var queue = await service.GetQueueAsync(twin, filter, ct);
 
     return Results.Ok(queue.Select(s => new
     {

@@ -366,17 +366,34 @@ export interface ApprovalResult {
 }
 
 /**
+ * Which stewardship rows to fetch.
+ *
+ * 'all' is the registry's own wording for no state filter, not a client-side
+ * convenience: the server has to be told to include decided rows, because the
+ * default is the working queue.
+ */
+export type StewardshipFilter = 'Proposed' | 'Approved' | 'all'
+
+/**
  * Proposals awaiting a stewardship decision, scoped to one iTwin.
  *
  * Omitting the twin returns every context. The UI always passes one: the queue is
  * shown beside a twin selector, and an unfiltered queue would list another twin's
  * proposals under the twin on screen.
+ *
+ * state defaults server-side to Proposed. Ask for 'all' to see what was approved
+ * beside what is still outstanding.
  */
 export function listStewardship(
   iTwinId?: string,
+  state?: StewardshipFilter,
   signal?: AbortSignal,
 ): Promise<StewardshipItem[]> {
-  const query = iTwinId ? `?twin=${encodeURIComponent(iTwinId)}` : ''
+  const params = new URLSearchParams()
+  if (iTwinId) params.set('twin', iTwinId)
+  if (state) params.set('state', state)
+
+  const query = params.size > 0 ? `?${params}` : ''
   return request<StewardshipItem[]>(`/admin/reg-location/stewardship${query}`, { signal })
 }
 
@@ -450,4 +467,49 @@ export function listMmsLocations(
 ): Promise<MmsInventory> {
   const query = iTwinId ? `?twin=${encodeURIComponent(iTwinId)}` : ''
   return request<MmsInventory>(`/admin/mms/locations${query}`, { signal })
+}
+
+/**
+ * One row of CMS's own ASSET table.
+ *
+ * placeholder is derived server-side rather than stored: an asset with neither a
+ * serial number nor a commission date is still an identification-only stub,
+ * awaiting the nameplate detail that arrives later from CONSTRUCT.
+ */
+export interface CmsAsset {
+  assetId: number
+  assetTag: string
+  assetName: string | null
+  description: string | null
+  serialNumber: string | null
+  manufacturer: string | null
+  model: string | null
+  commissionDate: string | null
+  operationalStatus: string | null
+  criticalityLevel: string | null
+  assetClassId: number | null
+  siteId: number
+  createdAtUtc: string
+  updatedAtUtc: string | null
+  placeholder: boolean
+}
+
+export interface CmsAssetList {
+  records: CmsAsset[]
+  scopedByTwin: boolean
+  unresolvedContext?: string | null
+  detail?: string | null
+}
+
+/**
+ * CMS's own ASSET table. Omitting the twin returns every row, which is what the
+ * CMS panel wants: the point is to show what CMS actually holds, not what one
+ * registry relation happens to make visible.
+ */
+export function listCmsAssets(
+  iTwinId?: string,
+  signal?: AbortSignal,
+): Promise<CmsAssetList> {
+  const query = iTwinId ? `?twin=${encodeURIComponent(iTwinId)}` : ''
+  return request<CmsAssetList>(`/admin/cms/customer-assets${query}`, { signal })
 }

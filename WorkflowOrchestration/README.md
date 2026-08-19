@@ -40,6 +40,8 @@ strawman it started as, kept so the shape of the workflow is visible.
 - Class picker — `GET /admin/eng/class-catalog`
 - Publish Design — `POST /admin/eng/promote`
 - Stewardship queue — `GET /admin/reg-location/stewardship`
+- CMS asset register — `GET /admin/cms/customer-assets`
+- MMS inventory — `GET /admin/mms/locations`
 
 **Still local state:** the INBOX tables, and every SC04 and SC11 action.
 
@@ -63,6 +65,25 @@ See `docs/decision-records/2026-08-eng-imodel-named-versions.md`.
 **Editing sends the whole record.** `POST /admin/eng/tags` is an upsert that
 assigns every field unconditionally, so a partial payload blanks what it omits.
 The edit form loads all current values for exactly this reason.
+
+## Filters that the server applies
+
+Two panels look like they filter client-side and do not.
+
+**The stewardship state toggle re-fetches.** `PROPOSED / APPROVED / ALL` maps to
+`?state=` on the endpoint, which defaults to `Proposed`. Approved rows are not in
+an unfiltered response at all, so filtering the array the client already holds
+would show nothing — the registry has to be asked for them.
+
+**The CMS asset register is deliberately unscoped by twin.** It lists every row
+in `cms.Asset`, because the point of the panel is what CMS holds rather than what
+the registry currently relates to the selected twin. The endpoint accepts a
+`twin` and resolves it through ws-CIR; the panel simply does not pass one.
+
+CMS assets arriving from a segment are identification-only placeholders: no
+serial, manufacturer, model or commission date until CONSTRUCT supplies them via
+REG-ASSET. The `DETAIL` column says `PLACEHOLDER` for those, derived server-side
+rather than stored.
 
 ## Layout
 

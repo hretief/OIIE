@@ -514,14 +514,27 @@ public sealed class RegLocationService(
     /// unfiltered queue lists proposals from every twin under whichever one happens
     /// to be selected, and a steward then approves a location into a plant they were
     /// not looking at.
+    ///
+    /// <paramref name="state"/> null returns every state. Approved rows are the
+    /// record of what a steward admitted, and being able to see them beside what is
+    /// still outstanding is what makes the queue reviewable rather than merely
+    /// actionable.
     /// </summary>
     public async Task<IReadOnlyList<StewardshipItem>> GetQueueAsync(
-        string? contextIdInSource = null, CancellationToken ct = default)
+        string? contextIdInSource = null, StewardshipState? state = StewardshipState.Proposed,
+        CancellationToken ct = default)
     {
         await using var db = factory.Create(ParticipantId);
 
-        var query = db.Set<StewardshipItem>()
-            .Where(s => s.State == StewardshipState.Proposed);
+        var query = db.Set<StewardshipItem>().AsQueryable();
+
+        // Null means every state, which is how a steward reviews what was decided
+        // rather than only what is still outstanding. Proposed remains the default
+        // so existing callers keep getting a work queue rather than a history.
+        if (state is not null)
+        {
+            query = query.Where(s => s.State == state);
+        }
 
         if (!string.IsNullOrWhiteSpace(contextIdInSource))
         {
