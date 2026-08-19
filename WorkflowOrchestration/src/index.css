@@ -29,6 +29,59 @@
   --text-primary: #e8eaf0;
   --text-secondary: #8892a4;
   --text-muted: #4e5668;
+
+  /* Overlays and shadows are tuned per theme rather than hardcoded at the call
+     site: a white scrim reads as "raised" on a dark surface but as "washed out"
+     on a light one, where a dark scrim is what conveys the same depth. */
+  --overlay-hover: rgba(255,255,255,0.08);
+  --overlay-active: rgba(255,255,255,0.05);
+  --shadow-menu: 0 10px 30px rgba(0,0,0,0.45);
+  --shadow-toast: 0 4px 32px rgba(0,0,0,0.5);
+  --on-accent: #fff;
+
+  color-scheme: dark;
+}
+
+/* Light theme. Only the surface ramp, text ramp and overlays are restated; the
+   participant accents stay identical so ENG blue / REG amber / MMS green remain
+   the same identity cue in both themes.
+
+   The ramp is inverted rather than mirrored: --bg-base is the *lightest* value
+   here and panels get progressively less white, because on a light background
+   elevation reads through subtle darkening and borders, not through lightening. */
+:root[data-theme='light'] {
+  --bg-base: #f4f5f8;
+  --bg-surface: #ffffff;
+  --bg-panel: #ffffff;
+  --bg-hover: #e9ecf2;
+  --border-subtle: rgba(15,23,42,0.10);
+  --border-mid: rgba(15,23,42,0.18);
+
+  /* Accents are darkened a little against white to hold WCAG AA for text and
+     icons; the dim/glow fills keep the original hue at low alpha. */
+  --eng-accent: #2563eb;
+  --eng-accent-dim: rgba(37,99,235,0.10);
+  --eng-accent-glow: rgba(37,99,235,0.22);
+
+  --reg-accent: #b45309;
+  --reg-accent-dim: rgba(180,83,9,0.10);
+  --reg-accent-glow: rgba(180,83,9,0.22);
+
+  --mms-accent: #047857;
+  --mms-accent-dim: rgba(4,120,87,0.10);
+  --mms-accent-glow: rgba(4,120,87,0.22);
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #7c879b;
+
+  --overlay-hover: rgba(15,23,42,0.06);
+  --overlay-active: rgba(15,23,42,0.04);
+  --shadow-menu: 0 10px 30px rgba(15,23,42,0.14);
+  --shadow-toast: 0 4px 32px rgba(15,23,42,0.18);
+  --on-accent: #fff;
+
+  color-scheme: light;
 }
 
 * {

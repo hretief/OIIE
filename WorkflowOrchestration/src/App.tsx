@@ -3,6 +3,8 @@ import * as api from './api'
 import * as itwin from './itwin'
 import * as auth from './auth'
 import type { CurrentUser } from './auth'
+import { applyTheme, initialTheme } from './theme'
+import type { Theme } from './theme'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -371,21 +373,39 @@ function Pill({ label, color }: { label: string; color: string }) {
 // The menu is absolutely positioned against a relative wrapper instead of being
 // portalled: the header is the last thing painted in its stacking context, so a
 // plain z-index is enough and a portal would only add ceremony.
-function UserMenu({ user }: { user: CurrentUser }) {
+function UserMenu({ user, onDayZero }: { user: CurrentUser; onDayZero: () => Promise<void> }) {
   const [open, setOpen] = useState(false)
   const [hov, setHov] = useState(false)
   const [logoutHov, setLogoutHov] = useState(false)
+  const [themeHov, setThemeHov] = useState(false)
+  const [theme, setTheme] = useState<Theme>(initialTheme)
+  const [dayZeroHov, setDayZeroHov] = useState(false)
+  // Two-stage rather than a window.confirm: the sequence drops every
+  // participant's data, and an inline arm keeps the warning next to the control
+  // instead of in a dialog that gets dismissed reflexively.
+  const [dayZeroArmed, setDayZeroArmed] = useState(false)
+  const [dayZeroBusy, setDayZeroBusy] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
+
+  // The attribute is already correct on first paint (main.tsx applies it), so
+  // this only carries later toggles through to the DOM and to storage.
+  useEffect(() => {
+    applyTheme(theme)
+  }, [theme])
 
   // Close on outside click and on Escape. Both are registered only while open,
   // so the app carries no listeners in its resting state.
+  //
+  // Held open while a reset is in flight: closing would strip the only progress
+  // indication the operator has for a call that runs for some time.
   useEffect(() => {
     if (!open) return
     function onDown(e: MouseEvent) {
+      if (dayZeroBusy) return
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape' && !dayZeroBusy) setOpen(false)
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
@@ -393,6 +413,11 @@ function UserMenu({ user }: { user: CurrentUser }) {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
     }
+  }, [open, dayZeroBusy])
+
+  // Re-opening the menu should not find the reset still armed from last time.
+  useEffect(() => {
+    if (!open) setDayZeroArmed(false)
   }, [open])
 
   const row = (label: string, value: string) => (
@@ -412,11 +437,11 @@ function UserMenu({ user }: { user: CurrentUser }) {
         aria-haspopup="menu"
         aria-expanded={open}
         style={{
-          display: 'flex', alignItems: 'center', gap: 8, background: open || hov ? 'rgba(255,255,255,0.08)' : 'transparent',
+          display: 'flex', alignItems: 'center', gap: 8, background: open || hov ? 'var(--overlay-hover)' : 'transparent',
           border: `1px solid ${open ? 'var(--border-mid)' : 'var(--border-subtle)'}`, borderRadius: '4px',
           padding: '4px 8px 4px 4px', cursor: 'pointer', transition: 'all 0.13s',
         }}>
-        <span style={{ width: 24, height: 24, borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #10b981)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em', flexShrink: 0 }}>
+        <span style={{ width: 24, height: 24, borderRadius: '50%', background: 'linear-gradient(135deg, var(--eng-accent), var(--mms-accent))', color: 'var(--on-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em', flexShrink: 0 }}>
           {initialsOf(user.name)}
         </span>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 600, letterSpacing: '0.08em', color: open || hov ? 'var(--text-primary)' : 'var(--text-muted)', whiteSpace: 'nowrap' }}>
@@ -426,9 +451,9 @@ function UserMenu({ user }: { user: CurrentUser }) {
       </button>
 
       {open && (
-        <div role="menu" style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 260, background: 'var(--bg-surface)', border: '1px solid var(--border-mid)', borderRadius: '6px', boxShadow: '0 10px 30px rgba(0,0,0,0.45)', zIndex: 50, overflow: 'hidden' }}>
+        <div role="menu" style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 260, background: 'var(--bg-surface)', border: '1px solid var(--border-mid)', borderRadius: '6px', boxShadow: 'var(--shadow-menu)', zIndex: 50, overflow: 'hidden' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px', borderBottom: '1px solid var(--border-subtle)' }}>
-            <span style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #10b981)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 700, flexShrink: 0 }}>
+            <span style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg, var(--eng-accent), var(--mms-accent))', color: 'var(--on-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 700, flexShrink: 0 }}>
               {initialsOf(user.name)}
             </span>
             <div style={{ minWidth: 0 }}>
@@ -452,11 +477,55 @@ function UserMenu({ user }: { user: CurrentUser }) {
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.1em' }}>ENTITLEMENTS</span>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {user.roles.length > 0
-                  ? user.roles.map(r => <Pill key={r} label={r} color="#3b82f6" />)
+                  ? user.roles.map(r => <Pill key={r} label={r} color="var(--eng-accent)" />)
                   : <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>none in token</span>}
               </div>
             </div>
           </div>
+
+          {/* Appearance sits with identity rather than in the header proper:
+              it is a per-user preference, set rarely, and the header band is
+              already carrying the workflow switch. */}
+          <button
+            role="menuitemcheckbox"
+            aria-checked={theme === 'light'}
+            onClick={() => setTheme(t => (t === 'dark' ? 'light' : 'dark'))}
+            onMouseEnter={() => setThemeHov(true)}
+            onMouseLeave={() => setThemeHov(false)}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 9, background: themeHov ? 'var(--overlay-hover)' : 'transparent', border: 'none', padding: '11px 14px', fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: themeHov ? 'var(--text-primary)' : 'var(--text-secondary)', cursor: 'pointer', textAlign: 'left', transition: 'all 0.13s' }}>
+            <span style={{ fontSize: '12px', lineHeight: 1 }}>{theme === 'dark' ? '☾' : '☀'}</span>
+            {theme === 'dark' ? 'LIGHT MODE' : 'DARK MODE'}
+          </button>
+
+          {/* Restarts the demo: reset to day zero, then bootstrap CIR. Kept
+              here rather than on a persona page because it is environment-wide
+              and belongs to whoever is running the demo, not to a role in it.
+
+              Armed in two stages, and the label states the consequence rather
+              than asking "are you sure": the destructive part is that every
+              participant's data goes, which "RESET" alone does not convey. */}
+          <button
+            role="menuitem"
+            disabled={dayZeroBusy}
+            onClick={async () => {
+              if (!dayZeroArmed) { setDayZeroArmed(true); return }
+              setDayZeroBusy(true)
+              try {
+                await onDayZero()
+                setOpen(false)
+              } finally {
+                // Cleared even on failure, so a failed attempt can be retried
+                // without reopening the menu.
+                setDayZeroBusy(false)
+                setDayZeroArmed(false)
+              }
+            }}
+            onMouseEnter={() => setDayZeroHov(true)}
+            onMouseLeave={() => setDayZeroHov(false)}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 9, background: dayZeroArmed ? 'rgba(245,158,11,0.10)' : dayZeroHov ? 'var(--overlay-hover)' : 'transparent', border: 'none', borderTop: '1px solid var(--border-subtle)', padding: '11px 14px', fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: dayZeroBusy ? 'var(--text-muted)' : dayZeroArmed ? '#f59e0b' : dayZeroHov ? 'var(--text-primary)' : 'var(--text-secondary)', cursor: dayZeroBusy ? 'progress' : 'pointer', textAlign: 'left', transition: 'all 0.13s' }}>
+            <span style={{ fontSize: '12px', lineHeight: 1 }}>⟳</span>
+            {dayZeroBusy ? 'RESETTING…' : dayZeroArmed ? 'ERASES ALL DATA — CONFIRM' : 'DAY ZERO RESET'}
+          </button>
 
           {/* Ends the IMS session, not just the local one. Because the app has
               no offline presence, IMS returns the browser here and the gate
@@ -488,7 +557,7 @@ function Btn({ label, onClick, accent, dimBg, borderColor, disabled = false, gho
         background: disabled ? 'transparent' : ghost ? (hov ? dimBg : 'transparent') : (hov ? accent : dimBg),
         border: `1px solid ${disabled ? 'var(--border-subtle)' : hov ? accent : borderColor}`,
         borderRadius: '4px',
-        color: disabled ? 'var(--text-muted)' : ghost ? (hov ? accent : 'var(--text-secondary)') : (hov ? '#fff' : accent),
+        color: disabled ? 'var(--text-muted)' : ghost ? (hov ? accent : 'var(--text-secondary)') : (hov ? 'var(--on-accent)' : accent),
         fontFamily: 'var(--font-mono)',
         fontSize: '11px',
         fontWeight: 600,
@@ -507,7 +576,7 @@ function Btn({ label, onClick, accent, dimBg, borderColor, disabled = false, gho
 
 function Toast({ message, accent }: { message: string; accent: string }) {
   return (
-    <div style={{ position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)', background: 'var(--bg-panel)', border: `1px solid ${accent}66`, borderRadius: '6px', padding: '9px 20px', color: accent, fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 500, letterSpacing: '0.04em', boxShadow: '0 4px 32px rgba(0,0,0,0.5)', zIndex: 1000, pointerEvents: 'none', animation: 'fadeInUp 0.2s ease' }}>
+    <div style={{ position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)', background: 'var(--bg-panel)', border: `1px solid ${accent}66`, borderRadius: '6px', padding: '9px 20px', color: accent, fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 500, letterSpacing: '0.04em', boxShadow: 'var(--shadow-toast)', zIndex: 1000, pointerEvents: 'none', animation: 'fadeInUp 0.2s ease' }}>
       {message}
     </div>
   )
@@ -644,7 +713,7 @@ const UPD_STATUS_LABEL: Record<UpdateStatus, string> = {
 function Checkbox({ checked, onToggle, accent }: { checked: boolean; onToggle: () => void; accent: string }) {
   return (
     <div onClick={onToggle} style={{ width: 14, height: 14, borderRadius: '3px', border: `1.5px solid ${checked ? accent : 'var(--border-mid)'}`, background: checked ? accent : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.1s', flexShrink: 0 }}>
-      {checked && <svg width="9" height="7" viewBox="0 0 9 7" fill="none"><path d="M1 3.5L3.5 6L8 1" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+      {checked && <svg width="9" height="7" viewBox="0 0 9 7" fill="none"><path d="M1 3.5L3.5 6L8 1" stroke="var(--on-accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
     </div>
   )
 }
@@ -1476,7 +1545,7 @@ function AuthScreen({ title, detail, tone = 'neutral', action }: { title: string
         {action && (
           <button
             onClick={action.onClick}
-            style={{ marginTop: 20, background: 'rgba(255,255,255,0.08)', border: '1px solid var(--border-mid)', borderRadius: '4px', padding: '8px 18px', fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-primary)', cursor: 'pointer' }}>
+            style={{ marginTop: 20, background: 'var(--overlay-hover)', border: '1px solid var(--border-mid)', borderRadius: '4px', padding: '8px 18px', fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-primary)', cursor: 'pointer' }}>
             {action.label}
           </button>
         )}
@@ -1625,7 +1694,7 @@ function TwinCarousel({ twins, activeUuid, onSelect }: {
                 padding: '0 16px',
                 height: '100%',
                 flexShrink: 0,
-                background: isActive ? 'rgba(255,255,255,0.05)' : 'transparent',
+                background: isActive ? 'var(--overlay-active)' : 'transparent',
                 borderTop: 'none',
                 borderBottom: isActive ? '2px solid #3b82f6' : '2px solid transparent',
                 borderLeft: i === 0 ? '1px solid var(--border-subtle)' : 'none',
@@ -1796,6 +1865,38 @@ function Workspace({ user }: { user: CurrentUser }) {
 
   function flash(msg: string) { setToast({ msg, accent: p.accent }); setTimeout(() => setToast(null), 2800) }
   function now() { return new Date().toISOString().slice(0, 16).replace('T', ' ') }
+
+  // Restart the demo environment: day-zero reset, then CIR bootstrap.
+  //
+  // The two run in sequence because the bootstrap depends on the reset having
+  // finished — it registers participants whose schemas the reset has just
+  // recreated. Running them concurrently would register against tables that are
+  // about to be dropped.
+  //
+  // Every panel is refreshed afterwards rather than left to its own effect: the
+  // reset invalidates all of them at once, and stale rows from the previous
+  // generation are worse than an empty table, because they still look valid.
+  async function runDayZero() {
+    try {
+      const reset = await api.resetDayZero()
+      await api.bootstrapCir()
+
+      await Promise.all([
+        refreshSegments(),
+        refreshStewardship(),
+        refreshCmsAssets(),
+        refreshMmsInventory(),
+      ])
+
+      // Local view state has no meaning against regenerated data.
+      setSelectedProposals(new Set())
+      setStewardshipError(null)
+
+      flash(`Day zero complete — ${reset.sessionsClosed} session(s) closed`)
+    } catch (err) {
+      flash(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   // ── Loading the twins ────────────────────────────────────────────────────
 
@@ -2441,7 +2542,7 @@ function Workspace({ user }: { user: CurrentUser }) {
                   setPersona(WORKFLOW_PERSONAS[wf][0])
                 }
               }}
-              style={{ background: workflow === wf ? 'rgba(255,255,255,0.08)' : 'transparent', border: `1px solid ${workflow === wf ? 'var(--border-mid)' : 'var(--border-subtle)'}`, borderRadius: '4px', padding: '5px 14px', fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: workflow === wf ? 'var(--text-primary)' : 'var(--text-muted)', cursor: 'pointer', transition: 'all 0.13s' }}>
+              style={{ background: workflow === wf ? 'var(--overlay-hover)' : 'transparent', border: `1px solid ${workflow === wf ? 'var(--border-mid)' : 'var(--border-subtle)'}`, borderRadius: '4px', padding: '5px 14px', fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: workflow === wf ? 'var(--text-primary)' : 'var(--text-muted)', cursor: 'pointer', transition: 'all 0.13s' }}>
               {wf}
             </button>
           ))}
@@ -2453,7 +2554,7 @@ function Workspace({ user }: { user: CurrentUser }) {
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', letterSpacing: '0.06em', maxWidth: 360, textAlign: 'right', lineHeight: 1.4 }}>
             {WORKFLOW_DESCRIPTION[workflow]}
           </span>
-          <UserMenu user={user} />
+          <UserMenu user={user} onDayZero={runDayZero} />
         </div>
       </header>
 

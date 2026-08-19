@@ -513,3 +513,52 @@ export function listCmsAssets(
   const query = iTwinId ? `?twin=${encodeURIComponent(iTwinId)}` : ''
   return request<CmsAssetList>(`/admin/cms/customer-assets${query}`, { signal })
 }
+
+// ─── Day zero ────────────────────────────────────────────────────────────────
+
+/**
+ * What a day-zero reset did. Only the counts the operator can act on are
+ * modelled; the endpoint returns richer per-participant detail that the UI has
+ * no use for.
+ */
+export interface DayZeroResult {
+  sessionsClosed: number
+  channels: unknown[]
+  participants: unknown[]
+  /**
+   * Things the reset could not do for itself, in prose. Chiefly that the CIR
+   * provider must be told to re-open its sessions, and that the CIR registry
+   * keeps its CIRIDs. Surfaced verbatim rather than interpreted: they are
+   * warnings about state outside this deployment's reach.
+   */
+  actionRequired: string[]
+}
+
+/**
+ * Tear the sandbox back to day zero: close sessions, rebuild every ISBM
+ * channel, drop and reseed each participant's schema.
+ *
+ * Slow by nature — it deletes and recreates broker channels — so callers should
+ * expect this to run for a while rather than treating a delay as a hang.
+ */
+export function resetDayZero(): Promise<DayZeroResult> {
+  return request<DayZeroResult>('/admin/reset/day-zero', { method: 'POST' })
+}
+
+/** Registry entries and equivalences asserted by a bootstrap. */
+export interface CirBootstrapResult {
+  related: unknown[]
+}
+
+/**
+ * Register the participants with CIR and assert the twin equivalences between
+ * them.
+ *
+ * Separate from the reset because it is the second half of the sequence: a
+ * day-zero leaves participants with clean schemas but no shared identity, and
+ * nothing cross-participant resolves until this has run.
+ */
+export function bootstrapCir(): Promise<CirBootstrapResult> {
+  return request<CirBootstrapResult>('/admin/cir/bootstrap', { method: 'POST' })
+}
+
