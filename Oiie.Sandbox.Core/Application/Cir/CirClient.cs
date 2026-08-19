@@ -14,11 +14,22 @@ public sealed record RegistrationResult(
     public bool Succeeded => Faults.Count == 0;
 }
 
+/// <summary>
+/// The outcome of a resolution.
+///
+/// <paramref name="Transient"/> separates "the registry answered and knows of no
+/// such identity" from "the registry did not answer". Both leave <paramref
+/// name="Cirid"/> null, but only the first is a statement about the data: the
+/// second is a statement about the provider, and a caller that cannot tell them
+/// apart has to treat a cold service as though a steward had never related the
+/// entity -- which is how an approved location was permanently refused by MMS.
+/// </summary>
 public sealed record ResolutionResult(
     Guid? Cirid,
     IReadOnlyList<Entry> Equivalents,
     bool FromCache,
-    string? Detail);
+    string? Detail,
+    bool Transient = false);
 
 /// <summary>
 /// Registers entries with the ws-CIR provider and resolves foreign identifiers
@@ -66,6 +77,15 @@ public sealed class CirClient(
     /// poll-count-based: with a variable delay the two are no longer the same thing.
     /// </summary>
     private static readonly TimeSpan WaitLogInterval = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// How long a request waits unanswered before it is posted a second time.
+    ///
+    /// Long enough that a provider which is merely busy answers the first request
+    /// and no duplicate is ever sent, and short enough that a cold start is absorbed
+    /// well inside the response timeout rather than consuming all of it.
+    /// </summary>
+    private static readonly TimeSpan ColdStartRepostAfter = TimeSpan.FromSeconds(20);
 
     private static string Truncate(string? value, int max = 1500) =>
         string.IsNullOrWhiteSpace(value) ? "(empty)"
@@ -218,11 +238,16 @@ public sealed class CirClient(
             // local column — so serving an empty list here would report every twin
             // as unrelated for the lifetime of the cache entry, which is exactly the
             // symptom a successful relink produced.
-            var equivalents = cached.Cirid is { } cachedCirid
+            var (equivalents, answered) = cached.Cirid is { } cachedCirid
                 ? await FindEquivalentsAsync(participant, cachedCirid, ct)
-                : [];
+                : ([], true);
 
-            return new ResolutionResult(cached.Cirid, equivalents, FromCache: true, null);
+            // A cached identity whose equivalence set could not be fetched is still
+            // a transient outcome, even though the CIRID itself was served locally.
+            // The set is the part MMS actually reads an owner from.
+            return new ResolutionResult(cached.Cirid, equivalents, FromCache: true,
+                answered ? null : "The registry did not respond.",
+                Transient: !answered);
         }
 
         var config = participant.Config;
@@ -243,7 +268,11 @@ public sealed class CirClient(
 
         if (response is null)
         {
-            return new ResolutionResult(null, [], false, "The registry did not respond.");
+            // Marked transient. Nothing has been learned about the identity here --
+            // only that the provider was not reachable within the timeout -- so the
+            // caller is told to try again rather than to conclude anything.
+            return new ResolutionResult(null, [], false,
+                "The registry did not respond.", Transient: true);
         }
 
         var match = response.AllEntries.FirstOrDefault(e =>
@@ -258,7 +287,7 @@ public sealed class CirClient(
         // Everything else the registry knows under that identity. This is the answer
         // to "what else is this thing called", and the reason resolution is worth
         // more than a lookup table.
-        var equivalentEntries = await FindEquivalentsAsync(participant, cirid, ct);
+        var (equivalentEntries, equivalentsAnswered) = await FindEquivalentsAsync(participant, cirid, ct);
 
         var entry = cached ?? new IdentityMapEntry
         {
@@ -280,10 +309,20 @@ public sealed class CirClient(
             "{ParticipantId} resolved {SourceId}:{IdInSource} to {Cirid} with {Count} equivalent(s)",
             participant.ParticipantId, foreignSourceId, foreignIdInSource, cirid, equivalentEntries.Count);
 
-        return new ResolutionResult(cirid, equivalentEntries, false, null);
+        return new ResolutionResult(cirid, equivalentEntries, false,
+            equivalentsAnswered ? null : "The registry did not respond.",
+            Transient: !equivalentsAnswered);
     }
 
-    private async Task<IReadOnlyList<Entry>> FindEquivalentsAsync(
+    /// <summary>
+    /// Everything the registry holds under a CIRID.
+    ///
+    /// Answered reports whether the provider replied. An unanswered lookup and a
+    /// genuinely empty equivalence set both yield no entries, and a caller reading
+    /// an owner out of that set cannot otherwise tell "this identity has no MMS
+    /// sibling" from "nobody was there to ask".
+    /// </summary>
+    private async Task<(IReadOnlyList<Entry> Entries, bool Answered)> FindEquivalentsAsync(
         ParticipantContext participant, Guid cirid, CancellationToken ct)
     {
         var correlationId = Guid.NewGuid().ToString();
@@ -298,7 +337,7 @@ public sealed class CirClient(
             [filter], participant.Config.LogicalId, correlationId);
 
         var response = await ExchangeAsync(participant, document, correlationId, ct);
-        return response?.AllEntries.ToList() ?? [];
+        return response is null ? ([], false) : (response.AllEntries.ToList(), true);
     }
 
     /// <summary>
@@ -561,84 +600,136 @@ public sealed class CirClient(
         var emptyReads = 0;
         var nextWaitLog = startedAt.Add(WaitLogInterval);
 
+        // A cold provider is not a slow one. If ws-CIR was not consuming the channel
+        // when the request was posted, the request was never delivered and no amount
+        // of further polling can produce an answer -- the wait can only end in a
+        // timeout, which is how an approved location was refused by MMS while the
+        // registry relation it needed was present and correct all along.
+        //
+        // So the request is posted a second time, once, after the provider has had
+        // long enough to wake. A provider that was merely slow answers the first
+        // request and the retry never happens; one that woke during the wait sees
+        // the second. Both requests carry the same BODID, so whichever reply arrives
+        // first satisfies the echo check below and the other is discarded.
+        var repostAt = startedAt.Add(ColdStartRepostAfter);
+        var reposted = false;
+
+        // Both request ids stay in play. The ISBM read is keyed by request id, so
+        // dropping the first one on repost would abandon the answer to it -- and a
+        // provider that woke just before the repost is precisely the case where the
+        // first request is the one that gets answered.
+        var pending = new List<string> { requestMessageId };
+
         while (DateTimeOffset.UtcNow < deadline)
         {
-            var message = await client.ReadResponseAsync(sessionId, requestMessageId, ct);
-
-            if (message?.Content is not null)
+            if (!reposted && DateTimeOffset.UtcNow >= repostAt)
             {
-                var response = CirResponse.Parse(new System.Xml.Linq.XDocument(message.Content));
+                reposted = true;
 
-                // The provider has been observed answering one request with another's
-                // reply: a GetRegistry filtered on one CIRID came back carrying a
-                // different CIRID's entries, echoing a BODID we never sent. Accepting
-                // that silently is the worst outcome available, because the answer is
-                // well-formed and plausible -- an equivalence lookup simply fails to
-                // find the sibling it was asking about, and the caller concludes the
-                // two identities are unrelated when the registry says they are.
-                //
-                // So a reply is only ours if it echoes our BODID. Anything else is
-                // dropped and the poll continues until the real answer arrives or the
-                // deadline passes. A response that echoes nothing at all is accepted:
-                // OriginalApplicationArea is optional, and refusing those would break
-                // every provider that omits it.
-                if (response.OriginalBodId is { Length: > 0 } echoed
-                    && !string.Equals(echoed, correlationId, StringComparison.OrdinalIgnoreCase))
+                logger.LogInformation(
+                    "{ParticipantId} re-posting its CIR request after {Seconds}s without a " +
+                    "response [{CorrelationId}]; the provider may not have been consuming the " +
+                    "channel when the first was sent.",
+                    participant.ParticipantId,
+                    (int)ColdStartRepostAfter.TotalSeconds, correlationId);
+
+                try
                 {
-                    logger.LogWarning(
-                        "{ParticipantId} discarded a CIR response echoing {Echoed} while waiting " +
-                        "for {CorrelationId}; it answers a different request.",
-                        participant.ParticipantId, echoed, correlationId);
+                    pending.Add(await client.PostRequestAsync(
+                        sessionId, request.Root!, [topic], null, ct));
+                }
+                catch (Exception ex)
+                {
+                    // Logged and swallowed: the original request is still outstanding
+                    // and may yet be answered, so a failed retry must not end the wait
+                    // earlier than the timeout would have.
+                    logger.LogWarning(ex,
+                        "{ParticipantId} could not re-post its CIR request [{CorrelationId}].",
+                        participant.ParticipantId, correlationId);
+                }
+            }
 
-                    // Removed, or the same foreign reply is re-read on every poll and
-                    // the wait can only end in a timeout.
-                    await client.RemoveResponseAsync(sessionId, requestMessageId, ct);
+            foreach (var pendingId in pending)
+            {
+                var message = await client.ReadResponseAsync(sessionId, pendingId, ct);
+
+                if (message?.Content is not null)
+                {
+                    var response = CirResponse.Parse(new System.Xml.Linq.XDocument(message.Content));
+
+                            // The provider has been observed answering one request with another's
+                            // reply: a GetRegistry filtered on one CIRID came back carrying a
+                            // different CIRID's entries, echoing a BODID we never sent. Accepting
+                            // that silently is the worst outcome available, because the answer is
+                            // well-formed and plausible -- an equivalence lookup simply fails to
+                            // find the sibling it was asking about, and the caller concludes the
+                            // two identities are unrelated when the registry says they are.
+                            //
+                            // So a reply is only ours if it echoes our BODID. Anything else is
+                            // dropped and the poll continues until the real answer arrives or the
+                            // deadline passes. A response that echoes nothing at all is accepted:
+                            // OriginalApplicationArea is optional, and refusing those would break
+                            // every provider that omits it.
+                            //
+                            // A re-posted request carries the same BODID as the original, so the
+                            // duplicate answer passes this check rather than being discarded as
+                            // foreign. Whichever arrives first is returned; the other is left for
+                            // the session to expire, which costs nothing.
+                            if (response.OriginalBodId is { Length: > 0 } echoed
+                                && !string.Equals(echoed, correlationId, StringComparison.OrdinalIgnoreCase))
+                            {
+                                logger.LogWarning(
+                                    "{ParticipantId} discarded a CIR response echoing {Echoed} while waiting " +
+                                    "for {CorrelationId}; it answers a different request.",
+                                    participant.ParticipantId, echoed, correlationId);
+
+                                // Removed, or the same foreign reply is re-read on every poll and
+                                // the wait can only end in a timeout.
+                                await client.RemoveResponseAsync(sessionId, pendingId, ct);
+                                continue;
+                            }
+
+                            logger.LogInformation(
+                                "{ParticipantId} received {Verb} with {FaultCount} fault(s) [{CorrelationId}]: {Raw}",
+                                participant.ParticipantId, response.Verb, response.Faults.Count,
+                                correlationId, Truncate(response.RawXml, 4000));
+
+                            exchange.ResponseXml = response.RawXml;
+                            exchange.ResponseVerb = response.Verb;
+                            exchange.Faults = response.Faults.Select(f => $"{f.Kind}: {f.Detail}").ToList();
+                            exchange.Outcome = response.HasFaults ? "Faulted" : "Answered";
+                            exchange.AnsweredUtc = DateTimeOffset.UtcNow;
+
+                            await telemetry.SaveAsync(exchange, ct);
+
+                            await client.RemoveResponseAsync(sessionId, pendingId, ct);
+                            return response;
+                        }
+
+                        if (message is not null)
+                        {
+                            logger.LogError(
+                                "CIR response {MessageId} could not be parsed as XML.", message.MessageId);
+                            await client.RemoveResponseAsync(sessionId, pendingId, ct);
+                            return null;
+                        }
+                    }
 
                     await Task.Delay(NextPollDelay(emptyReads), ct);
                     emptyReads++;
-                    continue;
+
+                    // Logged periodically so a long wait is visibly a wait rather than a
+                    // hang, and so a cold provider is distinguishable from a silent one.
+                    if (DateTimeOffset.UtcNow >= nextWaitLog)
+                    {
+                        logger.LogInformation(
+                            "{ParticipantId} still waiting for a CIR response after {Seconds}s [{CorrelationId}]",
+                            participant.ParticipantId,
+                            (int)(DateTimeOffset.UtcNow - startedAt).TotalSeconds, correlationId);
+
+                        nextWaitLog = DateTimeOffset.UtcNow.Add(WaitLogInterval);
+                    }
                 }
-
-                logger.LogInformation(
-                    "{ParticipantId} received {Verb} with {FaultCount} fault(s) [{CorrelationId}]: {Raw}",
-                    participant.ParticipantId, response.Verb, response.Faults.Count,
-                    correlationId, Truncate(response.RawXml, 4000));
-
-                exchange.ResponseXml = response.RawXml;
-                exchange.ResponseVerb = response.Verb;
-                exchange.Faults = response.Faults.Select(f => $"{f.Kind}: {f.Detail}").ToList();
-                exchange.Outcome = response.HasFaults ? "Faulted" : "Answered";
-                exchange.AnsweredUtc = DateTimeOffset.UtcNow;
-
-                await telemetry.SaveAsync(exchange, ct);
-
-                await client.RemoveResponseAsync(sessionId, requestMessageId, ct);
-                return response;
-            }
-
-            if (message is not null)
-            {
-                logger.LogError(
-                    "CIR response {MessageId} could not be parsed as XML.", message.MessageId);
-                await client.RemoveResponseAsync(sessionId, requestMessageId, ct);
-                return null;
-            }
-
-            await Task.Delay(NextPollDelay(emptyReads), ct);
-            emptyReads++;
-
-            // Logged periodically so a long wait is visibly a wait rather than a
-            // hang, and so a cold provider is distinguishable from a silent one.
-            if (DateTimeOffset.UtcNow >= nextWaitLog)
-            {
-                logger.LogInformation(
-                    "{ParticipantId} still waiting for a CIR response after {Seconds}s [{CorrelationId}]",
-                    participant.ParticipantId,
-                    (int)(DateTimeOffset.UtcNow - startedAt).TotalSeconds, correlationId);
-
-                nextWaitLog = DateTimeOffset.UtcNow.Add(WaitLogInterval);
-            }
-        }
 
         // A timeout most often means the topic is not one the provider subscribes
         // to, rather than that the provider is slow: an undelivered request looks

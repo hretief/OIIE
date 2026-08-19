@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Oiie.Ccom;
+using Oiie.Ccom.Oagis;
 using Oiie.Isbm.Client;
 using SimHost.Application;
 using SimHost.Application.Bods;
@@ -658,6 +659,158 @@ app.MapPost("/admin/{participantId}/outbox/retry", async (
 
     await db.SaveChangesAsync(ct);
     return Results.Ok(new { requeued = failed.Count });
+});
+
+// Re-runs an archived inbound BOD through its handler.
+//
+// The counterpart to the outbox retry above, and the missing half of it: a failed
+// outbound message could always be requeued, but a message that arrived and failed
+// while being processed had no route back. Recovering one meant asking the sender
+// to publish it again, which is not something an operator can do and not something
+// a sender will agree to for a message it considers delivered.
+//
+// This exists because a cold ws-CIR left an approved location permanently absent
+// from MMS. The message was on the wire, well-formed, and correct; only the
+// registry lookup behind it failed. Replaying it is the whole remedy, and having
+// to rebuild the demo environment to get there was not proportionate.
+//
+// The stored payload is the source, not a reconstruction, so what runs is exactly
+// what arrived. The original archive row is left untouched and a new one is written
+// for the replay: the first is the record that the message failed, and overwriting
+// it would erase the evidence of the incident being recovered from.
+app.MapPost("/admin/{participantId}/messages/{messageId:guid}/replay", async (
+    string participantId,
+    Guid messageId,
+    IParticipantDbContextFactory factory,
+    ParticipantRegistry registry,
+    IEnumerable<IBodHandler> handlers,
+    IPayloadStore payloads,
+    CancellationToken ct) =>
+{
+    var participant = registry.Get(participantId);
+
+    await using var db = factory.Create(participantId);
+
+    var original = await db.Messages.FirstOrDefaultAsync(m => m.MessageId == messageId, ct);
+
+    if (original is null)
+    {
+        return Results.NotFound(new { message = $"No message {messageId} for {participantId}." });
+    }
+
+    if (original.Direction != MessageDirection.Inbound)
+    {
+        return Results.BadRequest(new
+        {
+            message = "Only inbound messages can be replayed. Use the outbox retry for outbound."
+        });
+    }
+
+    if (string.IsNullOrWhiteSpace(original.ContentRef)
+        || original.ContentRef.StartsWith("unstored:", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest(new
+        {
+            message = "The body of this message was not retained, so it cannot be replayed. " +
+                      "Set Storage:BlobServiceUri to capture BOD payloads."
+        });
+    }
+
+    var xml = await payloads.ReadAsync(original.ContentRef, ct);
+
+    if (xml is null)
+    {
+        return Results.BadRequest(new
+        {
+            message = $"The payload reference '{original.ContentRef}' no longer resolves."
+        });
+    }
+
+    BodEnvelope envelope;
+
+    try
+    {
+        envelope = BodEnvelope.Parse(System.Xml.Linq.XDocument.Parse(xml));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { message = $"The stored payload could not be parsed: {ex.Message}" });
+    }
+
+    var candidates = handlers
+        .Where(h => h.Handles.Verb == envelope.Verb && h.Handles.Noun == envelope.Noun)
+        .ToList();
+
+    var handler = candidates.FirstOrDefault(h =>
+            string.Equals(h.ParticipantId, participantId, StringComparison.OrdinalIgnoreCase))
+        ?? candidates.FirstOrDefault(h => h.ParticipantId is null);
+
+    if (handler is null)
+    {
+        return Results.BadRequest(new
+        {
+            message = $"No handler registered for {envelope.Verb}{envelope.Noun} on {participantId}."
+        });
+    }
+
+    // The replay is archived as its own message, sharing the original's correlation
+    // id so both ends of the incident appear together in the wire view.
+    var replay = new MessageRecord
+    {
+        Direction = MessageDirection.Inbound,
+        Pattern = original.Pattern,
+        ChannelUri = original.ChannelUri,
+        Topic = original.Topic,
+        Verb = envelope.Verb,
+        Noun = envelope.Noun,
+        BodId = original.BodId,
+        CorrelationId = original.CorrelationId,
+        CorrelationBodId = original.BodId,
+        ContentRef = original.ContentRef,
+        ContentBytes = original.ContentBytes,
+        ValidationStatus = original.ValidationStatus,
+        ValidationDetail = original.ValidationDetail,
+        OccurredAt = DateTimeOffset.UtcNow
+    };
+
+    db.Messages.Add(replay);
+    await db.SaveChangesAsync(ct);
+
+    try
+    {
+        var result = await handler.HandleAsync(participant, db, envelope, replay.MessageId, ct);
+
+        replay.ProcessingStatus = result.Status;
+        replay.ProcessingDetail = result.Detail;
+        await db.SaveChangesAsync(ct);
+
+        return Results.Ok(new
+        {
+            replayedFrom = messageId,
+            messageId = replay.MessageId,
+            envelope.Verb,
+            envelope.Noun,
+            status = result.Status.ToString(),
+            detail = result.Detail,
+            result.EntitiesAffected,
+            result.PropertiesMapped,
+            result.PropertiesUnmapped
+        });
+    }
+    catch (Exception ex)
+    {
+        replay.ProcessingStatus = ProcessingStatus.Failed;
+        replay.ProcessingDetail = ex.Message;
+        await db.SaveChangesAsync(ct);
+
+        return Results.Ok(new
+        {
+            replayedFrom = messageId,
+            messageId = replay.MessageId,
+            status = nameof(ProcessingStatus.Failed),
+            detail = ex.Message
+        });
+    }
 });
 
 // Deletes the CIR registry outright, so the next run is genuinely a first run.

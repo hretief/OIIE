@@ -550,3 +550,74 @@ narrows the window; it does not eliminate it.
   `Message` sentinel table, so the composite index is absent from any database created before this change.
   The guard still works — it is a query, not a schema dependency — but is not index-backed until then.
 
+## DR-012 — A registry that does not answer is not a registry that says no
+
+**Status:** Decided
+**Date:** 2026-08-19
+**Context:** An approved location (`LTP-4`, twin `c86c9c10-…725c`) reached CMS but never appeared in MMS. The
+MMS message log said `context … is not related to any MMS owner: The registry did not respond.` — which reads
+as a stewardship problem and is not one. The relation existed and resolved correctly; ws-CIR had simply been
+cold when the segment arrived. The BOD was recorded `Rejected`, which nothing ever revisits, so a correct
+message was lost to a service that was merely asleep.
+
+### The failure was a conflation, repeated three times
+
+Nothing here was a wrong answer. Each layer discarded the distinction between *"the registry answered, and
+knows of no such relation"* and *"the registry did not answer"*:
+
+- `ResolutionResult` had no field to carry it, so `ResolveAsync`'s timeout branch was indistinguishable from
+  a definitive negative.
+- `FindEquivalentsAsync` returned an empty list on timeout. Because MMS reads its `OWNER_ID` out of that
+  equivalence set (DR-009: it has nowhere to cache one), an unanswered lookup read as *"no MMS owner
+  related"*. This is the same bug one level down, and it survives the first fix on its own.
+- `MmsSegmentsHandler` mapped both to `BodHandlingResult.Rejected`.
+
+### Decision
+
+`ResolutionResult` and `MmsContextResolution` carry a `Transient` flag, and `MmsSegmentsHandler` returns
+`ProcessingStatus.Failed` rather than `Rejected` when a block is transient.
+
+The status choice is the substance. Both leave the batch unwritten, but **`Rejected` is a verdict on the
+message** — it asserts the sender must change something and resend — while `Failed` says the same batch is
+worth running again unchanged. Recording an infrastructure outage as a verdict on the payload is what made
+the loss permanent.
+
+Transient outcomes are also not cached in the per-batch `ownerByTwin` map. That cache exists to spare the
+registry a round trip per segment, not to fix a momentary outage in place for the remainder of a batch.
+
+### The retry is a re-post, not more polling
+
+`ExchangeAsync` re-posts the request once after 20s unanswered. Polling harder would not have helped: if the
+provider was not consuming the channel when the request was posted, **the request was never delivered**, and
+the wait can only end in a timeout no matter how many times the consumer session is read. Only a second post
+can reach a provider that woke during the wait.
+
+Both request ids stay in play afterwards, because the ISBM read is keyed by request id and a provider that
+woke just before the re-post is precisely the case where the *first* request gets answered. Both posts carry
+the same `BODID`, so whichever reply lands first satisfies the existing echo check and the other is discarded.
+
+### Recovery needed a new primitive
+
+A failed *outbound* message could always be requeued, but an inbound message that failed during processing
+had no route back — recovering one meant asking the sender to publish again, which is not something an
+operator can do and not something a sender will agree to for a message it considers delivered.
+`POST /admin/{participantId}/messages/{id}/replay` re-runs the stored payload through its registered handler.
+It writes a *new* archive row and leaves the original `Failed` row intact, because that row is the evidence
+of the incident being recovered from.
+
+### Caveats carried forward
+
+- **Replay assumes handler idempotency, and does not enforce it.** It was safe for `Sync Segments` because
+  `MmsSegmentsHandler` matches on `LIGHT_SYSTEM_NAME` before creating. Replaying a handler without that
+  property would double-write.
+- **Rows already recorded `Rejected` stay terminal.** Segments lost to this bug before the fix do not
+  self-heal and still read as data problems in the message log.
+- **Replay depends on the payload having been retained.** A host without blob storage records an
+  `unstored:` sentinel instead of a `ContentRef`, and the endpoint refuses rather than guessing.
+- **20s is a judgement, not a measurement.** It is long enough that a merely busy provider answers first and
+  no duplicate is ever sent, and short enough to sit well inside the 120s `ResponseTimeout` — but no cold
+  start was actually timed.
+- **Only the MMS segments path was hardened.** Other CIR callers still flatten a timeout into whatever their
+  own failure shape is; the `Transient` flag now exists for them but is unused.
+
+

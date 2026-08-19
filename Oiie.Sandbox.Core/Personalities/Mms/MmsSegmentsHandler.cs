@@ -89,6 +89,23 @@ public sealed class MmsSegmentsHandler(
 
             if (resolution.IsBlocked)
             {
+                // A registry outage is reported as Failed rather than Rejected. Both
+                // leave the batch unwritten, but Rejected is a verdict on the message
+                // -- it says the sender must change something and resend -- and
+                // recording that because a service was cold strands a perfectly good
+                // BOD forever. Failed says the same batch is worth running again.
+                if (resolution.Transient)
+                {
+                    logger.LogWarning(
+                        "MMS deferred {Count} segment(s): {Reason} [{CorrelationId}]",
+                        segments.Count, resolution.Reason, envelope.BodId);
+
+                    return new BodHandlingResult(
+                        ProcessingStatus.Failed,
+                        $"{resolution.Reason}. Nothing was written; replay this message once " +
+                        "the registry is reachable.");
+                }
+
                 logger.LogWarning(
                     "MMS rejected {Count} segment(s): {Reason} [{CorrelationId}]",
                     segments.Count, resolution.Reason, envelope.BodId);
@@ -267,17 +284,27 @@ public sealed class MmsSegmentsHandler(
         {
             var resolution = await context.ResolveOwnerIdAsync(twinId, ct);
 
-            outcome = resolution is { IsResolved: true, OwnerId: { } ownerId }
-                ? OwnerResolution.Resolved(ownerId)
-                : OwnerResolution.Unresolvable(twinId, resolution.Reason);
+            outcome = resolution switch
+            {
+                { IsResolved: true, OwnerId: { } ownerId } => OwnerResolution.Resolved(ownerId),
+                { Transient: true } => OwnerResolution.Unreachable(twinId, resolution.Reason),
+                _ => OwnerResolution.Unresolvable(twinId, resolution.Reason)
+            };
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "MMS context resolution failed for {TwinId}.", twinId);
-            outcome = OwnerResolution.Unresolvable(twinId, $"the registry could not be reached ({ex.Message})");
+            outcome = OwnerResolution.Unreachable(twinId, ex.Message);
         }
 
-        cache[twinId] = outcome;
+        // A transient outcome is not cached. The cache exists to spare the registry a
+        // round trip per segment, not to fix a momentary outage in place for the rest
+        // of the batch -- and a provider that wakes mid-batch should be noticed.
+        if (!outcome.Transient)
+        {
+            cache[twinId] = outcome;
+        }
+
         return outcome;
     }
 
@@ -287,11 +314,15 @@ public sealed class MmsSegmentsHandler(
     /// <paramref name="Reason"/> is carried rather than re-derived so the rejection a
     /// steward reads is the registry's own account of why it could not answer, not a
     /// generic message written at the point of failure.
+    ///
+    /// <paramref name="Transient"/> separates the outage from the negative. Both block
+    /// the batch, but only one of them is the steward's to act on.
     /// </summary>
     private readonly record struct OwnerResolution(
         bool HasContext,
         long? OwnerId,
-        string? Reason)
+        string? Reason,
+        bool Transient = false)
     {
         internal static readonly OwnerResolution NoContext = new(false, null, null);
 
@@ -300,6 +331,16 @@ public sealed class MmsSegmentsHandler(
         internal static OwnerResolution Unresolvable(string twinId, string? reason) =>
             new(true, null, $"context {twinId} is not related to any MMS owner: " +
                             $"{reason ?? "the registry gave no reason"}");
+
+        /// <summary>
+        /// The registry could not be reached. Deliberately worded as a statement about
+        /// the registry rather than about the relation, because the relation may well
+        /// be present and correct -- which is exactly the case that produced a
+        /// permanently refused location.
+        /// </summary>
+        internal static OwnerResolution Unreachable(string twinId, string? reason) =>
+            new(true, null, $"the registry could not be consulted about context {twinId}: " +
+                            $"{reason ?? "it did not respond"}", Transient: true);
 
         /// <summary>True when a context was asserted but no owner could be named.</summary>
         internal bool IsBlocked => HasContext && OwnerId is null;

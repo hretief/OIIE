@@ -144,6 +144,10 @@ steps are outside the Sandbox.
       MMS one makes MMS admit an approved location. With only the CMS
       relation, an approved segment reaches MMS, validates, and is then
       rejected as belonging to no owner it knows.
+      That rejection means the relation is genuinely absent. If the detail
+      instead says the registry could not be consulted, the message is
+      recorded Failed rather than Rejected and the relation may well be
+      fine -- see "When something is wrong".
 
 5. POST {sandbox}/admin/reset
       only if step 1 reported channel errors
@@ -367,6 +371,8 @@ Only ENG is twin-scoped today. REG-LOCATION, MMS and CMS are not.
 | A tag is missing from `/admin/eng/tags` | Almost always the wrong twin, not a lost row. A request naming no twin reads ENG's default, so a tag created under `x-itwin-id` will not appear in it. `GET /admin/eng/twins` lists what exists |
 | Invalid column name `ITwinId` | The schema predates the twin columns. `/admin/reset` will not add them — use `/admin/reset/day-zero` |
 | A participant's **Repository contents** expander reports a table unreadable | A grant, not a UI fault. The browser reads as that participant's own contained user, so it shows exactly what the participant can see. Compare against `provision.ps1` for that schema before assuming the page is broken |
+| An approved location reaches CMS but not MMS | Read the MMS message's `processingStatus` before anything else. **`Rejected`** is a verdict: the iTwin genuinely has no `OWNER_ID` related in ws-CIR, so relate it and resend. **`Failed`** means the registry could not be consulted and nothing was written -- the relation is probably fine and the message should be replayed, not re-sent by the publisher. Confirm with `GET /admin/cir/registry` |
+| A message failed for a reason that has since gone away | `POST /admin/{participantId}/messages/{messageId}/replay` re-runs the stored BOD through its handler. Inbound only; the outbound equivalent is `POST /admin/{participantId}/outbox/retry`. It writes a new message row and leaves the failed one as evidence. Requires blob storage: a `ContentRef` of `unstored:*` means the body was never retained and the endpoint will refuse |
 
 ## State that outlives `/admin/reset`
 

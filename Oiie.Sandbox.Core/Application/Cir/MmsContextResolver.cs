@@ -46,8 +46,20 @@ public sealed class MmsContextResolver(
 
         if (resolution.Cirid is not { } cirid)
         {
-            return MmsContextResolution.Unresolved(
-                resolution.Detail ?? "The registry knows no shared identity for that iTwin.");
+            var detail = resolution.Detail ?? "The registry knows no shared identity for that iTwin.";
+
+            return resolution.Transient
+                ? MmsContextResolution.Unreachable(detail)
+                : MmsContextResolution.Unresolved(detail);
+        }
+
+        // A CIRID with an unfetched equivalence set is not evidence of anything: the
+        // owner is read out of that set, so an empty one here would be reported as
+        // "no MMS owner related" when the truth is that nobody answered.
+        if (resolution.Transient)
+        {
+            return MmsContextResolution.Unreachable(
+                resolution.Detail ?? "The registry did not respond.");
         }
 
         // Among the equivalents, take the entry MMS itself registered. Its
@@ -101,16 +113,32 @@ public sealed class MmsContextResolver(
 /// survives to the caller: "not related yet" and "related to a deleted owner" need
 /// different responses from a steward, and a null cannot tell them apart.
 /// </summary>
+/// <summary>
+/// The outcome of resolving an iTwin to an MMS owner.
+///
+/// Modelled as a result rather than a nullable long so the reason for failure
+/// survives to the caller: "not related yet" and "related to a deleted owner" need
+/// different responses from a steward, and a null cannot tell them apart.
+///
+/// <paramref name="Transient"/> adds the third case the first two were being
+/// confused with: the registry could not be reached at all. That is not a statement
+/// about the relation and calls for a retry rather than a steward.
+/// </summary>
 public sealed record MmsContextResolution(
     bool IsResolved,
     long? OwnerId,
     string? OwnerName,
     Guid? Cirid,
-    string? Reason)
+    string? Reason,
+    bool Transient = false)
 {
     public static MmsContextResolution Resolved(long ownerId, string ownerName, Guid cirid)
         => new(true, ownerId, ownerName, cirid, null);
 
     public static MmsContextResolution Unresolved(string reason)
         => new(false, null, null, null, reason);
+
+    /// <summary>The registry did not answer; nothing was learned about the relation.</summary>
+    public static MmsContextResolution Unreachable(string reason)
+        => new(false, null, null, null, reason, Transient: true);
 }

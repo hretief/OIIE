@@ -441,6 +441,8 @@ CREATE TABLE <schema>.IsbmCursor (...);    -- last-read message per session
 
 *Publication is idempotent on retry.* The post to ISBM and the `Message` row recording it are two separate writes, so a process that dies between them would otherwise republish on retry. Before posting, the dispatcher looks for an existing outbound `Message` for the item and, finding one, closes the outbox row against it instead of sending again. The match is on `CorrelationId` + `Direction` + `Verb` + `Noun`, not correlation id alone — one business event legitimately queues several items under one correlation id, so a narrower key would silently drop the later ones. See DR-011.
 
+*`Rejected` and `Failed` are not interchangeable.* `Rejected` is a verdict on the message: the sender must change something and resend, and nothing revisits the row. `Failed` says the message was not processed for reasons unrelated to its content and is worth running again unchanged. A handler that reports an infrastructure outage as `Rejected` makes a recoverable loss permanent — which is exactly what a cold ws-CIR did to an approved location, since a registry that does not answer is not a registry that says no. Inbound messages recorded `Failed` can be re-run through their handler with `POST /admin/{participantId}/messages/{id}/replay`, the inbound counterpart to the outbox retry. See DR-012.
+
 ### 6.4 Domain tables — the typed spine
 
 Each personality's domain tables carry a **typed spine**: identity, hierarchy, lifecycle, and the relationships the runtime itself reasons about. `Asset.AssetNumber`, `Asset.ParentAssetId`, `AssetSegmentEvent.EventType`, `Tag.TagNumber`. These are stable, indexed, and determine the shape of the screens.
