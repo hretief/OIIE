@@ -1,0 +1,67 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<SyncAgentRoles xmlns:b="http://www.bentley.com/Interoperability/MimosaExtensions/1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" releaseID="1.0" xmlns="http://www.mimosa.org/ccom4">
+  <ApplicationArea xmlns="http://www.openapplications.org/oagis/9">
+    <Sender>
+      <LogicalID>RBAC Service</LogicalID>
+      <ComponentID>RBAC Service</ComponentID>
+      <TaskID>Create</TaskID>
+      <ReferenceID>https://qa-ims.bentley.com</ReferenceID>
+    </Sender>
+    <CreationDateTime>2020-12-08T09:31:56.3708967Z</CreationDateTime>
+    <BODID>193ffbc5-8aa4-404b-93c3-d2a51b28c44b</BODID>
+  </ApplicationArea>
+  <DataArea>
+    <Sync xmlns="http://www.openapplications.org/oagis/9">
+      <ActionCriteria>
+        <ActionExpression actionCode="Replace" expressionLanguage="XPath">/SyncAgentRoles/DataArea/AgentRoles</ActionExpression>
+      </ActionCriteria>
+    </Sync>
+    <AgentRoles>
+      <AgentRole>
+        <UUID>00000000-0000-0000-0000-000000000000</UUID>
+        <InfoSource>
+          <UUID>f2adc36e-add6-4650-899b-6fa4374de870</UUID>
+          <ShortName>Rbac/2563</ShortName>
+          <URL>https://qa-waz-search.bentley.com/api/IMS/User/select?q=*:*&amp;fq=UserId:("c3c017a8-26fe-41e9-ae06-2aa80f711ab1")&amp;wt=json&amp;fl=UserId,FirstName,LastName,Email,UserName</URL>
+        </InfoSource>
+        <Type>
+          <UUID>6c282fd9-7f61-465f-8c25-e3d0a2debe03</UUID>
+          <IDInInfoSource>6c282fd9-7f61-465f-8c25-e3d0a2debe03</IDInInfoSource>
+          <ShortName>Team Member</ShortName>
+          <Description>Team Member</Description>
+        </Type>
+        <Agent>
+          <UUID>6f4847e7-8511-462d-ac63-19e596ee9b43</UUID>
+          <IDInInfoSource>Prasad.Jadhav@bentley.com</IDInInfoSource>
+          <ShortName>Prasad.Jadhav@bentley.com</ShortName>
+          <FullName>Prasad~Jadhav</FullName>
+          <Type>
+            <UUID>39ee615a-30b8-4da1-b374-9c5bd3759c1b</UUID>
+            <ShortName>Individual</ShortName>
+          </Type>
+        </Agent>
+        <AgentRoleWithAgent>
+          <UUID>00000000-0000-0000-0000-000000000000</UUID>
+          <Agent>
+            <UUID>c3c017a8-26fe-41e9-ae06-2aa80f711ab1</UUID>
+            <IDInInfoSource>c3c017a8-26fe-41e9-ae06-2aa80f711ab1</IDInInfoSource>
+            <ShortName>Prasad.Jadhav@bentley.com</ShortName>
+            <FullName>Prasad~Jadhav</FullName>
+            <Type>
+              <UUID>03433d20-2c2d-46a3-877e-c04a148c4cc6</UUID>
+              <ShortName>User</ShortName>
+            </Type>
+          </Agent>
+        </AgentRoleWithAgent>
+        <AgentRoleWithSegment>
+          <UUID>00000000-0000-0000-0000-000000000000</UUID>
+          <Segment xsi:type="Site">
+            <UUID>b3c766aa-02f8-42fb-b06d-80cd173fce0c</UUID>
+            <IDInInfoSource>b3c766aa-02f8-42fb-b06d-80cd173fce0c</IDInInfoSource>
+            <ShortName>gdfg</ShortName>
+          </Segment>
+        </AgentRoleWithSegment>
+      </AgentRole>
+    </AgentRoles>
+  </DataArea>
+</SyncAgentRoles>

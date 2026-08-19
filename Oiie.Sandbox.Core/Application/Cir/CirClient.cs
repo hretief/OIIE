@@ -355,6 +355,77 @@ public sealed class CirClient(
     }
 
     /// <summary>
+    /// Every entry in the registry, bypassing the local identity cache.
+    ///
+    /// A diagnostic rather than part of any flow: the cache answers what this
+    /// participant has already looked up, which is precisely not the question when
+    /// the question is what the registry itself still holds after a reset.
+    /// </summary>
+    public async Task<IReadOnlyList<Entry>> DumpRegistryAsync(
+        ParticipantContext participant,
+        CancellationToken ct = default)
+    {
+        var correlationId = Guid.NewGuid().ToString();
+
+        // Registry filter only. An EntryFilter would scope this to one identifier,
+        // and the point is to see everything.
+        var filter = new Filter
+        {
+            RegistryFilter = new RegistryFilter { ID = participant.Config.Cir.RegistryId }
+        };
+
+        var document = CirBods.GetRegistry(
+            [filter], participant.Config.LogicalId, correlationId);
+
+        var response = await ExchangeAsync(participant, document, correlationId, ct);
+
+        return response?.AllEntries.ToList() ?? [];
+    }
+
+    /// <summary>
+    /// Deletes the whole registry, via ws-CIR CancelRegistry.
+    ///
+    /// This is a day-zero operation, not part of any scenario. Dropping the
+    /// participant tables leaves the registry untouched, so entries registered on a
+    /// previous run keep their CIRIDs and the next registration attaches to an
+    /// identity that predates the reset. That makes a "first" run indistinguishable
+    /// from a repeat, which is the confusion this removes.
+    ///
+    /// The local identity cache is emptied in the same breath. A cached row
+    /// pointing at a CIRID that no longer exists anywhere would keep answering
+    /// resolutions with an identity the registry has forgotten, and the TTL means
+    /// it would do so for minutes rather than visibly failing.
+    /// </summary>
+    public async Task<RegistrationResult> DeleteRegistryAsync(
+        ParticipantContext participant,
+        CancellationToken ct = default)
+    {
+        var correlationId = Guid.NewGuid().ToString();
+        var registryId = participant.Config.Cir.RegistryId;
+
+        var document = CirBods.CancelRegistry(
+            registryId, participant.Config.LogicalId, correlationId);
+
+        await SendAsync(participant, document, correlationId, ct);
+
+        await using var db = factory.Create(participant.ParticipantId);
+
+        var cached = await db.IdentityMap.ToListAsync(ct);
+
+        if (cached.Count > 0)
+        {
+            db.IdentityMap.RemoveRange(cached);
+            await db.SaveChangesAsync(ct);
+        }
+
+        logger.LogWarning(
+            "{ParticipantId} deleted registry {RegistryId} and dropped {Count} cached identity mapping(s).",
+            participant.ParticipantId, registryId, cached.Count);
+
+        return new RegistrationResult(cached.Count, [], correlationId);
+    }
+
+    /// <summary>
     /// Posts a request and returns without waiting for a response.
     ///
     /// For the BODs that declare no response (§3.1.4 ChangeEntryCIRID and the

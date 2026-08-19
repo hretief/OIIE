@@ -208,10 +208,17 @@ app.MapPost("/admin/reset", async (
         // sample of LIGHT_SYSTEM_INVENTORY are the customer's real rows, so they are
         // reproduced rather than generated.
         var owners = 0;
+        var sites = 0;
         if (participant.ParticipantId == CmsService.ParticipantId)
         {
             await using var ownerDb = contextFactory.Create(participant.ParticipantId);
             owners = await ContextOwnerSeeder.SeedCmsAsync(ownerDb, ct);
+
+            // Sites are provisioned here rather than created by an arriving segment.
+            // In production BIC publishes SyncSites and CMS provisions from that; the
+            // sandbox does not implement that workflow yet, so the same rows are laid
+            // down directly. Either way a plant exists before assets are placed in it.
+            sites = await ContextOwnerSeeder.SeedCmsSitesAsync(ownerDb, ct);
         }
         else if (participant.ParticipantId == MmsService.ParticipantId)
         {
@@ -225,7 +232,8 @@ app.MapPost("/admin/reset", async (
             schema = participant.Schema,
             classes = fixtures.Classes,
             propertyDefinitions = fixtures.Definitions,
-            contextOwners = owners
+            contextOwners = owners,
+            sites
         });
     }
 
@@ -281,6 +289,7 @@ app.MapPost("/admin/reset/day-zero", async (
     IParticipantSchemaInitializer initializer,
     IIsbmClientAccessor clients,
     IIsbmSessionStoreAccessor stores,
+    IParticipantDbContextFactory contextFactory,
     ClassFixtureLoader loader,
     ClassificationRefresher refresher,
     IConfiguration configuration,
@@ -406,12 +415,47 @@ app.MapPost("/admin/reset/day-zero", async (
 
         var fixtures = await loader.LoadAsync(participant, fixtureRoot, ct);
 
+        // Reference data that is not a classification fixture: the local key spaces
+        // the registry resolves against. Day zero without these leaves CMS and MMS
+        // with no owner domain at all, so a later relate has nothing to relate.
+        var owners = 0;
+        var sites = 0;
+        var twins = 0;
+
+        if (participant.ParticipantId == CmsService.ParticipantId)
+        {
+            await using var cmsDb = contextFactory.Create(participant.ParticipantId);
+            owners = await ContextOwnerSeeder.SeedCmsAsync(cmsDb, ct);
+
+            // Sites are provisioned here rather than created by an arriving segment.
+            // In production BIC publishes SyncSites and CMS provisions from that; the
+            // sandbox does not implement that workflow yet, so the same rows are laid
+            // down directly. Either way a plant exists before assets are placed in it.
+            sites = await ContextOwnerSeeder.SeedCmsSitesAsync(cmsDb, ct);
+        }
+        else if (participant.ParticipantId == MmsService.ParticipantId)
+        {
+            await using var mmsDb = contextFactory.Create(participant.ParticipantId);
+            owners = await ContextOwnerSeeder.SeedMmsAsync(mmsDb, ct);
+        }
+        else if (participant.ParticipantId == EngService.ParticipantId)
+        {
+            // The twins carry GUIDs iTwin actually issued, so they are seeded rather
+            // than left to EnsureTwinAsync, which would mint identifiers that resolve
+            // nowhere. A tag cannot be scoped to a twin that does not exist yet.
+            await using var engDb = contextFactory.Create(participant.ParticipantId);
+            twins = await ContextOwnerSeeder.SeedEngTwinsAsync(engDb, ct);
+        }
+
         participants.Add(new
         {
             participant.ParticipantId,
             schema = participant.Schema,
             classes = fixtures.Classes,
-            propertyDefinitions = fixtures.Definitions
+            propertyDefinitions = fixtures.Definitions,
+            contextOwners = owners,
+            sites,
+            twins
         });
     }
 
@@ -436,7 +480,8 @@ app.MapPost("/admin/reset/day-zero", async (
                 "POST {cirBaseUrl}/api/isbm/reset to make it re-open, or it will keep polling " +
                 "a session the broker no longer knows about.",
                 "The CIR registry's own data is NOT cleared by this call — entries registered " +
-                "earlier still carry their CIRIDs. Clear it separately for a true day zero."
+                "earlier still carry their CIRIDs. Call POST /admin/cir/registry/delete for a " +
+                "true day zero, then re-register."
             }
     });
 });
@@ -613,6 +658,59 @@ app.MapPost("/admin/{participantId}/outbox/retry", async (
 
     await db.SaveChangesAsync(ct);
     return Results.Ok(new { requeued = failed.Count });
+});
+
+// Deletes the CIR registry outright, so the next run is genuinely a first run.
+//
+// Day zero rebuilds the participants' own tables but cannot touch the registry:
+// it belongs to another system and is reached over the bus. Without this, entries
+// registered before a reset keep their CIRIDs, a re-registration reports zero
+// registered because nothing is new, and a relate reports zero related because the
+// equivalence already exists -- all of which look like failures and are not.
+//
+// Guarded by an explicit confirm because it destroys data belonging to a shared
+// service that other systems may be registered in. Nothing about the CIRIDs it
+// drops can be recovered.
+app.MapPost("/admin/cir/registry/delete", async (
+    string? confirm,
+    string? participantId,
+    ParticipantRegistry registry,
+    CirClient cir,
+    CancellationToken ct) =>
+{
+    var participant = string.IsNullOrWhiteSpace(participantId)
+        ? registry.All.First()
+        : registry.All.FirstOrDefault(p => p.ParticipantId == participantId);
+
+    if (participant is null)
+    {
+        return Results.NotFound(new { error = $"No participant '{participantId}'." });
+    }
+
+    var registryId = participant.Config.Cir.RegistryId;
+
+    if (!string.Equals(confirm, registryId, StringComparison.Ordinal))
+    {
+        return Results.BadRequest(new
+        {
+            error = "This deletes the registry and every CIRID in it, for every system "
+                  + "registered there, and cannot be undone.",
+            detail = $"Pass ?confirm={registryId} to proceed."
+        });
+    }
+
+    var result = await cir.DeleteRegistryAsync(participant, ct);
+
+    return Results.Ok(new
+    {
+        deletedRegistry = registryId,
+        sentBy = participant.ParticipantId,
+        identityCacheDropped = result.Registered,
+        result.CorrelationId,
+        note = "CancelRegistry declares no response, so this reports what was sent, not "
+             + "what the provider did. Re-register and re-resolve to confirm. Other "
+             + "participants' identity caches are untouched -- reset them to clear those."
+    });
 });
 
 // What the far end of the chain actually knows. Cirid is null on every row until a
@@ -1210,6 +1308,47 @@ app.MapGet("/admin/cir/diagnose", async (
     });
 });
 
+// Everything the registry holds, unfiltered.
+//
+// GetRegistry with a registry filter but no entry filter matches the whole registry,
+// which is normally a mistake and is exactly what is wanted here: it answers "what is
+// actually in there" without inferring it from exchange logs or local caches. Grouped
+// by CIRID because that, not the row count, is what says how many distinct things the
+// registry believes exist.
+app.MapGet("/admin/cir/registry", async (
+    string? participantId,
+    ParticipantRegistry registry,
+    CirClient cir,
+    CancellationToken ct) =>
+{
+    var participant = string.IsNullOrWhiteSpace(participantId)
+        ? registry.All.First()
+        : registry.All.FirstOrDefault(p => p.ParticipantId == participantId);
+
+    if (participant is null)
+    {
+        return Results.NotFound(new { error = $"No participant '{participantId}'." });
+    }
+
+    var entries = await cir.DumpRegistryAsync(participant, ct);
+
+    return Results.Ok(new
+    {
+        registryId = participant.Config.Cir.RegistryId,
+        queriedBy = participant.ParticipantId,
+        entryCount = entries.Count,
+        distinctIdentities = entries.Select(e => e.CIRID).Distinct().Count(),
+        bySource = entries
+            .GroupBy(e => e.SourceID ?? "(none)")
+            .Select(g => new { sourceId = g.Key, count = g.Count() })
+            .OrderBy(g => g.sourceId),
+        entries = entries
+            .OrderBy(e => e.SourceID)
+            .ThenBy(e => e.IDInSource)
+            .Select(e => new { e.SourceID, e.IDInSource, e.Name, e.CIRID })
+    });
+});
+
 // Asks the registry what a foreign identifier is, and what else it is called.
 app.MapGet("/admin/{participantId}/cir/resolve", async (
     string participantId,
@@ -1396,6 +1535,126 @@ app.MapGet("/admin/cms/assets", async (
     return Results.Ok(new { records, resolvedOwnerCode = ownerCode });
 });
 
+// The customer ASSET table, as distinct from the sandbox's MonitoredAssetRecord
+// above. Two endpoints because they answer two different questions: that one shows
+// what CMS derived from Scenario 11 events, this one shows what actually sits in the
+// customer's own schema.
+//
+// Twin scoping goes through the registry, not through SITE.SiteUUID. CMS does hold
+// the publisher's UUID and matching on it would work, but that would make a foreign
+// key space directly queryable against a CMS column — the precise shortcut the
+// sandbox exists to argue against. Resolution is by CIRID like every other
+// participant, so a site is filterable only once a steward has related it.
+app.MapGet("/admin/cms/customer-assets", async (
+    IParticipantDbContextFactory factory, CmsContextResolver resolver,
+    string? twin, CancellationToken ct) =>
+{
+    await using var db = factory.Create(CmsService.ParticipantId);
+
+    var query = db.Set<SimHost.Domain.Cms.CmsAsset>().AsNoTracking();
+
+    if (!string.IsNullOrWhiteSpace(twin))
+    {
+        var siteCodes = await resolver.ResolveSiteCodesAsync(twin, ct);
+
+        // No relation is a meaningful answer, not an absent filter. Returning every
+        // asset here would present another plant's equipment as belonging to the one
+        // that was asked for.
+        if (siteCodes.Count == 0)
+        {
+            return Results.Ok(new
+            {
+                records = Array.Empty<object>(),
+                unresolvedContext = twin,
+                detail = "No CMS site is related to that twin in the registry. " +
+                         "Register and relate the site before filtering by it."
+            });
+        }
+
+        var siteIds = db.Set<SimHost.Domain.Cms.CmsSite>()
+            .Where(s => siteCodes.Contains(s.SiteCode))
+            .Select(s => s.SiteId);
+
+        query = query.Where(a => siteIds.Contains(a.SiteId));
+    }
+
+    var records = await query
+        .OrderBy(a => a.AssetTag)
+        .Select(a => new
+        {
+            a.AssetId,
+            a.AssetTag,
+            a.AssetName,
+            a.Description,
+            a.SerialNumber,
+            a.Manufacturer,
+            a.Model,
+            a.CommissionDate,
+            a.OperationalStatus,
+            a.CriticalityLevel,
+            a.AssetClassId,
+            a.SiteId,
+            a.CreatedAtUtc,
+            a.UpdatedAtUtc,
+
+            // Derived, not stored. A row with no serial number and no commission date
+            // is still a placeholder awaiting detail from CONSTRUCT via REG-ASSET.
+            placeholder = a.SerialNumber == null && a.CommissionDate == null
+        })
+        .ToListAsync(ct);
+
+    return Results.Ok(new { records, scopedByTwin = !string.IsNullOrWhiteSpace(twin) });
+});
+
+// The customer SITE table. Sites are provisioned ahead of ingest (in production from
+// BIC's SyncSites; here at day zero), so this lists the plants CMS knows about.
+//
+// The twin filter resolves through CIR rather than comparing SiteUUID to the twin id.
+// SiteUUID is the publisher's own key and is never the twin's, so a column match would
+// always be empty; the registry is what asserts that a CMS site and an ENG twin are
+// the same place.
+app.MapGet("/admin/cms/customer-sites", async (
+    IParticipantDbContextFactory factory, CmsContextResolver resolver,
+    string? twin, CancellationToken ct) =>
+{
+    await using var db = factory.Create(CmsService.ParticipantId);
+
+    var query = db.Set<SimHost.Domain.Cms.CmsSite>().AsNoTracking();
+
+    if (!string.IsNullOrWhiteSpace(twin))
+    {
+        var siteCodes = await resolver.ResolveSiteCodesAsync(twin, ct);
+
+        if (siteCodes.Count == 0)
+        {
+            return Results.Ok(new
+            {
+                records = Array.Empty<object>(),
+                unresolvedContext = twin,
+                detail = "No CMS site is related to that twin. Provision the site, " +
+                         "then relate it with POST /admin/cms/sites/relate."
+            });
+        }
+
+        query = query.Where(s => siteCodes.Contains(s.SiteCode));
+    }
+
+    var records = await query
+        .OrderBy(s => s.SiteCode)
+        .Select(s => new
+        {
+            s.SiteId,
+            s.SiteUuid,
+            s.SiteCode,
+            s.SiteName,
+            s.Description,
+            s.CreatedAtUtc
+        })
+        .ToListAsync(ct);
+
+    return Results.Ok(new { records, scopedByTwin = !string.IsNullOrWhiteSpace(twin) });
+});
+
 app.MapGet("/admin/cms/locations", async (
     IParticipantDbContextFactory factory, CmsContextResolver resolver,
     string? twin, CancellationToken ct) =>
@@ -1454,6 +1713,120 @@ app.MapPost("/admin/cms/owners/relate", async (
         : Results.Ok(new { related = result.EquivalencesAsserted });
 });
 
+/// Relates a CMS site to a context another participant registered.
+///
+/// The step that makes ?twin= scoping resolve. Until it is run, CMS's sites and
+/// ENG's twins are both registered but unrelated, and a scoped read correctly
+/// returns nothing — the registry has been asked whether they are the same plant
+/// and has never been told.
+app.MapPost("/admin/cms/sites/relate", async (
+    CirRegistrationService service,
+    string siteCode, string sourceId, string idInSource,
+    CancellationToken ct) =>
+{
+    var result = await service.RelateCmsSiteAsync(siteCode, sourceId, idInSource, ct);
+
+    return result.Faults.Count > 0
+        ? Results.BadRequest(new { result.Faults })
+        : Results.Ok(new { related = result.EquivalencesAsserted });
+});
+
+/// Registers ENG, CMS and MMS, then relates each seeded iTwin to both the CMS site
+/// and the MMS owner for the same district.
+///
+/// Two relations per twin rather than one, because CMS and MMS key the same district
+/// differently and each resolves inbound context through its own key. One relation is
+/// enough to make CMS reads scope, and not enough to make MMS admit anything.
+///
+/// Separate from day zero rather than folded into it, because day zero destroys the
+/// CIR provider's ISBM sessions: nothing can be registered or related until
+/// POST {cir}/api/isbm/reset has re-opened them. Running this too early would fault
+/// on every pair rather than relate them.
+///
+/// The pairing is by district number, which is only defensible because the twins are
+/// seeded from a list that carries that number deliberately. It is a convenience for
+/// getting a sandbox to a workable state, not a claim that names can be matched -- a
+/// steward still asserts arbitrary relations through /admin/cms/sites/relate.
+app.MapPost("/admin/cir/bootstrap", async (
+    CirRegistrationService service,
+    ParticipantRegistry registry,
+    CancellationToken ct) =>
+{
+    var eng = registry.Get(EngService.ParticipantId);
+
+    // Both sides must be entries before they can be made equivalent.
+    var engSync = await service.SyncAsync(EngService.ParticipantId, ct);
+    var cmsSync = await service.SyncAsync(CmsService.ParticipantId, ct);
+    var mmsSync = await service.SyncAsync(MmsService.ParticipantId, ct);
+
+    var related = new List<object>();
+
+    foreach (var (id, code, name) in ContextOwnerSeeder.EngTwins)
+    {
+        var result = await service.RelateCmsSiteAsync(
+            code, eng.Config.SourceId, id.ToString(), ct);
+
+        related.Add(new
+        {
+            twin = name,
+            participant = CmsService.ParticipantId,
+            localKey = code,
+            ok = result.Faults.Count == 0,
+            asserted = result.EquivalencesAsserted,
+            faults = result.Faults
+        });
+
+        // The same twin related a second time, to MMS's integer key for the district.
+        //
+        // Needed because MMS resolves an inbound proposal's context through the
+        // registry and admits nothing it cannot land on one of its own owners: with
+        // only the CMS relation asserted, an approved location reaches MMS, validates,
+        // and is then rejected as belonging to no owner it knows.
+        //
+        // The owner is found by name rather than a hard-coded id table, since the
+        // seeder assigns OWNER_ID from position in the same list.
+        var index = ContextOwnerSeeder.OwnerIndex(name);
+
+        if (index < 0)
+        {
+            related.Add(new
+            {
+                twin = name,
+                participant = MmsService.ParticipantId,
+                localKey = "(none)",
+                ok = false,
+                asserted = 0,
+                faults = (IReadOnlyList<string>)[$"No MMS owner is named '{name}'."]
+            });
+
+            continue;
+        }
+
+        var ownerId = ContextOwnerSeeder.MmsOwnerId(index);
+
+        var mmsResult = await service.RelateMmsOwnerAsync(
+            ownerId, eng.Config.SourceId, id.ToString(), ct);
+
+        related.Add(new
+        {
+            twin = name,
+            participant = MmsService.ParticipantId,
+            localKey = ownerId.ToString(),
+            ok = mmsResult.Faults.Count == 0,
+            asserted = mmsResult.EquivalencesAsserted,
+            faults = mmsResult.Faults
+        });
+    }
+
+    return Results.Ok(new
+    {
+        engRegistered = engSync.Registered,
+        cmsRegistered = cmsSync.Registered,
+        mmsRegistered = mmsSync.Registered,
+        related
+    });
+});
+
 app.MapGet("/admin/cms/owners", async (
     IParticipantDbContextFactory factory, CancellationToken ct) =>
 {
@@ -1472,6 +1845,10 @@ app.MapGet("/admin/cms/owners", async (
 // resolution -- a proposal has not been admitted to the model and has no registry
 // identity yet. Omitting the twin returns every context, which the batch scenarios
 // rely on.
+//
+// The twin is named by GUID. It is the only identifier a twin has that does not
+// change: the code and name are display labels the owning system may edit, so
+// matching on those would break this queue on a rename.
 app.MapGet("/admin/reg-location/stewardship", async (
     RegLocationService service, string? twin, CancellationToken ct) =>
 {

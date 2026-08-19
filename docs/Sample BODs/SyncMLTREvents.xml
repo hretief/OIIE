@@ -1,0 +1,224 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<SyncEvents xmlns:b="http://www.bentley.com/Interoperability/MimosaExtensions/1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" releaseID="1.0" xmlns="http://www.mimosa.org/ccom4">
+  <ApplicationArea xmlns="http://www.openapplications.org/oagis/9">
+    <Sender>
+      <LogicalID>APM</LogicalID>
+      <ComponentID>Inspections</ComponentID>
+      <TaskID>IndicatorReadings in Alarm</TaskID>
+      <ReferenceID>APM</ReferenceID>
+    </Sender>
+    <CreationDateTime>2021-01-07T22:29:13.666081Z</CreationDateTime>
+    <BODID>5ef2ed94-f2f7-4f9f-aa80-23bb81571ed9</BODID>
+  </ApplicationArea>
+  <DataArea>
+    <Sync xmlns="http://www.openapplications.org/oagis/9">
+      <ActionCriteria>
+        <ActionExpression actionCode="Replace" expressionLanguage="XPath">/SyncEvents/DataArea/Events</ActionExpression>
+      </ActionCriteria>
+    </Sync>
+    <Events>
+      <Event xsi:type="MeasurementLocationTriggeredRegion">
+        <UUID>e9dec8fd-02b3-4ccd-bc61-6b214e801d6e</UUID>
+        <Attribute>
+          <UUID>00000000-0000-0000-0000-000000000000</UUID>
+          <Type>
+            <UUID>7c0f0b3b-e518-4a83-a851-fc59a5056fa4</UUID>
+            <IDInInfoSource>Acknowledgement Status</IDInInfoSource>
+            <ShortName>Acknowledgement Status</ShortName>
+          </Type>
+          <ValueContent>
+            <EnumerationItem>
+              <UUID>d23a93b2-1d86-4984-8eb2-a4e521ad6729</UUID>
+              <ShortName>2</ShortName>
+              <FullName>Acknowledged</FullName>
+            </EnumerationItem>
+          </ValueContent>
+        </Attribute>
+        <Attribute>
+          <UUID>00000000-0000-0000-0000-000000000000</UUID>
+          <Type>
+            <UUID>5a26b491-c02f-419b-83e8-cef70c9cb83a</UUID>
+            <IDInInfoSource>Acknowledgement Method</IDInInfoSource>
+            <ShortName>Acknowledgement Method</ShortName>
+          </Type>
+          <ValueContent>
+            <EnumerationItem>
+              <UUID>ec0df104-e2d3-4afb-8a20-2c3b6157c0cf</UUID>
+              <ShortName>3</ShortName>
+              <FullName>Monitoring</FullName>
+            </EnumerationItem>
+          </ValueContent>
+        </Attribute>
+        <Attribute>
+          <UUID>00000000-0000-0000-0000-000000000000</UUID>
+          <Type>
+            <UUID>63d313f9-a2cc-4c3d-b4fb-8d92399c93c6</UUID>
+            <IDInInfoSource>Acknowledgement Source</IDInInfoSource>
+            <ShortName>Acknowledgement Source</ShortName>
+          </Type>
+          <ValueContent>
+            <EnumerationItem>
+              <UUID>5131d842-2290-4b59-9689-18c5b3885ce1</UUID>
+              <ShortName>1</ShortName>
+              <FullName>Manual</FullName>
+            </EnumerationItem>
+          </ValueContent>
+        </Attribute>
+        <Attribute>
+          <UUID>00000000-0000-0000-0000-000000000000</UUID>
+          <Type>
+            <UUID>0732145d-85be-4d81-99b1-770bbc825c9d</UUID>
+            <ShortName>Fixed During Inspection</ShortName>
+          </Type>
+          <ValueContent>
+            <Boolean>false</Boolean>
+          </ValueContent>
+        </Attribute>
+        <Type>
+          <UUID>b8dde830-f0dd-4584-a7b3-b064f9638dc4</UUID>
+          <ShortName>Abnormal Condition</ShortName>
+        </Type>
+        <Start>2020-11-20T19:57:42Z</Start>
+        <MeasurementLocation>
+          <UUID>99e1eec9-0d79-48a2-89a2-8cc1da0847f2</UUID>
+          <ShortName>Downstream Pressure</ShortName>
+          <Description />
+          <Type>
+            <UUID>4c3fd609-8aea-4a0a-a243-583f87da0260</UUID>
+            <ShortName>Pressure</ShortName>
+          </Type>
+          <UpdateInterval>
+            <Value>445</Value>
+            <UnitOfMeasure>
+              <UUID>8211ab34-c2e0-415a-b308-a73a819d2232</UUID>
+              <ShortName>psi</ShortName>
+              <FullName>lb per sq. inch</FullName>
+            </UnitOfMeasure>
+          </UpdateInterval>
+          <XMLDataType>cct:Measure</XMLDataType>
+          <Barcode>xyz</Barcode>
+          <DefaultUnitOfMeasure>
+            <UUID>8211ab34-c2e0-415a-b308-a73a819d2232</UUID>
+            <ShortName>psi</ShortName>
+          </DefaultUnitOfMeasure>
+          <RegistrationSite>
+            <UUID>0e309a9c-e6dc-4736-89cb-bf726e265e3f</UUID>
+            <ShortName>APPOMATTOX</ShortName>
+          </RegistrationSite>
+          <Segment>
+            <UUID>933f9b70-f684-7489-f30f-a1e77d97e82f</UUID>
+            <ShortName>LCV-0150A1</ShortName>
+            <FullName>LCV-0150A1</FullName>
+          </Segment>
+          <MeasurementSourceType>
+            <UUID>709a62dc-0599-49f6-85e3-b03176206944</UUID>
+            <ShortName>Manually entered</ShortName>
+          </MeasurementSourceType>
+          <Region>
+            <UUID>0c1a5797-3c9c-4fde-aa60-8da854c3997c</UUID>
+            <EffectiveStatusType>
+              <UUID>db4bf287-2374-4e9c-bd4b-fadaada24b99</UUID>
+              <ShortName>Active</ShortName>
+            </EffectiveStatusType>
+            <ShortName>Normal</ShortName>
+            <Minimum>
+              <Value>0</Value>
+              <UnitOfMeasure>
+                <UUID>00000000-0000-0000-0000-000000000000</UUID>
+                <ShortName />
+              </UnitOfMeasure>
+            </Minimum>
+            <Maximum>
+              <Value>119.999</Value>
+              <UnitOfMeasure>
+                <UUID>8211ab34-c2e0-415a-b308-a73a819d2232</UUID>
+                <ShortName>psi</ShortName>
+                <FullName>lb per sq. inch</FullName>
+              </UnitOfMeasure>
+            </Maximum>
+            <IsMinimumInclusive>true</IsMinimumInclusive>
+            <IsMaximumInclusive>true</IsMaximumInclusive>
+            <MeasurementLocation>
+              <UUID>99e1eec9-0d79-48a2-89a2-8cc1da0847f2</UUID>
+              <ShortName>Downstream Pressure</ShortName>
+            </MeasurementLocation>
+          </Region>
+          <Region>
+            <UUID>b7b2e20a-a916-4f5b-8ca4-8185bd67b59f</UUID>
+            <EffectiveStatusType>
+              <UUID>db4bf287-2374-4e9c-bd4b-fadaada24b99</UUID>
+              <ShortName>Active</ShortName>
+            </EffectiveStatusType>
+            <ShortName>Failure Imminent</ShortName>
+            <Type>
+              <UUID>bba5dd3e-95e5-493d-a5bf-9f997a75bdd9</UUID>
+              <ShortName>Critical</ShortName>
+            </Type>
+            <Minimum>
+              <Value>150</Value>
+              <UnitOfMeasure>
+                <UUID>8211ab34-c2e0-415a-b308-a73a819d2232</UUID>
+                <ShortName>psi</ShortName>
+                <FullName>lb per sq. inch</FullName>
+              </UnitOfMeasure>
+            </Minimum>
+            <Maximum>
+              <Value>0</Value>
+              <UnitOfMeasure>
+                <UUID>00000000-0000-0000-0000-000000000000</UUID>
+                <ShortName />
+              </UnitOfMeasure>
+            </Maximum>
+            <IsMinimumInclusive>true</IsMinimumInclusive>
+            <IsMaximumInclusive>true</IsMaximumInclusive>
+            <MeasurementLocation>
+              <UUID>99e1eec9-0d79-48a2-89a2-8cc1da0847f2</UUID>
+              <ShortName>Downstream Pressure</ShortName>
+            </MeasurementLocation>
+          </Region>
+        </MeasurementLocation>
+        <Region xsi:type="MeasurementLocationRegion">
+          <UUID>b7b2e20a-a916-4f5b-8ca4-8185bd67b59f</UUID>
+          <EffectiveStatusType>
+            <UUID>db4bf287-2374-4e9c-bd4b-fadaada24b99</UUID>
+            <ShortName>Active</ShortName>
+          </EffectiveStatusType>
+          <ShortName>Failure Imminent</ShortName>
+          <IsMinimumInclusive>true</IsMinimumInclusive>
+          <IsMaximumInclusive>true</IsMaximumInclusive>
+          <MeasurementLocation>
+            <UUID>99e1eec9-0d79-48a2-89a2-8cc1da0847f2</UUID>
+            <ShortName>Downstream Pressure</ShortName>
+          </MeasurementLocation>
+        </Region>
+        <Acknowledged>2021-01-07T22:28:41Z</Acknowledged>
+        <Acknowledger>
+          <UUID>805f23a4-cabe-4355-8afb-ea679f9ccc62</UUID>
+          <ShortName>Danley.Dmello@b</ShortName>
+          <FullName>Danley~Dmello</FullName>
+          <Type>
+            <UUID>39ee615a-30b8-4da1-b374-9c5bd3759c1b</UUID>
+            <ShortName>Individual</ShortName>
+          </Type>
+        </Acknowledger>
+        <TriggeredRegionMeasurement>
+          <UUID>db4f8820-ea5f-49f6-a827-3a3d4c921eba</UUID>
+          <Measurement xsi:type="SingleDataMeasurement">
+            <UUID>a137ce8f-3e07-407e-bf1f-c5600dff800b</UUID>
+            <Recorded>2020-11-20T19:57:42Z</Recorded>
+            <Data>
+              <Measure>
+                <Value>445</Value>
+                <UnitOfMeasure>
+                  <UUID>8211ab34-c2e0-415a-b308-a73a819d2232</UUID>
+                  <ShortName>psi</ShortName>
+                  <FullName>lb per sq. inch</FullName>
+                </UnitOfMeasure>
+              </Measure>
+            </Data>
+          </Measurement>
+        </TriggeredRegionMeasurement>
+      </Event>
+    </Events>
+  </DataArea>
+</SyncEvents>

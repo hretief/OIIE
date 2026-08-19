@@ -76,12 +76,18 @@ public sealed class CirRegistrationService(
     }
 
     /// <summary>
-    /// CMS registers its context-owner domain, and nothing else.
+    /// CMS registers its context-owner domain, its sites and its assets.
     ///
-    /// It originates no locations or assets — it only ever learns of them from an
-    /// event — so it has no segments of its own to register. What it does own is its
-    /// owner code space, and registering that is what later lets a steward assert
-    /// that OWN-07 and an iTwin GUID denote the same district.
+    /// Everything CMS holds is registered, whether or not the identity arrived in the
+    /// message. Registering an entry and asserting a CIRID are different acts: the
+    /// entry says "CMS knows a thing by this code", which is always true and always
+    /// safe, while equivalence says "this and that are the same thing", which can be
+    /// false. Only the first is done here. A site whose SiteUUID happens to be an
+    /// iTwin GUID is registered exactly like one whose is not — conditioning on that
+    /// would make the rule unpredictable from the schema, and CIR's whole purpose is
+    /// to cross-reference native keys rather than to require them to agree.
+    ///
+    /// Equivalence remains a steward's act, through RelateOwnerAsync.
     /// </summary>
     private async Task<CirSyncResult> SyncCmsAsync(ParticipantContext participant, CancellationToken ct)
     {
@@ -89,35 +95,176 @@ public sealed class CirRegistrationService(
 
         var owners = await db.Set<ContextOwnerRecord>().ToListAsync(ct);
 
-        if (owners.Count == 0)
+        var sites = await db.Set<CmsSite>().AsNoTracking().ToListAsync(ct);
+
+        var assets = await db.Set<CmsAsset>().AsNoTracking().ToListAsync(ct);
+
+        if (owners.Count == 0 && sites.Count == 0 && assets.Count == 0)
         {
             return CirSyncResult.NothingToDo(participant.ParticipantId,
-                "No context owners. Reset the sandbox to seed the owner domain — nothing was sent.");
+                "No context owners, sites or assets. CMS holds nothing — nothing was sent.");
         }
 
-        var entries = owners.Select(owner => new Entry
+        var faults = new List<string>();
+        var registered = 0;
+
+        if (owners.Count > 0)
         {
-            IDInSource = owner.OwnerCode,
-            SourceID = participant.Config.SourceId,
-            SourceOwnerID = participant.Config.SourceOwnerId,
+            var ownerEntries = owners.Select(owner => new Entry
+            {
+                IDInSource = owner.OwnerCode,
+                SourceID = participant.Config.SourceId,
+                SourceOwnerID = participant.Config.SourceOwnerId,
 
-            // The name is the only thing a steward can judge equivalence on here. Two
-            // systems' codes for a district have nothing in common, so the human-
-            // readable name is what carries the meaning across.
-            Name = owner.OwnerName
-        }).ToList();
+                // The name is the only thing a steward can judge equivalence on here. Two
+                // systems' codes for a district have nothing in common, so the human-
+                // readable name is what carries the meaning across.
+                Name = owner.OwnerName
+            }).ToList();
 
-        var result = await cir.RegisterAsync(participant, ContextOwnerCategory, entries, ct);
+            registered += await RegisterNewAsync(
+                participant, ContextOwnerCategory, ownerEntries, faults, ct);
+        }
+
+        // Sites are context owners, not segments. A CMS site is CMS's context key in
+        // the same sense OWNER_ID is MMS's and the iTwin is ENG's, so it belongs in
+        // the category those are filed under — that is what lets a steward relate a
+        // site to a twin at all. Filing it beside assets would instead invite someone
+        // to relate a plant to a pump, and the registry would accept it.
+        if (sites.Count > 0)
+        {
+            var siteEntries = sites.Select(site =>
+            {
+                var entry = new Entry
+                {
+                    // SiteCode, not SiteID. The surrogate is an IDENTITY column that
+                    // means nothing outside this database and is reallocated by every
+                    // day-zero reset, so a CIRID keyed on it would silently come to
+                    // denote a different site. SiteCode is UNIQUE and stable.
+                    IDInSource = site.SiteCode,
+                    SourceID = participant.Config.SourceId,
+                    SourceOwnerID = participant.Config.SourceOwnerId,
+                    Name = site.SiteName
+                };
+
+                // Stated as a property, not used as the identifier. Where the publisher
+                // sent a twin GUID this is the value that makes equivalence obvious to
+                // a steward; where it did not, the column still holds something and no
+                // special case is needed to decide whether to send it.
+                entry.Property.Add(Property.Simple("SiteUUID", site.SiteUuid.ToString()));
+
+                return entry;
+            }).ToList();
+
+            registered += await RegisterNewAsync(
+                participant, ContextOwnerCategory, siteEntries, faults, ct);
+        }
+
+        if (assets.Count > 0)
+        {
+            var siteCodes = sites.ToDictionary(s => s.SiteId, s => s.SiteCode);
+
+            var assetEntries = assets
+                .Select(asset => BuildCmsAssetEntry(participant, asset, siteCodes))
+                .ToList();
+
+            registered += await RegisterNewAsync(
+                participant, SegmentCategory, assetEntries, faults, ct);
+        }
 
         logger.LogInformation(
-            "CMS registered {Count} context owner(s) under {Category}.",
-            entries.Count, ContextOwnerCategory);
+            "CMS registered {Count} entr(ies): {Owners} owner(s), {Sites} site(s) and {Assets} asset(s).",
+            registered, owners.Count, sites.Count, assets.Count);
 
-        return new CirSyncResult(
-            participant.ParticipantId,
-            result.Succeeded ? entries.Count : 0,
-            0,
-            result.Faults.Select(f => $"{f.Kind}: {f.Detail}").ToList());
+        return new CirSyncResult(participant.ParticipantId, registered, 0, faults);
+    }
+
+    /// <summary>
+    /// A CMS asset as a registry entry.
+    ///
+    /// AssetTag is the identifier rather than AssetID for the same reason SiteCode is
+    /// preferred over SiteID: AssetID is an IDENTITY column, reallocated on reset,
+    /// and a CIRID bound to it would come to denote a different asset. AssetTag is the
+    /// UNIQUE business key and is what the publisher sent.
+    ///
+    /// Nothing here states a FederationId. The CMS asset table has no column for one
+    /// and mints nothing, so the registry assigns the CIRID — which is the point.
+    /// </summary>
+    private static Entry BuildCmsAssetEntry(
+        ParticipantContext participant,
+        CmsAsset asset,
+        IReadOnlyDictionary<int, string> siteCodes)
+    {
+        var entry = new Entry
+        {
+            IDInSource = asset.AssetTag,
+            SourceID = participant.Config.SourceId,
+            SourceOwnerID = participant.Config.SourceOwnerId,
+            Name = asset.AssetName
+        };
+
+        // The site as its code, not its surrogate key. A steward comparing two entries
+        // needs a value that means something outside this database.
+        if (siteCodes.TryGetValue(asset.SiteId, out var siteCode))
+        {
+            entry.Property.Add(Property.Simple("Site", siteCode));
+        }
+
+        if (asset.OperationalStatus is { Length: > 0 } status)
+        {
+            entry.Property.Add(Property.Simple("OperationalStatus", status));
+        }
+
+        // Stated where present. Absent on a placeholder, and left absent rather than
+        // defaulted: "not yet fitted" and "serial number unknown" are different, and a
+        // placeholder value would merge them.
+        if (asset.SerialNumber is { Length: > 0 } serial)
+        {
+            entry.Property.Add(Property.Simple("SerialNumber", serial));
+        }
+
+        return entry;
+    }
+
+    /// <summary>
+    /// Registers only those entries the registry has not already seen.
+    ///
+    /// RegisterAsync sends one batch and the provider rejects the whole thing on the
+    /// first DuplicateEntryFault, so a single previously-registered row would block
+    /// every new one behind it. CMS re-syncs after every ingest, so unlike a one-shot
+    /// seed this path is guaranteed to encounter existing entries and filtering is
+    /// not optional.
+    /// </summary>
+    private async Task<int> RegisterNewAsync(
+        ParticipantContext participant,
+        string categoryId,
+        IReadOnlyList<Entry> entries,
+        List<string> faults,
+        CancellationToken ct)
+    {
+        var unregistered = new List<Entry>();
+
+        foreach (var entry in entries)
+        {
+            var existing = await cir.ResolveAsync(
+                participant, participant.Config.SourceId, entry.IDInSource, ct);
+
+            if (existing.Cirid is null)
+            {
+                unregistered.Add(entry);
+            }
+        }
+
+        if (unregistered.Count == 0)
+        {
+            return 0;
+        }
+
+        var result = await cir.RegisterAsync(participant, categoryId, unregistered, ct);
+
+        faults.AddRange(result.Faults.Select(f => $"{f.Kind}: {f.Detail}"));
+
+        return result.Succeeded ? unregistered.Count : 0;
     }
 
     /// <summary>
@@ -169,6 +316,59 @@ public sealed class CirRegistrationService(
                 owner.UpdatedAt = DateTimeOffset.UtcNow;
                 await db.SaveChangesAsync(ct);
             },
+            ct: ct);
+    }
+
+    /// <summary>
+    /// Relates a CMS site to a context another system already registered.
+    ///
+    /// This is the operation that makes twin-scoped reads possible at all. CMS holds
+    /// the publisher's SiteUUID, and matching it against an iTwin GUID would appear to
+    /// work — which is exactly why the relation is asserted instead. Two columns
+    /// holding equal bytes is a coincidence the schema does not guarantee; an
+    /// equivalence is a claim somebody made and the registry records.
+    ///
+    /// The indirection is the product being demonstrated. MMS files a district as the
+    /// integer 1, CMS files the same plant as site 9100, and ENG knows it as a GUID.
+    /// Once each is related, all three converge on one CIRID and any of them can reach
+    /// the others without holding a column for a foreign key space.
+    ///
+    /// Unlike RelateCmsOwnerAsync there is no write-back: cms.Site has no CIRID column
+    /// and may not be given one, so the registry is the sole record of the relation and
+    /// every scoped read pays a resolution through
+    /// <see cref="CmsContextResolver.ResolveSiteCodesAsync"/>.
+    ///
+    /// Sites are registered into the ContextOwner category by SyncCmsAsync, which is
+    /// what allows this to reuse <see cref="RelateOwnerAsync"/> unchanged — and what
+    /// prevents anyone relating a plant to a pump, since a segment entry is not in
+    /// that category to be found.
+    /// </summary>
+    public async Task<CirSyncResult> RelateCmsSiteAsync(
+        string siteCode,
+        string foreignSourceId,
+        string foreignIdInSource,
+        CancellationToken ct = default)
+    {
+        var participant = registry.Get("cms");
+        await using var db = factory.Create(participant.ParticipantId);
+
+        var site = await db.Set<CmsSite>()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.SiteCode == siteCode, ct);
+
+        if (site is null)
+        {
+            return new CirSyncResult(participant.ParticipantId, 0, 0,
+                [$"CMS holds no site {siteCode}. Provision the site before relating it."]);
+        }
+
+        return await RelateOwnerAsync(
+            participant,
+            localIdInSource: site.SiteCode,
+            localName: site.SiteName,
+            foreignSourceId: foreignSourceId,
+            foreignIdInSource: foreignIdInSource,
+            onResolved: null,
             ct: ct);
     }
 

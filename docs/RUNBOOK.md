@@ -81,20 +81,73 @@ steps are outside the Sandbox.
 ```
 1. POST {sandbox}/admin/reset/day-zero
       closes Sandbox sessions, deletes and recreates every channel
-      (including the CIR provider's), rebuilds tables and fixtures
+      (including the CIR provider's), rebuilds tables and fixtures,
+      and seeds CMS owners, CMS sites and ENG's four iTwins
 
-2. POST {cir}/api/isbm/reset                     x-functions-key required
+2. POST {cir}/api/isbm/reset                     host key required
       the CIR provider re-opens its sessions. REQUIRED: step 1 destroyed
       its old ones, and a poll loop against a dead session id looks healthy
-      while consuming nothing
+      while consuming nothing.
+      Use the HOST (master) key, not the default function key -- the
+      default key returns 401 here:
+        az functionapp keys list -g <rg> -n <cir-app> --query masterKey -o tsv
 
-3. clear the CIR registry database                (manual)
+3. POST {sandbox}/admin/cir/registry/delete?confirm=OIIE-SANDBOX
       entries registered earlier keep their CIRIDs otherwise, so a "first"
-      registration silently attaches to an identity from a previous run
+      registration silently attaches to an identity from a previous run.
+      Destroys the registry for every system in it, not just this one, and
+      cannot be undone. Re-register afterwards with
+      POST {sandbox}/admin/{participantId}/cir/register
 
-4. POST {sandbox}/admin/reset
+4. POST {sandbox}/admin/cir/bootstrap
+      registers ENG, CMS and MMS, then relates each seeded twin twice: to
+      the CMS site of the same district number, and to the MMS owner of the
+      same name. Expect 8 relations, all ok, and zero faults.
+      Must follow step 2: relating anything before the provider's sessions
+      are back faults on every pair.
+      Both relations are needed. The CMS one makes ?twin= reads scope; the
+      MMS one makes MMS admit an approved location. With only the CMS
+      relation, an approved segment reaches MMS, validates, and is then
+      rejected as belonging to no owner it knows.
+
+5. POST {sandbox}/admin/reset
       only if step 1 reported channel errors
 ```
+
+The four seeded iTwins, which are the ENG-side context the ENG→CMS workflow runs
+against. The GUIDs were issued by iTwin and are pinned in `ContextOwnerSeeder`:
+
+| Twin | GUID |
+| --- | --- |
+| 9100 - District 1 | `523099d2-4291-4d0f-ad7c-65429109ef81` |
+| 9200 - District 2 | `d543ebf6-7f25-4c07-a8cf-cc43410b780d` |
+| 7200 - Metro Traffic | `02c9fdd8-645d-4d97-8d95-70be46a58345` |
+| 9600 - District 6 | `c86c9c10-4487-48f6-8f5b-89701307725c` |
+
+District 6 is **9600**, matching the CMS and MMS owner lists. It is worth noting
+because the twins were originally handed over with it numbered 9500: that number
+provisions no CMS site, so the relate would have found nothing and District 6
+would have stayed unscoped without anything reporting an error.
+
+Each twin is related to two local keys, because CMS and MMS number the same
+district differently and each resolves inbound context through its own:
+
+| Twin | CMS site | MMS `OWNER_ID` |
+| --- | --- | --- |
+| 9100 - District 1 | `9100` | 4 |
+| 9200 - District 2 | `9200` | 5 |
+| 7200 - Metro Traffic | `7200` | 2 |
+| 9600 - District 6 | `9600` | 8 |
+
+The `OWNER_ID` column is derived, not configured: the seeder assigns it from
+position in `ContextOwnerSeeder.OwnerNames`, and `MmsOwnerId` reads it back from
+the same list. A second hard-coded table would be correct only until someone
+inserted a district into that list.
+
+Unlike CMS, MMS caches nothing. CMS writes the CIRID onto its own owner row and
+so survives a registry delete; MMS has no column to hold one, so the registry is
+the only place its relations exist and **step 4 must be re-run after every step
+3**.
 
 Verify before going further:
 

@@ -696,7 +696,13 @@ public sealed class SyncSegmentsBuilder : IBodBuilder
         return new Site
         {
             UUID = twin.Id,
-            IDInInfoSource = twin.Code is { Length: > 0 } ? twin.Code : twin.Id.ToString(),
+
+            // The twin's record ID in ENG, which is what IDInInfoSource means: enough
+            // for a receiver to come back and retrieve this twin from us. For iTwin
+            // that ID happens to be a GUID; a receiver should treat it as an opaque
+            // string, since the form of the field is each source system's own choice.
+            // The code is a display label and belongs in ShortName, not here.
+            IDInInfoSource = twin.Id.ToString(),
             InfoSource = infoSource,
             ShortName = twin.Code,
             FullName = twin.Name

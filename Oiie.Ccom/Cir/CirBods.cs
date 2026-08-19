@@ -169,6 +169,41 @@ public static class CirBods
         return new XDocument(root);
     }
 
+    /// <summary>
+    /// CancelRegistry: delete a whole registry, cascading to its categories,
+    /// entries and properties.
+    ///
+    /// The blunt instrument, and deliberately so. It exists for day zero: the
+    /// registry outlives a participant's own tables, so rebuilding those alone
+    /// leaves every previously registered entry still carrying its old CIRID, and
+    /// a "first" registration silently attaches to an identity from a previous
+    /// run. Clearing the registry is the only way to make a run genuinely first.
+    ///
+    /// Like the other Cancel verbs this declares no response (§3.1.5), so callers
+    /// confirm by re-querying rather than by waiting for an acknowledgement. A
+    /// registry that was not there is a fault at the provider, not a silent no-op.
+    /// </summary>
+    public static XDocument CancelRegistry(
+        string registryId,
+        string senderLogicalId,
+        string correlationId,
+        Instant? creationDateTime = null)
+    {
+        var payload = new XElement(Cir + "DeleteRegistry",
+            new XElement(Cir + "RegistryID", registryId));
+
+        var root = new XElement(Cir + "CancelRegistry",
+            new XAttribute(XNamespace.Xmlns + "cir", Namespaces.Cir),
+            new XAttribute(XNamespace.Xmlns + "oa", Namespaces.Oagis),
+            new XAttribute("releaseID", "1.2.1"),
+            ApplicationArea(senderLogicalId, correlationId, null, creationDateTime),
+            new XElement(Cir + "DataArea",
+                new XElement(Oagis + "Cancel"),
+                payload));
+
+        return new XDocument(root);
+    }
+
     private static XElement ApplicationArea(
         string senderLogicalId, string correlationId, string? referenceId, Instant? creationDateTime)
     {

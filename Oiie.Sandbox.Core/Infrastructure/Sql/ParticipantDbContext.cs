@@ -582,6 +582,120 @@ public class ParticipantDbContext : DbContext
                 .IsUnique()
                 .HasFilter("[FederationId] <> '00000000-0000-0000-0000-000000000000'");
         });
+
+        ConfigureCmsCustomerTables(modelBuilder);
+    }
+
+    /// <summary>
+    /// The CMS customer schema, from <c>docs/DDL/CMS.SQL</c>.
+    ///
+    /// Split into its own method and named in UPPER_CASE because these tables are not
+    /// the sandbox's to change. Everything mapped above is participant spine or a
+    /// sandbox-native record; everything mapped here belongs to the customer, and the
+    /// casing is what makes that boundary visible at the call site rather than
+    /// something a reader has to know. The no-join rule between the two categories
+    /// applies exactly as it does for MMS.
+    ///
+    /// Only the site and asset side of the LOCATION AND ASSET block is mapped.
+    /// <c>cms.Location</c> is the customer's own plant hierarchy and bears no relation
+    /// to the functional locations arriving from REG-LOCATION, so it is deliberately
+    /// not modelled — and consequently <c>ASSET.LocationID</c> is not mapped either,
+    /// since there is nothing for it to point at. <c>SITE</c> is mapped, because the
+    /// segment's RegistrationSite genuinely does correspond to it.
+    ///
+    /// As with MMS, the SQL schema is left to HasDefaultSchema rather than pinned to
+    /// the DDL's <c>cms</c>: in the sandbox each participant is isolated into its own
+    /// schema and connects as a contained user granted only there.
+    /// </summary>
+    private static void ConfigureCmsCustomerTables(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<CmsSite>(entity =>
+        {
+            entity.ToTable("SITE");
+            entity.HasKey(e => e.SiteId);
+
+            entity.Property(e => e.SiteId).HasColumnName("SiteID").ValueGeneratedOnAdd();
+
+            // Not generated, despite the DDL's NEWID() default. The value is the
+            // publisher's twin id, and letting the database mint one instead would
+            // produce a site nobody else can recognise.
+            entity.Property(e => e.SiteUuid).HasColumnName("SiteUUID").ValueGeneratedNever();
+
+            entity.Property(e => e.SiteCode).HasColumnName("SiteCode").HasMaxLength(100).IsRequired();
+            entity.Property(e => e.SiteName).HasColumnName("SiteName").HasMaxLength(255).IsRequired();
+            entity.Property(e => e.Description).HasColumnName("Description").HasMaxLength(1000);
+            entity.Property(e => e.CreatedAtUtc).HasColumnName("CreatedAtUTC");
+
+            entity.HasIndex(e => e.SiteUuid).IsUnique().HasDatabaseName("UQ_Site_UUID");
+            entity.HasIndex(e => e.SiteCode).IsUnique().HasDatabaseName("UQ_Site_Code");
+        });
+
+        modelBuilder.Entity<CmsAsset>(entity =>
+        {
+            entity.ToTable("ASSET");
+            entity.HasKey(e => e.AssetId);
+
+            // IDENTITY in the DDL, so the database allocates it. This is the one place
+            // CMS differs usefully from MMS: LIGHT_SYSTEM_ID had to be allocated as
+            // MAX+1 in application code because that column is not an identity.
+            entity.Property(e => e.AssetId).HasColumnName("AssetID").ValueGeneratedOnAdd();
+
+            entity.Property(e => e.SiteId).HasColumnName("SiteID");
+            entity.Property(e => e.ParentAssetId).HasColumnName("ParentAssetID");
+            entity.Property(e => e.AssetClassId).HasColumnName("AssetClassID");
+
+            entity.Property(e => e.AssetTag).HasColumnName("AssetTag").HasMaxLength(100).IsRequired();
+            entity.Property(e => e.AssetName).HasColumnName("AssetName").HasMaxLength(255).IsRequired();
+            entity.Property(e => e.Description).HasColumnName("Description").HasMaxLength(1000);
+
+            entity.Property(e => e.SerialNumber).HasColumnName("SerialNumber").HasMaxLength(100);
+            entity.Property(e => e.Manufacturer).HasColumnName("Manufacturer").HasMaxLength(255);
+            entity.Property(e => e.Model).HasColumnName("Model").HasMaxLength(255);
+            entity.Property(e => e.CommissionDate).HasColumnName("CommissionDate").HasColumnType("date");
+
+            entity.Property(e => e.OperationalStatus).HasColumnName("OperationalStatus").HasMaxLength(50);
+            entity.Property(e => e.CriticalityLevel).HasColumnName("CriticalityLevel").HasMaxLength(50);
+
+            entity.Property(e => e.CreatedAtUtc).HasColumnName("CreatedAtUTC");
+            entity.Property(e => e.UpdatedAtUtc).HasColumnName("UpdatedAtUTC");
+
+            // UQ_Asset_Tag. This is the alternate key the segment handler matches on,
+            // because the schema offers nothing better: no foreign id column exists
+            // and none may be added.
+            entity.HasIndex(e => e.AssetTag).IsUnique().HasDatabaseName("UQ_Asset_Tag");
+
+            // Required, matching the DDL's NOT NULL. An asset CMS cannot place at a
+            // site is not stored at all.
+            entity.HasOne<CmsSite>()
+                .WithMany()
+                .HasForeignKey(e => e.SiteId)
+                .IsRequired()
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_Asset_Site");
+
+            entity.HasOne<CmsAsset>()
+                .WithMany()
+                .HasForeignKey(e => e.ParentAssetId)
+                .HasConstraintName("FK_Asset_Parent");
+
+            entity.HasOne<CmsAssetClass>()
+                .WithMany()
+                .HasForeignKey(e => e.AssetClassId)
+                .HasConstraintName("FK_Asset_AssetClass");
+        });
+
+        modelBuilder.Entity<CmsAssetClass>(entity =>
+        {
+            entity.ToTable("ASSET_CLASS");
+            entity.HasKey(e => e.AssetClassId);
+
+            entity.Property(e => e.AssetClassId).HasColumnName("AssetClassID").ValueGeneratedOnAdd();
+            entity.Property(e => e.ClassCode).HasColumnName("ClassCode").HasMaxLength(100).IsRequired();
+            entity.Property(e => e.ClassName).HasColumnName("ClassName").HasMaxLength(255).IsRequired();
+            entity.Property(e => e.Description).HasColumnName("Description").HasMaxLength(1000);
+
+            entity.HasIndex(e => e.ClassCode).IsUnique().HasDatabaseName("UQ_AssetClass_Code");
+        });
     }
 
     private static void ConfigureRegLocation(ModelBuilder modelBuilder)

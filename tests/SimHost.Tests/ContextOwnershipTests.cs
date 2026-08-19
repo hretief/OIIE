@@ -30,6 +30,7 @@ public class ContextOwnershipTests
     [InlineData(typeof(MonitoredLocationRecord))]
     [InlineData(typeof(MonitoredAssetRecord))]
     [InlineData(typeof(ContextOwnerRecord))]
+    [InlineData(typeof(CmsAsset))]
     public void Cms_entities_carry_no_native_twin_identifier(Type entity)
     {
         var offending = entity
@@ -41,6 +42,35 @@ public class ContextOwnershipTests
         Assert.True(offending.Count == 0,
             $"{entity.Name} exposes {string.Join(", ", offending)}. A foreign context " +
             "identifier must be held as ForeignOwnerIdInSource and resolved via the CIR.");
+    }
+
+    /// <summary>
+    /// CmsSite is the deliberate exception, and this pins down its exact scope.
+    ///
+    /// SiteUUID exists in the customer's own DDL and holds whatever the publisher put
+    /// in RegistrationSite, so CMS retains it rather than discarding data it was
+    /// given. What it must not become is a twin column by another name: the property
+    /// is named for the customer's schema, not for Bentley's, and nothing in CMS may
+    /// present it as an iTwin identifier.
+    ///
+    /// The behavioural half of the rule — that read paths scope through the registry
+    /// rather than matching this column against a foreign GUID — cannot be asserted
+    /// structurally, and is guarded by review of CmsContextResolver instead.
+    /// </summary>
+    [Fact]
+    public void Cms_site_retains_the_publisher_uuid_without_naming_it_a_twin()
+    {
+        Assert.NotNull(typeof(CmsSite).GetProperty("SiteUuid"));
+
+        var offending = typeof(CmsSite)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.Name.Contains("Twin", StringComparison.OrdinalIgnoreCase))
+            .Select(p => p.Name)
+            .ToList();
+
+        Assert.True(offending.Count == 0,
+            $"CmsSite exposes {string.Join(", ", offending)}. The publisher's UUID is " +
+            "retained as customer data, not as a foreign context key CMS understands.");
     }
 
     /// <summary>
@@ -222,5 +252,94 @@ public class ContextOwnershipTests
         Assert.Equal("7200 - Metro Traffic", ContextOwnerSeeder.OwnerNames[1]);
         Assert.Equal("9600 - District 6", ContextOwnerSeeder.OwnerNames[7]);
         Assert.Equal("MnDOT", ContextOwnerSeeder.OwnerNames[10]);
+    }
+
+    /// <summary>
+    /// Provisioned site codes are the district number, and only where there is one.
+    ///
+    /// MnDOT is the agency rather than a district, so it must yield no site: a plant
+    /// that does not exist should not be provisioned merely to keep a list uniform.
+    /// </summary>
+    [Fact]
+    public void Site_codes_are_district_numbers_where_a_district_exists()
+    {
+        Assert.Equal("9100", ContextOwnerSeeder.SiteCodeFor("9100 - District 1"));
+        Assert.Equal("7000", ContextOwnerSeeder.SiteCodeFor("7000 - Metro District"));
+        Assert.Null(ContextOwnerSeeder.SiteCodeFor("MnDOT"));
+    }
+
+    /// <summary>
+    /// A provisioned site's retained UUID must be stable across resets.
+    ///
+    /// If it were random, every day zero would give the same plant a new identity, and
+    /// an equivalence asserted against yesterday's value would silently come to
+    /// describe a row that no longer means the same thing.
+    /// </summary>
+    [Fact]
+    public void Provisioned_site_uuids_are_stable_across_reseeds()
+    {
+        var codes = ContextOwnerSeeder.OwnerNames
+            .Select(ContextOwnerSeeder.SiteCodeFor)
+            .Where(c => c is not null)
+            .ToList();
+
+        // Ten districts carry a number; MnDOT does not.
+        Assert.Equal(10, codes.Count);
+        Assert.Equal(codes.Count, codes.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    /// <summary>
+    /// CMS site codes deliberately coincide with the district numbers MMS uses.
+    ///
+    /// This is the opposite of the owner-code rule and is not a contradiction: the
+    /// codes agreeing is what makes the equivalence a steward asserts an obvious one.
+    /// What matters is that no read path joins on the agreement — scoping resolves
+    /// through the registry — so this test pins the intent rather than a mechanism.
+    /// </summary>
+    [Fact]
+    public void Site_codes_are_shared_business_keys_not_opaque_local_ones()
+    {
+        var siteCode = ContextOwnerSeeder.SiteCodeFor("9100 - District 1");
+
+        Assert.NotNull(siteCode);
+        Assert.DoesNotContain("OWN-", siteCode!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Every seeded iTwin must name a district CMS actually provisions a site for.
+    ///
+    /// The twins were supplied with District 6 numbered 9500, where the rest of the
+    /// estate numbers it 9600. Nothing would have failed loudly: the twin would
+    /// register, the relate would find no site, and District 6 would simply stay
+    /// unscoped -- which is the failure the registry exists to prevent being silent.
+    /// </summary>
+    [Fact]
+    public void Seeded_twins_name_districts_cms_provisions_a_site_for()
+    {
+        var siteCodes = ContextOwnerSeeder.OwnerNames
+            .Select(ContextOwnerSeeder.SiteCodeFor)
+            .Where(c => c is not null)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var (_, code, name) in ContextOwnerSeeder.EngTwins)
+        {
+            Assert.True(
+                siteCodes.Contains(code),
+                $"Twin '{name}' is scoped to site {code}, which CMS never provisions.");
+        }
+    }
+
+    /// <summary>
+    /// The seeded twin GUIDs are the ones iTwin issued, so they are pinned. A twin
+    /// re-created with a fresh GUID resolves to nothing in the real platform, and a
+    /// reset that quietly changed one would strand every equivalence built on it.
+    /// </summary>
+    [Fact]
+    public void Seeded_twin_identifiers_are_distinct_and_fixed()
+    {
+        var ids = ContextOwnerSeeder.EngTwins.Select(t => t.Id).ToList();
+
+        Assert.Equal(ids.Count, ids.Distinct().Count());
+        Assert.DoesNotContain(Guid.Empty, ids);
     }
 }

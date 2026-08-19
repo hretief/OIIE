@@ -224,6 +224,11 @@ public static class SandboxCoreRegistration
         services.AddSingleton<MmsWorkOrderService>();
         services.AddSingleton<IBodHandler, CmsAssetSegmentEventsHandler>();
 
+        // CMS receives the same approved segments MMS does, and turns each into an
+        // asset placeholder rather than a functional location — a condition
+        // monitoring system monitors assets, not design artefacts.
+        services.AddSingleton<IBodHandler, CmsSegmentsHandler>();
+
         return services;
     }
 

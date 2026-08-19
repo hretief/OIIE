@@ -1,0 +1,67 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<SyncAgentRoles xmlns:b="http://www.bentley.com/Interoperability/MimosaExtensions/1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" releaseID="1.0" xmlns="http://www.mimosa.org/ccom4">
+  <ApplicationArea xmlns="http://www.openapplications.org/oagis/9">
+    <Sender>
+      <LogicalID>RBAC Service</LogicalID>
+      <ComponentID>RBAC Service</ComponentID>
+      <TaskID>HardDelete</TaskID>
+      <ReferenceID>https://qa-ims.bentley.com</ReferenceID>
+    </Sender>
+    <CreationDateTime>2020-12-08T16:08:19.8154264Z</CreationDateTime>
+    <BODID>bb843a79-6502-4179-be23-f7c768c28ca8</BODID>
+  </ApplicationArea>
+  <DataArea>
+    <Sync xmlns="http://www.openapplications.org/oagis/9">
+      <ActionCriteria>
+        <ActionExpression actionCode="Delete" expressionLanguage="XPath">/SyncAgentRoles/DataArea/AgentRoles</ActionExpression>
+      </ActionCriteria>
+    </Sync>
+    <AgentRoles>
+      <AgentRole>
+        <UUID>00000000-0000-0000-0000-000000000000</UUID>
+        <InfoSource>
+          <UUID>f2adc36e-add6-4650-899b-6fa4374de870</UUID>
+          <ShortName>Rbac/2563</ShortName>
+          <URL>https://qa-waz-search.bentley.com/api/IMS/User/select?q=*:*&amp;fq=UserId:("d2a8bea1-c74c-4f73-90a5-b5e16369fac4")&amp;wt=json&amp;fl=UserId,FirstName,LastName,Email,UserName</URL>
+        </InfoSource>
+        <Type>
+          <UUID>c693cbaa-f02e-48e7-8580-9fd336c1fc05</UUID>
+          <IDInInfoSource>c693cbaa-f02e-48e7-8580-9fd336c1fc05</IDInInfoSource>
+          <ShortName>tommy</ShortName>
+          <Description />
+        </Type>
+        <Agent>
+          <UUID>6b73d5b0-d444-48d4-a527-20ccac20dbae</UUID>
+          <IDInInfoSource>Dovydas.Sopa@bentley.com</IDInInfoSource>
+          <ShortName>Dovydas.Sopa@bentley.com</ShortName>
+          <FullName>Dovydas~Sopa</FullName>
+          <Type>
+            <UUID>39ee615a-30b8-4da1-b374-9c5bd3759c1b</UUID>
+            <ShortName>Individual</ShortName>
+          </Type>
+        </Agent>
+        <AgentRoleWithAgent>
+          <UUID>00000000-0000-0000-0000-000000000000</UUID>
+          <Agent>
+            <UUID>d2a8bea1-c74c-4f73-90a5-b5e16369fac4</UUID>
+            <IDInInfoSource>d2a8bea1-c74c-4f73-90a5-b5e16369fac4</IDInInfoSource>
+            <ShortName>Dovydas.Sopa@bentley.com</ShortName>
+            <FullName>Dovydas~Sopa</FullName>
+            <Type>
+              <UUID>03433d20-2c2d-46a3-877e-c04a148c4cc6</UUID>
+              <ShortName>User</ShortName>
+            </Type>
+          </Agent>
+        </AgentRoleWithAgent>
+        <AgentRoleWithSegment>
+          <UUID>00000000-0000-0000-0000-000000000000</UUID>
+          <Segment xsi:type="Site">
+            <UUID>d3d10603-4e55-4cba-93a6-aecf95b3b80e</UUID>
+            <IDInInfoSource>d3d10603-4e55-4cba-93a6-aecf95b3b80e</IDInInfoSource>
+            <ShortName>test12333f</ShortName>
+          </Segment>
+        </AgentRoleWithSegment>
+      </AgentRole>
+    </AgentRoles>
+  </DataArea>
+</SyncAgentRoles>

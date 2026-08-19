@@ -22,6 +22,17 @@ identifierStyle: surrogate
 # merged two distinct information domains onto one bus path — which is exactly the
 # conflation the ISO18435 addressing is there to prevent.
 channels:
+  # The engineering-to-O&M provisioning path. CMS subscribes to the same approved
+  # segments MMS does, because both are O&M systems being told what will exist.
+  # What they do with them differs: MMS records a functional location, CMS creates
+  # an asset placeholder, since a condition monitoring system has little use for a
+  # location it will never attach a measurement to.
+  - channelUri: /OIIE-SANDBOX/Enterprise/Site/OandM
+    role: Subscriber
+    topics:
+      - Segments
+    useNotifications: false
+
   - channelUri: /OIIE-SANDBOX/Enterprise/Site/OandM-Events
     role: Subscriber
     topics:

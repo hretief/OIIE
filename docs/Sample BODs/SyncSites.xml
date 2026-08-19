@@ -1,0 +1,59 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<SyncSites xmlns="http://www.mimosa.org/ccom4" releaseID="1.0"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="http://www.mimosa.org/ccom4 ../BOD/Messages/Configuration/syncsites.xsd">
+  <ApplicationArea xmlns="http://www.openapplications.org/oagis/9">
+    <Sender>
+      <LogicalID>Some External System</LogicalID>
+      <ComponentID>Unknown</ComponentID>
+      <TaskID>Site Creation</TaskID>
+      <ReferenceID></ReferenceID>
+    </Sender>
+    <CreationDateTime>2020-02-11T17:30:00Z</CreationDateTime>
+    <BODID>90452abe-3419-4741-9bac-02d68e253fc9</BODID>
+  </ApplicationArea>
+  <DataArea>
+    <Sync xmlns="http://www.openapplications.org/oagis/9">
+      <ActionCriteria>
+        <ActionExpression actionCode="Replace" expressionLanguage="Xpath">/SyncSites/DataArea/Sites</ActionExpression>
+      </ActionCriteria>
+    </Sync>
+    <Sites>
+      <Site>
+        <UUID>e20325f2-c4dd-4d43-890f-1248f90cd68b</UUID>
+        <IDInInfoSource>1</IDInInfoSource>
+        <InfoSource>
+          <UUID>ffaa3282-d48b-42eb-8401-f9f558620c80</UUID>
+          <ShortName>Production Database</ShortName>
+        </InfoSource>
+        <ShortName>Site1</ShortName>
+        <FullName>Main Facility</FullName>
+        <Description>Long text description...</Description>
+        <Type>
+          <UUID>1a4e2e7d-b17c-471c-b334-3768cc033e5e</UUID>
+          <IDInInfoSource>2</IDInInfoSource>
+          <ShortName>Facility</ShortName>
+          <FullName>Regular Facility</FullName>
+        </Type>
+        <LifecycleStatusType>
+          <UUID>bbb62a9c-0ca8-4a1d-a95d-5219f7a4aad6</UUID>
+          <ShortName>Operational</ShortName>
+        </LifecycleStatusType>
+        <RegistrationOrganization>
+          <UUID>63bb678a-2b1e-48e9-85cd-590237960202</UUID>
+          <IDInInfoSource>1</IDInInfoSource>
+          <InfoSource>
+            <UUID>ffaa3282-d48b-42eb-8401-f9f558620c80</UUID>
+            <ShortName>Production Database</ShortName>
+          </InfoSource>
+          <ShortName>1</ShortName>
+          <FullName>Large conglomerate, Inc.</FullName>
+        </RegistrationOrganization>
+        <RegisteredInfoSource>
+          <UUID>ffaa3282-d48b-42eb-8401-f9f558620c80</UUID>
+          <ShortName>Production Database</ShortName>
+        </RegisteredInfoSource>
+      </Site>
+    </Sites>
+  </DataArea>
+</SyncSites>

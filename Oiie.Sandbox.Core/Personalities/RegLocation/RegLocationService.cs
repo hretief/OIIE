@@ -98,7 +98,14 @@ public sealed class SyncSegmentsHandler(
             // with nothing to scope it by and could not be shown against a twin.
             var site = segment.RegistrationSite;
             var contextSourceId = site?.InfoSource?.ShortName ?? site?.InfoSource?.FullName;
-            var contextIdInSource = site?.IDInInfoSource ?? site?.ShortName;
+
+            // IDInInfoSource is the field that carries this: the sender's own record
+            // ID for the site, sufficient to retrieve it from the sender again. Its
+            // form is the sender's business -- text, number, or (for iTwin) a GUID --
+            // so it is stored verbatim and never parsed. ShortName is a display label
+            // and is deliberately not a fallback: filing a proposal under a name that
+            // the owning system may edit gives a key that stops matching its own rows.
+            var contextIdInSource = site?.IDInInfoSource;
             var contextName = site?.FullName ?? site?.ShortName;
 
             if (string.IsNullOrWhiteSpace(sourceIdentifier))

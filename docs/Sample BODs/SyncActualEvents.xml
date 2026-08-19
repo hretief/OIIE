@@ -1,0 +1,91 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<SyncEvents xmlns:b="http://www.bentley.com/Interoperability/MimosaExtensions/1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" releaseID="1.0" xmlns="http://www.mimosa.org/ccom4">
+  <ApplicationArea xmlns="http://www.openapplications.org/oagis/9">
+    <Sender>
+      <LogicalID>APM</LogicalID>
+      <ComponentID>Inspections</ComponentID>
+      <TaskID>Full or Partial Failures in APM</TaskID>
+      <ReferenceID>APM</ReferenceID>
+    </Sender>
+    <CreationDateTime>2021-01-12T15:50:54.7069039Z</CreationDateTime>
+    <BODID>9514636f-c00a-4795-89ed-9ac3ccf40b9f</BODID>
+  </ApplicationArea>
+  <DataArea>
+    <Sync xmlns="http://www.openapplications.org/oagis/9">
+      <ActionCriteria>
+        <ActionExpression actionCode="Replace" expressionLanguage="XPath">/SyncEvents/DataArea/Events</ActionExpression>
+      </ActionCriteria>
+    </Sync>
+    <Events>
+      <Event xsi:type="ActualEvent">
+        <UUID>0c2cb7bd-b7c6-4258-bc1b-891862fdaacd</UUID>
+        <IDInInfoSource>147</IDInInfoSource>
+        <Attribute>
+          <UUID>00000000-0000-0000-0000-000000000000</UUID>
+          <Type>
+            <UUID>60be324b-7012-4a4f-b159-1587802f2c1b</UUID>
+            <IDInInfoSource>Failure Status</IDInInfoSource>
+            <ShortName>Failure Status</ShortName>
+          </Type>
+          <ValueContent>
+            <EnumerationItem>
+              <UUID>29e3ca2d-0c83-469a-b376-bc57cb98946d</UUID>
+              <ShortName>50</ShortName>
+              <FullName>Resolved</FullName>
+            </EnumerationItem>
+          </ValueContent>
+        </Attribute>
+        <Attribute>
+          <UUID>00000000-0000-0000-0000-000000000000</UUID>
+          <Type>
+            <UUID>d4300d55-9e08-45e6-81c0-55a2ad86f4e6</UUID>
+            <ShortName>Remaining PF Interval</ShortName>
+          </Type>
+          <ValueContent>
+            <Measure>
+              <Value>20</Value>
+              <UnitOfMeasure>
+                <UUID>1b5a6f92-6444-4495-8346-d3a7879b9b94</UUID>
+                <ShortName>Cubic Meters Per Second</ShortName>
+              </UnitOfMeasure>
+            </Measure>
+          </ValueContent>
+        </Attribute>
+        <ShortName>000017</ShortName>
+        <FullName>High Critical</FullName>
+        <Description />
+        <Type>
+          <UUID>181ac5b1-f08a-423e-9e8f-d20929a0ebca</UUID>
+          <ShortName>Failure</ShortName>
+        </Type>
+        <Entity xsi:type="Segment">
+          <UUID>ee3e88d1-9d6e-8d48-d082-3e063d64b960</UUID>
+          <ShortName>SDV-0150F</ShortName>
+          <RegistrationSite>
+            <UUID>0e309a9c-e6dc-4736-89cb-bf726e265e3f</UUID>
+            <ShortName>APPOMATTOX</ShortName>
+          </RegistrationSite>
+        </Entity>
+        <Start>2021-01-12T15:47:43Z</Start>
+        <End>2021-01-12T15:50:47Z</End>
+        <SubstantiatedByMeasurement>
+          <UUID>00000000-0000-0000-0000-000000000000</UUID>
+          <Measurement xsi:type="SingleDataMeasurement">
+            <UUID>5fec61e1-6944-40d3-bfe3-bb46fbbbb1ef</UUID>
+            <IDInInfoSource>14523</IDInInfoSource>
+            <Data>
+              <Measure>
+                <Value>566</Value>
+                <UnitOfMeasure>
+                  <UUID>8211ab34-c2e0-415a-b308-a73a819d2232</UUID>
+                  <ShortName>psi</ShortName>
+                  <FullName>lb per sq. inch</FullName>
+                </UnitOfMeasure>
+              </Measure>
+            </Data>
+          </Measurement>
+        </SubstantiatedByMeasurement>
+      </Event>
+    </Events>
+  </DataArea>
+</SyncEvents>

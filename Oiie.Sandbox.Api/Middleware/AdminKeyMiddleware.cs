@@ -59,6 +59,8 @@ public sealed class AdminKeyMiddleware(RequestDelegate next, IConfiguration conf
         "/admin/reg-location/stewardship",
         "/admin/reg-location/locations",
         "/admin/mms/locations",
+        "/admin/cms/customer-assets",
+        "/admin/cms/customer-sites",
         "/admin/scenarios",
     ];
 
