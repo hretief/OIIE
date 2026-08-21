@@ -131,13 +131,18 @@ Storage account names are lowercase, 3–24 characters, alphanumeric only, and
 globally unique. Hyphens are not permitted, so the general pattern cannot apply:
 
 ```
-<account>storage<environment>
+<account>storage<environment><nn>
 ```
 
 | Examples |
 |---|
-| `acmestoragedev` |
-| `acmestorageprod` |
+| `acmestoragedev01` |
+| `acmestorageprod01` |
+
+The two-digit suffix is not decoration. Storage account names are globally
+unique across all of Azure and the unsuffixed `acmestoragedev` is already taken
+by another tenant, so the pattern needs somewhere to move without abandoning
+the convention. Start at `01`.
 
 There is no Azure resource between the storage account and an individual table
 or container. A per-system storage resource name would name nothing that can be
@@ -196,7 +201,7 @@ ISBM keeps all of its state in Azure Storage. These names are already in use:
 | Integration engine | `acme-engn-cms-dev` | `acme-engn-cms-prod` |
 | LOB API | `acme-api-cms-dev` | `acme-api-cms-prod` |
 | Service Bus *(shared)* | `acme-sb-dev` | `acme-sb-prod` |
-| Storage account *(shared)* | `acmestoragedev` | `acmestorageprod` |
+| Storage account *(shared)* | `acmestoragedev01` | `acmestorageprod01` |
 
 Service Bus and storage are shared across all systems in an environment, so they
 carry no system code. The engine is `CmsEngine`; the LOB API is `CmsProvider`,

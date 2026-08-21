@@ -320,3 +320,43 @@ DR-010 first. It looks like the obvious shortcut and it reintroduces the bug
 where a successfully related twin reads as unrelated — the CIRID is cacheable,
 the equivalence set is not, because MMS reads `OWNER_ID` out of it and has
 nowhere local to store one.
+
+## Asserted CIRIDs are untested
+
+**Status:** shipped without coverage, `2aa2771`. Needs tests before `CmsEngine`
+depends on the behaviour.
+
+`CirRegistrationService` now asserts a caller-supplied identity as the CIRID
+rather than letting the registry mint one, so that every system receiving the
+same BOD registers under a single identity instead of each acquiring its own.
+All three registration paths guard the assertion:
+
+```csharp
+if (site.SiteUuid != Guid.Empty)       // ~line 164
+if (tag.FederationId != Guid.Empty)    // ~line 593
+if (location.FederationId != Guid.Empty) // ~line 733
+```
+
+`SimHost.Tests` passes 99/99 against this, but nothing in it reaches the
+registration path — the run confirms the change broke no existing behaviour, not
+that the new behaviour is correct. The closest case,
+`ContextOwnershipTests.Cms_site_retains_the_publisher_uuid_without_naming_it_a_twin`,
+asserts only that the model retains the UUID.
+
+### What to cover
+
+Two cases per path, the second being the one that matters:
+
+1. **Identity supplied** — entry carries `CIRID` equal to the supplied UUID, so
+   two participants registering the same subject converge rather than producing
+   two identities with nothing relating them.
+2. **Identity absent** — entry leaves `CIRID` unset so the registry mints. These
+   identifiers are non-nullable `Guid`, so absence arrives as `Guid.Empty`; the
+   guards exist because asserting it would file *every* identity-less subject
+   under one shared CIRID. That failure is silent and would corrupt the registry
+   rather than throw, which is why it needs a test rather than a comment.
+
+Worth asserting the merge rule from §3.1.2 alongside these: an existing CIRID
+wins, so an assertion cannot overwrite an identity the registry already holds.
+That property is what makes the change safe, and it is currently only claimed in
+a comment.

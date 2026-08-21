@@ -49,6 +49,21 @@ $key = az keyvault secret show --vault-name mndot --name sandbox-admin-key-demo 
 are testable against it — they are not against a workstation, which has no address the
 provider can reach.
 
+### Deployed CMS provider
+
+`CmsProvider` emulates the customer's Meridium system and deploys separately from
+the sandbox, on its own databases:
+
+```
+dev  : https://acme-api-cms-dev.azurewebsites.net
+prod : https://acme-api-cms-prod.azurewebsites.net
+```
+
+`/api/health` is anonymous and reports the site count; every other route needs a
+function key. Deployment steps and the traps involved are in
+[CmsProvider/deploy/README.md](../CmsProvider/deploy/README.md). Nothing in the
+sandbox calls it yet — `CmsEngine` will, and deploys separately again.
+
 ### MMS inventory panel
 
 Selecting the MMS persona shows what `LIGHT_SYSTEM_INVENTORY` actually holds for the
