@@ -4,48 +4,26 @@
    SQL Server DDL
    ============================================================ */
 
-CREATE SCHEMA cms;
-GO
-
 /* ============================================================
    SITE
    ============================================================ */
 
-CREATE TABLE cms.Site (
-    SiteID              INT IDENTITY(1,1) PRIMARY KEY,
+CREATE TABLE Site (
+    SiteID              UNIQUEIDENTIFIER PRIMARY KEY,
+    SiteCode            VARCHAR(50) NOT NULL UNIQUE,
+    SiteName            VARCHAR(200) NOT NULL,
+    Description         VARCHAR(1000),
+    SiteType            VARCHAR(50),
+    ParentSiteID        UNIQUEIDENTIFIER NULL,
+    Country             VARCHAR(100),
+    Region              VARCHAR(100),
+    Status              VARCHAR(20),
+    CreatedDate         DATETIME2,
+    UpdatedDate         DATETIME2,
 
-    SiteUUID            UNIQUEIDENTIFIER NOT NULL
-        DEFAULT NEWID(),
-
-    SiteCode            NVARCHAR(100) NOT NULL,
-    SiteName            NVARCHAR(255) NOT NULL,
-    Description         NVARCHAR(1000) NULL,
-
-    CreatedAtUTC        DATETIME2 NOT NULL
-        DEFAULT SYSUTCDATETIME(),
-
-    CONSTRAINT UQ_Site_UUID UNIQUE (SiteUUID),
-    CONSTRAINT UQ_Site_Code UNIQUE (SiteCode)
-);
-GO
-
-/* ============================================================
-   LOCATION
-   ============================================================ */
-
-CREATE TABLE cms.Location (
-    LocationID          INT IDENTITY(1,1) PRIMARY KEY,
-    ParentLocationID    INT NULL,
-
-    LocationCode        NVARCHAR(100) NOT NULL,
-    LocationName        NVARCHAR(255) NOT NULL,
-    Description         NVARCHAR(1000) NULL,
-
-    CONSTRAINT UQ_Location_Code UNIQUE (LocationCode),
-
-    CONSTRAINT FK_Location_Parent
-        FOREIGN KEY (ParentLocationID)
-        REFERENCES cms.Location(LocationID)
+    CONSTRAINT FK_Site_Parent
+        FOREIGN KEY (ParentSiteID)
+        REFERENCES Site(SiteID)
 );
 GO
 
@@ -53,14 +31,23 @@ GO
    ASSET CLASS
    ============================================================ */
 
-CREATE TABLE cms.AssetClass (
-    AssetClassID        INT IDENTITY(1,1) PRIMARY KEY,
+CREATE TABLE AssetType (
+    AssetTypeID         UNIQUEIDENTIFIER PRIMARY KEY,
+    AssetTypeCode       VARCHAR(50) NOT NULL UNIQUE,
+    AssetTypeName       VARCHAR(200) NOT NULL,
+    Description         VARCHAR(1000),
 
-    ClassCode           NVARCHAR(100) NOT NULL,
-    ClassName           NVARCHAR(255) NOT NULL,
-    Description         NVARCHAR(1000) NULL,
+    ParentAssetTypeID   UNIQUEIDENTIFIER NULL,
 
-    CONSTRAINT UQ_AssetClass_Code UNIQUE (ClassCode)
+    CriticalityClass    VARCHAR(50),
+    ExpectedLifeYears   INT,
+
+    CreatedDate         DATETIME2,
+    UpdatedDate         DATETIME2,
+
+    CONSTRAINT FK_AssetType_Parent
+        FOREIGN KEY (ParentAssetTypeID)
+        REFERENCES AssetType(AssetTypeID)
 );
 GO
 
@@ -68,41 +55,44 @@ GO
    ASSET
    ============================================================ */
 
-CREATE TABLE cms.Asset (
-    AssetID             INT IDENTITY(1,1) PRIMARY KEY,
+CREATE TABLE Asset (
+    AssetID                 UNIQUEIDENTIFIER PRIMARY KEY,
 
-    SiteID              INT NOT NULL,
-    ParentAssetID       INT NULL,
-    LocationID          INT NULL,
-    AssetClassID        INT NULL,
+    SiteID                  UNIQUEIDENTIFIER NOT NULL,
+    AssetTypeID             UNIQUEIDENTIFIER NOT NULL,
 
-    AssetTag            NVARCHAR(100) NOT NULL,
-    AssetName           NVARCHAR(255) NOT NULL,
-    Description         NVARCHAR(1000) NULL,
+    AssetNumber             VARCHAR(100) NOT NULL,
+    AssetTag                VARCHAR(100),
 
-    SerialNumber        NVARCHAR(100) NULL,
-    Manufacturer        NVARCHAR(255) NULL,
-    Model               NVARCHAR(255) NULL,
-    CommissionDate      DATE NULL,
+    AssetName               VARCHAR(250) NOT NULL,
+    Description             VARCHAR(1000),
 
-    OperationalStatus   NVARCHAR(50) NULL,
-    CriticalityLevel    NVARCHAR(50) NULL,
+    Manufacturer            VARCHAR(200),
+    ModelNumber             VARCHAR(100),
+    SerialNumber            VARCHAR(100),
 
-    CreatedAtUTC        DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-    UpdatedAtUTC        DATETIME2 NULL,
+    CommissionDate          DATE,
+    RetirementDate          DATE,
 
-    CONSTRAINT UQ_Asset_Tag UNIQUE (AssetTag),
+    CriticalityScore        DECIMAL(10,2),
+    RiskRanking             VARCHAR(50),
+
+    Status                  VARCHAR(50),
+
+    ParentAssetID           UNIQUEIDENTIFIER NULL,
+
+    CreatedDate             DATETIME2,
+    UpdatedDate             DATETIME2,
 
     CONSTRAINT FK_Asset_Site
         FOREIGN KEY (SiteID)
-        REFERENCES cms.Site(SiteID),
+        REFERENCES Site(SiteID),
+
+    CONSTRAINT FK_Asset_Type
+        FOREIGN KEY (AssetTypeID)
+        REFERENCES AssetType(AssetTypeID),
 
     CONSTRAINT FK_Asset_Parent
         FOREIGN KEY (ParentAssetID)
-        REFERENCES cms.Asset(AssetID),
-
-    CONSTRAINT FK_Asset_Location
-        FOREIGN KEY (LocationID)
-        REFERENCES cms.Location(LocationID),
-
-    
+        REFERENCES Asset(AssetID)
+);

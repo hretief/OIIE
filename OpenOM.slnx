@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/01-Apps/">
+    <Project Path="CmsProvider/CmsProvider.csproj" />
     <Project Path="ISBMProvider/IsbmProvider.csproj" />
     <Project Path="CirProvider/CirProvider.csproj" />
     <Project Path="Oiie.Sandbox.Api/Oiie.Sandbox.Api.csproj" />

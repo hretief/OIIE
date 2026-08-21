@@ -1,7 +1,25 @@
 # Sandbox naming conventions
 
-Single source of truth for names. `provision.ps1` derives everything below from
-`environment` and `alias`, so nothing should be typed by hand twice.
+`provision.ps1` derives everything below from `environment` and `alias`, so
+nothing should be typed by hand twice.
+
+> **Not the master naming standard.** `docs/azure-resource-naming-guidance.md`
+> is authoritative for Azure resource names. This file covers sandbox-specific
+> detail — schemas, contained users, per-developer databases — and records where
+> the two disagree.
+>
+> Unresolved conflicts with the master standard:
+>
+> - **Environments.** This file defines `dev`, `ci` and `demo`. The master
+>   standard defines only `dev` and `prod`, and has no `prod` sandbox. A name
+>   for the CI and demo environments has not been agreed.
+> - **Database naming.** Sandbox databases are `oiie-sandbox-{env}[-{alias}]`,
+>   which predates the `<account>-db-<system>-<environment>` pattern.
+> - **Isolation model.** This file isolates participants by schema inside one
+>   database per environment. The master standard gives each system its own
+>   database, which is what `CmsProvider/deploy/provision-databases.ps1` already
+>   does for CMS. Both models are currently in use and the boundary between them
+>   is not written down anywhere.
 
 ## Environments
 

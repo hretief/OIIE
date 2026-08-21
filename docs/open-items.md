@@ -140,7 +140,20 @@ To force the behaviour manually in the meantime: reset a posted outbox item to
 
 ## A required abstraction over participants
 
-**Status:** design idea, raised 2026-08-19. Nothing started.
+**Status:** specified 2026-08-20 in [participant-abstraction-spec.md](participant-abstraction-spec.md)
+and DR-013. Nothing implemented.
+
+**Scope reduced after review.** The spec now covers only the in-process split of
+handlers into a pure transformer plus a customer writer, preserving the single
+transaction. The Function App extraction described below is **deferred**, along
+with `/describe`, a generic query contract, and declarative YAML pipelines. Each
+is recorded with its trigger condition in §11 of the spec.
+
+The reason for deferring is specific: separate deployables would split one
+transaction across two stores, so customer rows and provenance could diverge — a
+failure mode that is currently impossible — and would multiply cold-start
+surfaces, which is what caused the LTP-4 incident (DR-012). The text below
+records the original ambition, not the current plan.
 
 The goal is that any repository can participate as long as it implements an
 agreed interface, with each participant eventually deployable as its own Function

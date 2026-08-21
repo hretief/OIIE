@@ -620,4 +620,375 @@ of the incident being recovered from.
 - **Only the MMS segments path was hardened.** Other CIR callers still flatten a timeout into whatever their
   own failure shape is; the `Transient` flag now exists for them but is unused.
 
+## DR-013 — A participant's customer store is an adapter, not a database handed to a handler
 
+**Status:** Partially superseded by DR-014
+**Date:** 2026-08-20
+**Superseded parts:** The in-process constraint below — "The split is in-process. The `DbContext` is still
+passed to the writer" — no longer holds. Participants are separately deployed Function Apps. Everything else
+in this decision stands: the operations-only boundary, the transformation/persistence split, transient
+classification at the point of failure, and the returned-keys contract all carry forward into DR-014's HTTP
+shape. The reasoning recorded here about why the *earlier* draft was rejected remains accurate as history and
+is answered directly in DR-014.
+**Context:** Participants are to become deployable Function Apps fronting real customer systems. A prior
+generation of this integration (`Interoperability_old`) solved the same problem, and the parts it got right
+and wrong are both instructive. Full design in [participant-abstraction-spec.md](participant-abstraction-spec.md).
+
+### The current seam is in the wrong place
+
+`IBodHandler.HandleAsync` takes a `ParticipantDbContext`. The handler is therefore given the customer's
+database, and one method performs context resolution, semantic transformation and persistence together —
+`CmsSegmentsHandler` and `MmsSegmentsHandler` both do. The customer store cannot be swapped for a REST API
+without rewriting the handler, and transformation cannot be tested without SQL.
+
+### What the prior generation got right
+
+Its pipeline was decomposed correctly: `TopicSubscriber → XMLParser → MimosaXmlParser → DataHubCCOMWriter`,
+with `ConvertCCOMSegmentToMaximoLocation` (semantic → native) a *separate component* from `SegmentImport`
+(native → customer API). The converter never touched the wire; the importer never understood CCOM. Pipelines
+were declared as JSON, so adding a route was config rather than a deployment. And
+`SupportedInteropFunctionality` negotiated by capability (`FastAssetsSupported`) rather than version number.
+All three are adopted.
+
+### What it got wrong, and why the same shape is not repeated
+
+- **`IDataHubDatabase` had eight connection/credential members and one operation** (`WriteToDataHub`). The
+  interface was a config bag with a method attached; consumers saw `Password` and `DataSource`.
+- **`WriteToDataHub(string json, string storedProcName)`** let the caller supply the stored procedure, and
+  the BOD-to-proc mapping lived in orchestration config. A change to the customer's schema was a change to
+  orchestration. That is the leak this decision exists to prevent.
+- **`IComponent.Initialize()` was dead** — it threw `NotImplementedException` in the converter and was empty
+  in the importer.
+- **Runtime state was written into configuration** (`Stats`, `lastRun`, `exceptions`, `state`), making config
+  non-reproducible and racy.
+- **`OnMessageAsync` returned bare `Task`.** Failure was an exception, so the DR-012 distinction could not be
+  expressed at all. The old engine had no way to say "transient — replay me".
+
+### The newer generation reached DR-012 independently, and shows where the wrong fix leads
+
+`Interoperability` — the current generation of that system — extracted `lib/Abstractions` and `lib/Engine`
+as standalone packages with one folder per connector, which is the packaging shape this decision targets.
+It also arrived at DR-012 on its own: `MessageProcessingException.IsTransient`, branched on by every producer
+(`ProcessAssetProducer`, `RequestForWorkProducer`, `AnomalyEventProducer`), with `APMRestAPI` and
+`Analytics4DRestAPI` additionally letting the customer system declare transience through a `Transient: true`
+response header. That header idea is adopted — the system that failed is best placed to say whether a retry
+will help.
+
+**Its classification mechanism is the cautionary part.** `RestAPIBase` decides transience from an
+`HttpStatusCode` table that marks `Unauthorized` and `NotFound` transient — retrying indefinitely against a
+bad credential — and, when that yields nothing, by substring-matching the exception text against a list
+including `"TRY AGAIN"`, `"DEADLOCKED"`, `"failed to lock"`, `"the object is currently locked by"` and
+`"Response status code does not indicate success: 404"`. Nearly every entry cites a bug number. The list is
+scar tissue, one string per production incident.
+
+That is the inevitable outcome of classifying transience *at the top of the stack for an exception thrown at
+the bottom*: by then the only surviving evidence is the message text, so you match on it. The corrected rule
+is that **the layer that knows why something failed is the layer that must classify it**. An adapter calling
+a customer API knows whether it received a 503 or a validation rejection, and must say so in a typed result
+at that moment.
+
+### Decision
+
+The customer boundary is `ICustomerWriter<TIntent>` (with a separate, paging-only `ICustomerReader<TRow>`),
+exposing **operations only** — no connection strings, no credentials, no stored-procedure names, no
+lifecycle method. Transformation moves to `IBodTransformer<TIntent>`, which performs no I/O and is therefore
+testable without a database. Orchestration keeps the archive, identity correspondence, provenance and
+verdicts.
+
+**The split is in-process. The `DbContext` is still passed to the writer.** An earlier draft made each
+participant a separately deployed Function App; review rejected that, because it would split one transaction
+across two stores and allow customer rows and provenance to diverge — a failure mode that is currently
+impossible. The interface exists to mark the boundary and make the write substitutable in tests, not to hide
+the store.
+
+`PersistOutcome` carries `PersistFailure.Transient`, set by the writer at the point of failure. This extends
+DR-012 to the customer boundary — a customer system that did not answer is not a customer system that
+refused — while deliberately not repeating the exception-text inference above.
+
+### Generated keys forced the contract's shape
+
+The naive `Transform → Persist` split does not survive the pilot participant. `CmsSegmentsHandler` calls
+`SaveChangesAsync` *inside* its loop because `AssetID` is an IDENTITY column, and the identity correspondence
+cannot be computed until the insert has assigned it. MMS is the opposite: `LIGHT_SYSTEM_ID` is computed as
+`MAX(id) + 1` before the insert. Two participants, two key models.
+
+So `PersistOutcome` returns `IReadOnlyList<PersistedItem>` carrying the key the writer assigned to each row,
+and identity registration and provenance become an orchestration step consuming those keys. A contract
+returning only counts could not express CMS at all.
+
+Similarly, `CmsSegmentsHandler.ResolveSiteAsync` reads the database once per segment, so lookups are hoisted
+into a `TransformContext` populated before transformation begins. That hoisting is what makes the
+transformer pure, and it is a real behaviour change — one batched read replacing per-segment reads — not a
+pure refactor.
+
+### Wiring stays in code
+
+Both prior generations wired stages by reflection — `componentType.GetMethod("Connect")` + `Invoke` — so a
+mistyped pipeline failed in production, on a real message. The draft's answer was declarative YAML plus a
+startup validator to catch those mismatches. The simpler answer is taken instead: registration in code, where
+the compiler performs those checks and no validator needs writing. Declarative wiring earns its cost when
+routes change without a deployment, by people who do not build the code; neither is true here.
+
+### The contract is specified for inbound participants only
+
+DR-013 draws its evidence from MaximoSaaS and DataHub, the two simplest connectors in the prior system.
+The harder ones qualify the scope.
+
+**InspectTech corroborates the split.** It organises by role rather than by BOD —
+`Transformers/`, `Consumers/`, `Producers/`, `Dependencies/` — and `BusinessObjectDocumentToAsset` is
+`IInput<BusinessObjectDocument>, IOutput<MimosaAssetInspectTech>` with **no repository injected at all**.
+That is `IBodTransformer<TIntent>` arrived at independently, and it is the best evidence that the purity
+constraint is achievable rather than merely tidy. The caution is that `AssetImport.cs` is 49KB: the split
+bounds coupling, not size.
+
+**APM shows what this decision does not cover.** `AssetChangeRequestProducer` is
+`IOutput<AssetChangeRequest>, IComponent, ITriggerable` — it polls for unsent work, publishes, then marks
+sent. Three consequences:
+
+- The publish side is trigger-driven, not message-driven, so it has no message row to record a verdict on.
+  Its transient failures are *rethrown* to let auto-reset restart the pipeline, the opposite of the inbound
+  rule. The asymmetry is defensible but must be deliberate.
+- Publishing before marking sent is at-least-once delivery with an idempotent consumer assumed. That needs
+  reconciling with DR-011's outbox receipt before the publish side is specified.
+- `ConvertMIMOSAHelper.cs` is 66KB shared across ten-plus BOD types, confirming that transformers must be
+  per-BOD rather than per-participant, and that shared mapping helpers are unavoidable at that scale.
+
+Accordingly this decision covers **inbound participants only**. The "participants are cheap to add" claim
+is not fully demonstrated until a publishing participant exists.
+
+### Caveats carried forward
+
+- **This is indirection that a single-BOD participant does not need.** The justification is testability, not
+  flexibility. There is no performance gain and no store becomes swappable.
+- **There are no tests over `CmsSegmentsHandler` or `MmsSegmentsHandler`** — verified, not assumed. The
+  refactor is only safe if characterisation tests are written *first* and left unchanged across it. An
+  earlier draft claimed the split was "covered by tests"; that was untrue.
+- **A generic writer interface can degrade into a lowest common denominator.** CMS and MMS already disagree
+  on key allocation. Where a customer system needs genuinely bespoke operations, take a bespoke interface
+  rather than widening the shared one.
+- **The boundary is enforced only by review.** A writer taking a `DbContext` can be bypassed by a handler
+  that also has one. Nothing in the type system prevents it.
+- **Hoisting lookups into `TransformContext` changes read patterns**, and that record will accrete a field
+  per lookup. If it grows past a handful, transformation genuinely needs data access and the design should
+  be revisited rather than padded.
+- **Nothing is implemented.** The spec is a proposal; `CmsSegmentsHandler` still takes a `DbContext`.
+
+
+
+
+---
+
+## DR-014 — A participant is authored by the owner of the customer data, so the boundary is a network hop
+
+**Status:** Superseded by DR-015, before implementation
+**Date:** 2026-08-21
+**Superseded because:** the requirement it identified was right and the mechanism it chose was wrong.
+Third-party authorship does demand a real boundary, but that boundary already existed as a published
+standard — ws-ISBM — and this decision invented a proprietary one instead. Retained in full because
+the analysis of at-least-once delivery and mandatory idempotency below survives the change intact and
+is carried into DR-015; only the custom HTTP contract is discarded.
+**Supersedes:** DR-013's in-process constraint. Full contract in
+[participant-abstraction-spec.md](participant-abstraction-spec.md) §3.
+
+### The requirement that changed the answer
+
+Participants are to be authored by whoever owns the customer system. If CMS belongs to Meridium, Meridium's
+developers build the CMS participant, and their only obligation is a prescribed interface invoked when a
+message arrives on the channel.
+
+DR-013 rejected separately deployed participants on the grounds that a split transaction lets customer rows
+and provenance diverge. That reasoning was correct and the conclusion is still reversed, because it answered
+a narrower question. It weighed a refactor for testability, where an in-process interface is sufficient and a
+network hop buys nothing. It did not weigh third-party authorship, which an in-process interface cannot
+support at all: Meridium cannot compile into our host, and would not accept the coupling if they could.
+
+### Why an in-process interface could not have been the boundary
+
+An interface a third party implements without reading our source is a real boundary. An in-process interface
+is a promise enforced by review — DR-013 admitted as much in its own caveats: *"The boundary is enforced only
+by review. A writer taking a `DbContext` can be bypassed by a handler that also has one."*
+
+The distributed form removes that possibility structurally. A participant project cannot reference
+`Oiie.Sandbox.Core` or `Oiie.Ccom`; the only permitted dependency is a DTO-only contract package. Leakage
+becomes a compile error rather than a review finding. The acceptance test is correspondingly honest: author a
+participant using only the contract and the spec, opening no file in `Oiie.Sandbox.Core`.
+
+### What this costs, stated plainly
+
+**The transaction splits and cannot be rejoined.** The participant commits to its own database, then returns
+a verdict the orchestrator records in ours. A crash in between leaves the work done but unrecorded, and
+redelivery repeats it. Two-phase commit across a customer boundary is unavailable and would be refused by a
+customer if offered.
+
+DR-013 named this as disqualifying. It is now accepted, because the alternative is not a safer architecture
+but a different requirement. The mitigation is contractual rather than technical: delivery is **at-least-once**,
+and **every participant must be idempotent** on `BodId`. CMS satisfies this by construction — `AssetTag` is
+`UNIQUE` and the store upserts, so redelivery updates the rows the first delivery created.
+
+A participant that appends unconditionally will duplicate customer data under redelivery. The orchestrator
+cannot detect this, and the duplicates are indistinguishable from legitimate rows. This is the sharpest edge
+in the design and the reason for the conformance suite below.
+
+**DR-012 becomes a third party's judgement.** The `Failed`/`Rejected` distinction — a registry that does not
+answer is not a registry that says no — now depends on a participant author classifying correctly. Getting it
+wrong reproduces LTP-4 invisibly: a `Rejected` verdict is terminal and never retried, so a transient
+condition reported as `Rejected` destroys data.
+
+The contract answers this in three ways. The rule is stated testably: *would an identical delivery in ten
+minutes behave differently?* `Transient` is a required field when the outcome is `Failed`, so it cannot be
+omitted by inattention. And §7.1 publishes an executable conformance suite, because without one "adhere to
+the prescribed interface" is an aspiration rather than a checkable claim.
+
+### Decision
+
+Each participant stack is an independently deployed Function App exposing `POST /api/bod`. It receives the
+**raw BOD XML** and owns all CCOM parsing.
+
+Pre-parsing nouns for the participant was considered and rejected: it would require the orchestrator to
+understand every noun any participant might ever accept, which is exactly the coupling this decision removes.
+The orchestrator forwards verbatim and interprets nothing.
+
+The response carries the verdict in the **body**, which is authoritative. HTTP status is transport-level and
+may originate from infrastructure the participant never touched — a cold start, a gateway timeout, a platform
+429 — so status is read only when no well-formed body arrived. This is the same instinct as the
+`Transient: true` response header adopted from `Interoperability` in DR-013, made structural rather than
+advisory: the system that failed is best placed to say whether a retry will help.
+
+Identity correspondence and provenance stay with the orchestrator, driven off a uniform `PersistedEntity`
+carrying the key the customer system assigned. `EntityKey` is a string precisely because key models differ —
+CMS allocates an IDENTITY `int`, MMS pre-allocates a `long` — and the orchestrator never interprets it. This
+is DR-013's returned-keys insight carried across the wire, and it is what allows a new participant to require
+no orchestrator code.
+
+Endpoint discovery is configuration: participant id to base URL, with the function key resolved from Key
+Vault. Adding a participant is therefore a data change, not a code change. Self-registration was rejected
+because any endpoint able to reach the orchestrator could claim a participant id. ws-CIR was rejected because
+it registers business-object identity, not service endpoints; conflating the two would overload a registry
+whose meaning is already precise.
+
+`RemoteBodHandler` implements the existing `IBodHandler`, so `InboxPump` is unchanged and the remote hop
+hides behind a seam that already exists.
+
+### Caveats carried forward
+
+- **A participant author can silently break idempotency.** Nothing in the contract enforces it and the
+  orchestrator cannot observe it. The conformance suite's redelivery case is the only defence, and it is
+  opt-in.
+- **Latency and cold starts are now in the ingest path.** A cold participant may take seconds to answer.
+  Treated as transient, but it changes the failure profile of a demo.
+- **Verdict fidelity is delegated.** A participant that reports every failure as `Rejected` will look
+  healthy while losing data.
+- **Function keys are shared secrets.** Adequate for a sandbox; managed identity is the right answer before
+  a real customer system is on the other end.
+- **The claim is not yet demonstrated.** It holds when someone outside this repository authors a participant
+  from the contract alone. Until then it remains an assertion, and the in-repo reference implementation is
+  weak evidence for it.
+- **Existing in-process handlers are untouched.** MMS, RegLocation and the rest still take a `DbContext`.
+  The two models coexist until there is reason to migrate them.
+
+
+---
+
+## DR-015 — The prescribed interface is ws-ISBM, and there is no orchestrator
+
+**Status:** Accepted
+**Date:** 2026-08-21
+**Supersedes:** DR-014 in full, and DR-013's in-process participant split. Specification in
+[participant-abstraction-spec.md](participant-abstraction-spec.md).
+
+### The observation that reversed the decision
+
+*"The central orchestrator seems to defeat the disconnected nature of the ISBM intent."*
+
+It does. DR-014 kept a component that received every BOD and decided who should see it. That is a
+hub, and OIIE exists to describe an ecosystem without one. The disconnected quality of ISBM is not
+an incidental property of the messaging layer; it is the thing being demonstrated.
+
+### Why the error was not visible from inside DR-014
+
+DR-014's own text contains the evidence and draws the wrong conclusion from it. §6 of the
+superseded spec specified config-driven endpoint discovery: participant id to base URL, function key
+from Key Vault. DR-014 then explicitly rejected ws-CIR for that role, on the grounds that it
+"registers business-object identity, not service endpoints."
+
+That reasoning was sound and the conclusion should have been that a *service registry was the wrong
+thing to be building*. Instead it became a justification for building a bespoke one. The tell was
+there: a design that has to invent discovery, addressing, retry policy and a verdict envelope is
+reconstructing a message bus. There was already a message bus, deployed, with 26 operations and a
+conformance suite.
+
+The underlying mistake is worth naming because it is repeatable. The requirement was stated as *a
+participant must adhere to a prescribed interface*. That was read as *we must design an interface*.
+It should have been read as *we must identify the interface*, and the answer was in the spec the
+project is named after.
+
+### What is decided
+
+Each participant is an independently deployed Function App that integrates **only** through the
+ws-ISBM REST API. No orchestrator, no dispatcher, no participant registry, no custom contract, and
+no participant aware that any other participant exists.
+
+Routing is channel topology. A participant subscribes to the channels it consumes and publishes to
+the channels it produces; the handover chain is emergent. Adding a subscriber to a channel requires
+no change to the publisher, which is the property that makes the "add a participant cheaply" claim
+demonstrable rather than asserted.
+
+Verdicts are BODs. On request-response, the response BOD carries the outcome, and
+`AcknowledgeRegistry` already exists for exactly this. On publish-subscribe there is no verdict at
+all, and that is correct: a publisher that needs to know who consumed its message wanted
+request-response.
+
+The consequence for third-party authorship is the real prize. A vendor implementing against ISBM has
+built something that works with any conformant provider. Under DR-014 they would have implemented
+our proprietary contract and gained nothing transferable — and would reasonably have asked why.
+
+### What this does not fix, contrary to first impressions
+
+**Read-then-remove is at-least-once, not exactly-once.** A participant commits to its customer
+database and then calls `RemovePublication`: two systems, no shared transaction, and a crash between
+them means the work is done and unacknowledged. The split transaction DR-013 objected to and DR-014
+accepted is still present. ISBM changes *who* redelivers, not *whether* duplicate application is
+possible. An early draft of the ISBM instructions claimed exactly-once; that claim is withdrawn, and
+the mandatory-idempotency obligation from DR-014 carries over unchanged.
+
+**The idempotency key is `BODID`, not the ISBM `MessageId`.** `MessageId` is assigned per channel and
+de-duplicates transport redelivery on that channel only. It does not survive a hop: when REG reads a
+publication and republishes it onward, the downstream message carries a new `MessageId`, so a
+redelivered-and-reprocessed BOD reaches MMS looking entirely new. De-duplicating on `MessageId` writes
+the maintenance record twice.
+
+The rule adopted is therefore: **a participant preserves the inbound `BODID` when republishing the
+same business fact, and mints a new one only when originating a fact or answering a request.** The
+ws-CIR provider's existing behaviour — a fresh BODID per response BOD — is already correct under this
+rule. Forwarding participants are where it must be applied deliberately.
+
+**Notification delivery is best-effort and currently unretried.**
+`HttpNotificationDispatcher.NotifyAsync` catches all exceptions from the listener PUT, logs, and
+returns; the dispatching Service Bus trigger then completes successfully, so nothing retries. The
+message is not lost — it stays queued until removed — but nothing rings the doorbell again, and a
+participant that was cold when the notification fired stops receiving it indefinitely. Participants
+therefore MUST poll as a backstop, and the existing ws-CIR timer drain is kept rather than replaced.
+
+### Caveats carried forward
+
+- **The publication and consumer-request ISBM routes are unverified.** `IIsbmClient` marks them as
+  inferred from convention; ws-CIR exercises only the provider-request and subscription halves. The
+  new topology is publication-centric, so every hop except CIR's own runs on unproven routes. The
+  handover-chain test exercises them before any participant depends on them.
+- **A participant author can still silently break idempotency**, and nothing in the ecosystem can
+  detect it. Removing the orchestrator removes even the possibility of central detection.
+- **Provenance and identity correspondence lose their central home.** The orchestrator wrote both
+  after a successful apply. Each participant must now record its own, most naturally via the CIR
+  request channel. Not yet designed.
+- **The single-pane UI loses its vantage point.** The orchestrator saw every step, which is what made
+  one screen showing the whole flow straightforward. The UI must now reconstruct the chain from ISBM
+  channel state plus CIR entries. Arguably a more honest demonstration of a distributed system, but
+  it is unbuilt work that the demo depends on.
+- **Whether a dead session is distinguishable from an empty queue is unknown.** Both may present as
+  404. If so, a participant can hold a session that will never deliver and appear merely idle.
+- **The architecture is still unproven by the test that matters**: someone outside this repository
+  authoring a participant from the ISBM spec alone. It is now a far more plausible claim, because the
+  interface is a published standard rather than ours — but plausibility is not evidence.
+- **No existing code has been changed.** DR-013's in-process handlers, `InboxPump` and the ws-CIR
+  direct endpoint all still run. Standalone participants are built and proven first; migration
+  follows. `Oiie.Participants.Contract` is superseded but still on disk.

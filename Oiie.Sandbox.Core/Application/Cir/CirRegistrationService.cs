@@ -147,11 +147,30 @@ public sealed class CirRegistrationService(
                     Name = site.SiteName
                 };
 
-                // Stated as a property, not used as the identifier. Where the publisher
-                // sent a twin GUID this is the value that makes equivalence obvious to
-                // a steward; where it did not, the column still holds something and no
-                // special case is needed to decide whether to send it.
-                entry.Property.Add(Property.Simple("SiteUUID", site.SiteUuid.ToString()));
+                // Where the data owner minted an identity and sent it as Site/UUID,
+                // that value becomes the CIRID. Leaving it null would have the registry
+                // mint a second one, and the federation would then hold two identities
+                // for one site with nothing to relate them — the exact condition CIRID
+                // exists to prevent. Asserting it means every system that received the
+                // same BOD registers under one CIRID without a steward intervening.
+                //
+                // §3.1.2 still lets an existing CIRID win on merge, so asserting this
+                // cannot overwrite an identity the registry already holds.
+                //
+                // An empty SiteUuid is left unstated so the registry mints, which is
+                // the correct outcome for a site that never carried an owner identity:
+                // Guid.Empty is the absence of one, and asserting it would file every
+                // such site under a single shared CIRID.
+                if (site.SiteUuid != Guid.Empty)
+                {
+                    entry.CIRID = site.SiteUuid;
+
+                    // Also stated as a property, though it is now the CIRID above. The
+                    // duplication is deliberate: CIRID is federation machinery, and a
+                    // steward reading the entry should be able to see the owner's own
+                    // identifier for the site without inferring it from that.
+                    entry.Property.Add(Property.Simple("SiteUUID", site.SiteUuid.ToString()));
+                }
 
                 return entry;
             }).ToList();
@@ -560,11 +579,24 @@ public sealed class CirRegistrationService(
                 Name = tag.ServiceDescription ?? tag.TagNumber
             };
 
-            // The identity ENG minted, stated alongside the code it uses. A registry
-            // entry that carries the FederationId needs no equivalence reasoning to be
-            // linked — it has already said what it is.
+            // The identity ENG minted, asserted as the CIRID itself. ENG is the
+            // originator of this segment, so its FederationId is not one candidate
+            // identifier among several — it is what the object is. Filing it as a
+            // property and letting the registry mint a separate CIRID would create a
+            // second identity for an object that already had one, and every consumer
+            // that received the same SyncSegments BOD would then need a steward to
+            // relate the two back together.
+            //
+            // Consumers registering the same segment assert this same UUID, so they
+            // converge here without equivalence reasoning. §3.1.2 still lets an
+            // existing CIRID win, so this cannot overwrite a held identity.
             if (tag.FederationId != Guid.Empty)
             {
+                entry.CIRID = tag.FederationId;
+
+                // Kept as a property as well: CIRID is federation machinery, and a
+                // steward reading the entry should see ENG's own identifier for the
+                // tag without having to know the two happen to coincide.
                 entry.Property.Add(Property.Simple("FederationId", tag.FederationId.ToString()));
             }
 
@@ -700,6 +732,13 @@ public sealed class CirRegistrationService(
 
             if (location.FederationId != Guid.Empty)
             {
+                // The identity REG-LOCATION adopted from the BOD it received, asserted
+                // as the CIRID. This is the receiving half of what ENG does when it
+                // mints: the originator states the UUID and every consumer that
+                // processed the same SyncSegments states it too, so all of them land
+                // on one registry identity without a steward relating anything.
+                entry.CIRID = location.FederationId;
+
                 entry.Property.Add(
                     Property.Simple("FederationId", location.FederationId.ToString()));
             }
