@@ -55,12 +55,21 @@ public sealed class ChannelManagementFunctions(
         if (string.IsNullOrEmpty(channelUri))
             return await req.JsonAsync(await channels.GetAllAsync());
 
-        var uri = Responses.DecodeChannelUri(channelUri);
-        var channel = await channels.GetAsync(uri);
+        var channel = await ResolveChannelAsync(Responses.DecodeChannelUri(channelUri));
         return channel is null
             ? await req.FaultAsync(IsbmFaultException.Channel())
             : await req.JsonAsync(channel);
     }
+
+    /// <summary>
+    /// Look a channel up by its route-supplied URI. The catch-all route drops the leading
+    /// slash, so "/Enterprise/Site" arrives as "Enterprise/Site" and would miss the store key
+    /// (which is the base64 of the URI exactly as it was created). Fall back to the slashed
+    /// form so both spellings resolve to the same channel.
+    /// </summary>
+    private async Task<Channel?> ResolveChannelAsync(string channelUri)
+        => await channels.GetAsync(channelUri)
+           ?? (channelUri.StartsWith('/') ? null : await channels.GetAsync('/' + channelUri));
 
     // DELETE /channels/{*channelUri}  — DeleteChannel (token required if secured)
     [Function("DeleteChannel")]
@@ -68,15 +77,20 @@ public sealed class ChannelManagementFunctions(
         [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "channels/{*channelUri}")] HttpRequestData req,
         string channelUri)
     {
-        var uri = Responses.DecodeChannelUri(channelUri);
+        var channel = await ResolveChannelAsync(Responses.DecodeChannelUri(channelUri));
+
+        // Deleting an unknown channel stays idempotent (204), as before.
+        if (channel is null) return req.NoContent();
+
+        // Use the channel's stored URI from here on: token validation, broker teardown and the
+        // delete must all key off the same spelling the channel was created with.
+        var uri = channel.ChannelUri;
 
         // Token validation — secured channels require authorization to delete
         var fault = await tokenValidator.ValidateAsync(req, uri);
         if (fault is not null) throw fault;
 
-        var channel = await channels.GetAsync(uri);
-        if (channel is not null)
-            await broker.DeleteChannelEntitiesAsync(uri, channel.ChannelType);
+        await broker.DeleteChannelEntitiesAsync(uri, channel.ChannelType);
         await channels.DeleteAsync(uri);
         return req.NoContent();
     }
