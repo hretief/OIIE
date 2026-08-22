@@ -64,6 +64,32 @@ function key. Deployment steps and the traps involved are in
 [CmsProvider/deploy/README.md](../CmsProvider/deploy/README.md). Nothing in the
 sandbox calls it yet — `CmsEngine` will, and deploys separately again.
 
+### Deployed CIR and ISBM providers
+
+CIR and ISBM are also deployed under the naming convention, alongside the
+original apps rather than replacing them:
+
+```
+CIR  dev  : https://acme-api-cir-dev.azurewebsites.net
+CIR  prod : https://acme-api-cir-prod.azurewebsites.net
+ISBM dev  : https://acme-api-isbm-dev.azurewebsites.net
+ISBM prod : https://acme-api-isbm-prod.azurewebsites.net
+```
+
+Each CIR talks to the ISBM in its own environment, on new empty databases
+(`acme-db-cir-*`) and a new Service Bus (`acme-sb-*`). Nothing is shared with
+the originals.
+
+The original `cir-func-44p2f3n6` and `isbm-func-44p2f3n6dv7p4` are still
+running, still on the legacy `cir` database and the `mndot*` infrastructure,
+and the sandbox still points at them. Cutover is a separate decision; note
+that the new CIR registries are empty, so cutting over is only free while no
+CIRIDs have been issued from the legacy registry.
+
+Deployment steps and traps are in
+[CirProvider/deploy/README.md](../CirProvider/deploy/README.md) and
+[ISBMProvider/deploy/README.md](../ISBMProvider/deploy/README.md).
+
 ### MMS inventory panel
 
 Selecting the MMS persona shows what `LIGHT_SYSTEM_INVENTORY` actually holds for the

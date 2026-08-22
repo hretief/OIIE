@@ -123,6 +123,30 @@ source. `acme` is a common placeholder and may already be taken.
 Shared messaging infrastructure for all systems within an environment. Globally
 unique.
 
+## Supporting resources
+
+These are per-system rather than shared, and follow the same
+`<account>-<kind>-<system>-<environment>` shape as the tiers above.
+
+```
+<account>-plan-<system>-<environment>
+<account>-id-<system>-<environment>
+<account>-kv-<system>-<environment>
+```
+
+| Kind | Resource | Examples |
+|---|---|---|
+| `plan` | App Service plan | `acme-plan-cir-dev`, `acme-plan-isbm-prod` |
+| `id` | User-assigned identity | `acme-id-cir-dev`, `acme-id-cms-prod` |
+| `kv` | Key Vault | `acme-kv-isbm-dev`, `acme-kv-isbm-prod` |
+
+A user-assigned identity is preferred over a system-assigned one wherever the
+app authenticates to SQL: the database user is keyed on the principal, so a
+system-assigned identity orphans that user if the app is ever recreated.
+
+Key Vault names are globally unique and capped at 24 characters, which the
+longer system names can exceed.
+
 ## Storage
 
 ### Storage account
@@ -206,6 +230,22 @@ ISBM keeps all of its state in Azure Storage. These names are already in use:
 Service Bus and storage are shared across all systems in an environment, so they
 carry no system code. The engine is `CmsEngine`; the LOB API is `CmsProvider`,
 which emulates the Meridium product itself.
+
+## Example: CIR and ISBM deployment
+
+| Role | Dev | Prod |
+|---|---|---|
+| CIR API | `acme-api-cir-dev` | `acme-api-cir-prod` |
+| CIR database | `acme-db-cir-dev` | `acme-db-cir-prod` |
+| CIR plan / identity | `acme-plan-cir-dev` / `acme-id-cir-dev` | `acme-plan-cir-prod` / `acme-id-cir-prod` |
+| ISBM API | `acme-api-isbm-dev` | `acme-api-isbm-prod` |
+| ISBM plan / Key Vault | `acme-plan-isbm-dev` / `acme-kv-isbm-dev` | `acme-plan-isbm-prod` / `acme-kv-isbm-prod` |
+| Service Bus *(shared)* | `acme-sb-dev` | `acme-sb-prod` |
+| Storage account *(shared)* | `acmestoragedev01` | `acmestorageprod01` |
+
+These were deployed alongside the original `cir-func-44p2f3n6` and
+`isbm-func-44p2f3n6dv7p4` apps, which predate this convention and are
+grandfathered until cutover.
 
 ## Globally unique names
 

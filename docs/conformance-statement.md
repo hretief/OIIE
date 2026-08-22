@@ -1,7 +1,9 @@
 # ws-CIR 1.0 Conformance Statement
 
 **Implementation:** CIR Provider (Azure Functions, REST binding)  
-**Endpoint:** https://cir-func-44p2f3n6.azurewebsites.net/api  
+**Endpoint:** https://acme-api-cir-prod.azurewebsites.net/api  
+**Endpoint (dev):** https://acme-api-cir-dev.azurewebsites.net/api  
+**Legacy endpoint:** https://cir-func-44p2f3n6.azurewebsites.net/api (still serving; retained until cutover)  
 **Assessed:** 2026-07-30 13:25:28 -07:00  
 **Specification:** OpenO&M ws-CIR 1.0 (Candidate Standard, 19 June 2015)
 

@@ -84,6 +84,28 @@ param existingKeyVaultName string = ''
 @description('Existing Application Insights name (empty = create new)')
 param existingAppInsightsName string = ''
 
+// ---- Explicit naming ------------------------------------------------------
+// The names below default to the historic '${baseName}-<kind>-${suffix}'
+// pattern, so an existing deployment that does not pass them is unchanged.
+// Deployments following docs/azure-resource-naming-guidance.md pass them
+// explicitly, because that convention is not derivable from baseName -- it
+// carries an account and an environment this template never knew about.
+
+@description('Explicit Function App name. Empty = derive the historic name.')
+param functionAppNameOverride string = ''
+
+@description('Explicit App Service plan name. Empty = derive the historic name.')
+param planNameOverride string = ''
+
+@description('Explicit Service Bus namespace name, used when creating one. Empty = derive the historic name.')
+param serviceBusNameOverride string = ''
+
+@description('Explicit Key Vault name, used when creating one. Empty = derive the historic name.')
+param keyVaultNameOverride string = ''
+
+@description('Explicit Storage Account name, used when creating one. Empty = derive the historic name.')
+param storageNameOverride string = ''
+
 // ---- Flags ----------------------------------------------------------------
 
 var createServiceBus  = empty(existingServiceBusName)
@@ -93,7 +115,7 @@ var createKeyVault    = empty(existingKeyVaultName)
 var createAppInsights = empty(existingAppInsightsName)
 
 var suffix = uniqueString(resourceGroup().id)
-var funcAppName = '${baseName}-func-${suffix}'
+var funcAppName = empty(functionAppNameOverride) ? '${baseName}-func-${suffix}' : functionAppNameOverride
 
 // ============================================================================
 // Application Insights
@@ -125,7 +147,7 @@ var aiConnectionString = createAppInsights
 // ============================================================================
 
 resource storageNew 'Microsoft.Storage/storageAccounts@2023-05-01' = if (createStorage) {
-  name: take(replace('${baseName}st${suffix}', '-', ''), 24)
+  name: empty(storageNameOverride) ? take(replace('${baseName}st${suffix}', '-', ''), 24) : storageNameOverride
   location: location
   sku: { name: 'Standard_LRS' }
   kind: 'StorageV2'
@@ -147,7 +169,7 @@ var blobEndpoint = 'https://${storageName}.blob.${environment().suffixes.storage
 // ============================================================================
 
 resource serviceBusNew 'Microsoft.ServiceBus/namespaces@2022-10-01-preview' = if (createServiceBus) {
-  name: '${baseName}-sb-${suffix}'
+  name: empty(serviceBusNameOverride) ? '${baseName}-sb-${suffix}' : serviceBusNameOverride
   location: location
   sku: { name: serviceBusSku, tier: serviceBusSku }
   properties: { minimumTlsVersion: '1.2' }
@@ -243,7 +265,7 @@ var sqlConnStr = skipSql ? 'n/a' : 'Server=tcp:${sqlFqdn},1433;Database=${sqlDbN
 // ============================================================================
 
 resource keyVaultNew 'Microsoft.KeyVault/vaults@2023-07-01' = if (createKeyVault) {
-  name: take('${baseName}-kv-${suffix}', 24)
+  name: empty(keyVaultNameOverride) ? take('${baseName}-kv-${suffix}', 24) : keyVaultNameOverride
   location: location
   properties: {
     sku: { family: 'A', name: 'standard' }
@@ -251,7 +273,11 @@ resource keyVaultNew 'Microsoft.KeyVault/vaults@2023-07-01' = if (createKeyVault
     enableRbacAuthorization: true
     enableSoftDelete: true
     softDeleteRetentionInDays: 7
-    enablePurgeProtection: false
+    // enablePurgeProtection is deliberately omitted. Azure rejects an
+    // explicit false ("cannot be set to false") because enabling it is
+    // irreversible, so the only way to leave it off is to not mention it.
+    // These vaults hold redeployable config, not key material worth
+    // protecting against a malicious delete, so off is right for dev.
   }
 }
 
@@ -268,7 +294,7 @@ var kvUri = createKeyVault ? keyVaultNew.properties.vaultUri : keyVaultExisting.
 var planTier = planSku == 'Y1' ? 'Dynamic' : (startsWith(planSku, 'EP') ? 'ElasticPremium' : 'Basic')
 
 resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
-  name: '${baseName}-plan-${suffix}'
+  name: empty(planNameOverride) ? '${baseName}-plan-${suffix}' : planNameOverride
   location: location
   sku: { name: planSku, tier: planTier }
   kind: functionAppOs == 'linux' ? 'functionapp' : 'functionapp'
