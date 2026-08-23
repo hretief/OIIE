@@ -1,0 +1,84 @@
+@startuml Scenario_2_Brownfield_Project
+
+title Scenario 2: Brownfield Project — Two iTwins\nBridge 9340 Rehabilitation
+
+skinparam backgroundColor white
+
+actor "Project\nDesign Team" as PROJ
+participant "ISBM\nProvider" as ISBM
+actor "Facility\nAsset Mgmt" as FAC
+database "Enterprise\nCIR" as CIR
+
+note over ISBM
+  **Facility iTwin (permanent)**
+  Federation ID: aaa-111-...
+  /mndot/aaa-111-.../engineering/publication
+  /mndot/aaa-111-.../engineering/request
+  /mndot/aaa-111-.../asset-config/publication
+
+  **Project iTwin (temporary)**
+  Federation ID: bbb-222-...
+  /mndot/bbb-222-.../engineering/publication
+  /mndot/bbb-222-.../construction/publication
+
+  **Enterprise**
+  /mndot/enterprise/cir/request
+end note
+
+== Phase 1: Project Reads Current As-Built State ==
+
+PROJ -> ISBM: OpenConsumerRequestSession\n  /mndot/aaa-111-.../engineering/request
+ISBM --> PROJ: sessionId
+
+PROJ -> ISBM: PostRequest\n  "Send current state of Bridge 9340"
+
+FAC -> ISBM: ReadRequest\n  (provider session on facility engineering/request)
+ISBM --> FAC: GetRegistry request
+
+FAC -> ISBM: PostResponse\n  ShowRegistry: current as-built data
+ISBM --> FAC: responseId
+
+PROJ -> ISBM: ReadResponse
+ISBM --> PROJ: Current as-built (LOC-000001, existing tags)
+
+== Phase 2: Project Publishes Approved Design Changes ==
+
+PROJ -> ISBM: PostPublication\n  channel: /mndot/bbb-222-.../engineering/publication\n  topic: oiie:s5/ccom:ProcessRegistry\n  body: "Replace pump TIC-106 with TIC-107"
+
+ISBM -> FAC: PUT /notifications/...\n  (FAC subscribed to project's engineering channel)
+activate FAC
+
+FAC -> ISBM: ReadPublication
+ISBM --> FAC: ProcessRegistry: TIC-107 replaces TIC-106
+
+FAC -> CIR: Register via /mndot/enterprise/cir/request\n  TIC-107 (project) ↔ LOC-000001 (facility)
+CIR --> FAC: AcknowledgeRegistry (CIRID: CIR-00042)
+
+FAC -> FAC: Update as-built:\n  LOC-000001 now references TIC-107
+
+FAC -> ISBM: PostPublication\n  channel: /mndot/aaa-111-.../asset-config/publication\n  "LOC-000001 updated"
+deactivate FAC
+
+note over ISBM: MMS receives asset-config\nupdate via its subscription\n(same as Scenario 1)
+
+== Phase 3: Construction Completes ==
+
+PROJ -> ISBM: PostPublication\n  channel: /mndot/bbb-222-.../construction/publication\n  topic: bentley:construction/as-installed\n  body: "TIC-107 physically installed, field-verified"
+
+ISBM -> FAC: PUT /notifications/...\n  (FAC subscribed to project's construction channel)
+FAC -> FAC: Mark LOC-000001\nas field-verified
+
+== Phase 4: Project Closes ==
+
+note over PROJ, FAC
+  **Project closure:**
+  ✓ Project iTwin channels deleted
+  ✓ CIR identity mappings retained permanently
+  ✓ Facility iTwin continues operating
+  ✓ Next project gets new Federation ID
+end note
+
+PROJ -> ISBM: DeleteChannel /mndot/bbb-222-.../engineering/publication
+PROJ -> ISBM: DeleteChannel /mndot/bbb-222-.../construction/publication
+
+@enduml

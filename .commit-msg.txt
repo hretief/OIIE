@@ -1,0 +1,26 @@
+Deploy EngProvider to dev under the new naming convention
+
+Adds the ENG provider function app, its deployment scripts, the ENG and MMS
+DDL, and an end-to-end test suite that exercises the REST surface against a
+real host rather than a mock.
+
+acme-api-eng-dev and acme-db-eng-dev are deployed and reporting healthy.
+
+The deploy script departs from the CMS and CIR ones in three ways, each
+prompted by a failure hit while deploying:
+
+- It creates the SQL user itself. CREATE USER ... FROM EXTERNAL PROVIDER
+  needs Directory Readers on the server, so the other scripts print the
+  grant and leave it manual; creating the user from the identity's client ID
+  as a SID needs no directory permission and is what deploy/cir/deploy.ps1
+  already does.
+- It packages with dotnet publish and pushes to the Kudu zipdeploy endpoint.
+  func azure functionapp publish failed repeatedly with "Timed out waiting
+  for SCM to update the Environment Settings" even with SCM basic auth on,
+  and config-zip answered 502.
+- It restarts and then polls /api/health until it answers. The schema
+  bootstrap runs once at startup, so on a first deployment it runs before
+  the grant exists and fails quietly; without this the script reported
+  success over an app that could not reach SQL.
+
+Backporting these to the CMS and CIR scripts is recorded in open-items.md.

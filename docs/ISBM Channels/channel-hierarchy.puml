@@ -1,0 +1,45 @@
+@startuml Channel_Naming_Convention
+
+title ISBM Channel Naming Convention\n/{enterprise}/{itwin-federation-id}/{domain}/{type}
+skinparam backgroundColor white
+skinparam defaultFontSize 11
+skinparam legendFontSize 10
+
+skinparam rectangle {
+    RoundCorner 15
+}
+
+rectangle "**/{enterprise}**\nOrganization" as ent #E8F5E9 {
+    rectangle "**/{federation-id}**\niTwin (UUID)" as itwin #E3F2FD {
+        rectangle "**/{domain}**\nIntegration Function" as domain #FFF3E0 {
+            rectangle "**/{type}**\npublication | request" as type #FCE4EC
+        }
+    }
+    rectangle "**/enterprise**\nShared Services" as shared #F3E5F5 {
+        rectangle "**/{service}/{type}**\ncir, product-catalog" as svc #FCE4EC
+    }
+}
+
+note right of ent
+  Examples: mndot, caltrans, networkrail
+  Stable: rarely changes
+end note
+
+note right of itwin
+  Immutable UUID — survives renames
+  One iTwin = one set of channels
+  Facility OR project
+end note
+
+note right of domain
+  engineering, asset-config,
+  maintenance, condition,
+  cir, sensors, construction
+end note
+
+note bottom of shared
+  Enterprise-wide services
+  shared across all iTwins
+end note
+
+@enduml

@@ -64,6 +64,29 @@ function key. Deployment steps and the traps involved are in
 [CmsProvider/deploy/README.md](../CmsProvider/deploy/README.md). Nothing in the
 sandbox calls it yet — `CmsEngine` will, and deploys separately again.
 
+### ENG provider (not yet deployed)
+
+`EngProvider` emulates the customer's engineering design tool, following the
+same pattern as `CmsProvider`: its own databases, its own function app, and no
+knowledge of the integration. It will deploy as:
+
+```
+dev  : https://acme-api-eng-dev.azurewebsites.net
+prod : https://acme-api-eng-prod.azurewebsites.net
+```
+
+Routes are ENG's own vocabulary — twins, tags, named versions, relationships —
+and there is no publish route: promotion releases a named version and stops.
+Carrying a release onto a channel is `EngEngine`'s work, and it does not exist
+yet.
+
+Do not confuse this with the SimHost ENG personality, which is unchanged and
+still publishes BODs. That code was the vocabulary reference this schema was
+derived from, not a dependency.
+
+Deployment steps and traps are in
+[EngProvider/deploy/README.md](../EngProvider/deploy/README.md).
+
 ### Deployed CIR and ISBM providers
 
 CIR and ISBM are also deployed under the naming convention, alongside the

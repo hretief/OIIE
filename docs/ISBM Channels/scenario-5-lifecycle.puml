@@ -1,0 +1,74 @@
+@startuml Scenario_5_Lifecycle
+
+title iTwin Channel Lifecycle\nFacility (Permanent) vs. Projects (Temporary)
+
+skinparam backgroundColor white
+
+concise "Facility iTwin\naaa-111-..." as FAC
+concise "Project A\nbbb-222-..." as PROJA
+concise "Project B\nccc-333-..." as PROJB
+concise "Enterprise CIR" as CIR
+
+@0
+FAC is "Channels active"
+
+@0
+CIR is "Always active"
+
+@2
+PROJA is "Channels created"
+
+@4
+PROJA is "Design + Construction"
+FAC is "Receiving updates"
+
+@8
+PROJA is "Channels archived"
+FAC is "Channels active"
+
+@10
+PROJB is "Channels created"
+
+@12
+PROJB is "Design + Construction"
+FAC is "Receiving updates"
+
+@16
+PROJB is "Channels archived"
+FAC is "Channels active"
+
+@0
+note top of FAC
+  Permanent: channels live
+  for the life of the asset
+end note
+
+@2
+note bottom of PROJA
+  Bridge 9340
+  Rehabilitation
+  (2024-2026)
+end note
+
+@10
+note bottom of PROJB
+  Bridge 9340
+  Expansion
+  (2028-2030)
+end note
+
+@8
+note top of CIR
+  CIR retains identity
+  mappings from Project A
+  even after channels close
+end note
+
+@16
+note top of CIR
+  CIR now holds mappings
+  from both projects —
+  full identity history
+end note
+
+@enduml

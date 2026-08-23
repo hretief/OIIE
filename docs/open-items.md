@@ -360,3 +360,67 @@ Worth asserting the merge rule from §3.1.2 alongside these: an existing CIRID
 wins, so an assertion cannot overwrite an identity the registry already holds.
 That property is what makes the change safe, and it is currently only claimed in
 a comment.
+
+## CMS and CIR deploy scripts still require a manual SQL grant
+
+**Status:** fixed for ENG 2026-08-23, not yet applied to CMS or CIR.
+
+`CmsProvider/deploy/deploy-functionapp.ps1` and
+`CirProvider/deploy/deploy-functionapp.ps1` finish by *printing* the grant the
+app needs rather than performing it:
+
+```
+CREATE USER [acme-id-<sys>-<env>] FROM EXTERNAL PROVIDER;
+ALTER ROLE db_datareader ADD MEMBER [...];
+ALTER ROLE db_datawriter ADD MEMBER [...];
+ALTER ROLE db_ddladmin  ADD MEMBER [...];
+```
+
+Both print `Deployed.` in green while the app cannot actually reach SQL, so the
+deployment looks successful and health then reports
+`Login failed for user '<token-identified principal>'`. This is what happened on
+the ENG dev deployment and cost a round of manual debugging.
+
+### Why it was left manual
+
+`FROM EXTERNAL PROVIDER` resolves the principal through the directory, which
+requires the SQL *server* to hold the Directory Readers role — only a Global
+Admin can grant that. Neither script can assume it.
+
+### Fix
+
+Use the approach already proven in `deploy/cir/deploy.ps1` and now in
+`EngProvider/deploy/deploy-functionapp.ps1`: create the user from the identity's
+client ID as a SID, which needs no directory permission at all.
+
+```powershell
+$sidBytes = ([guid]$identityClientId).ToByteArray()
+$sidHex   = '0x' + (($sidBytes | ForEach-Object { $_.ToString('X2') }) -join '')
+# EXEC(N'CREATE USER [$identityName] WITH SID = $sidHex, TYPE = E');
+```
+
+Run it with `Invoke-Sqlcmd -AccessToken` from
+`az account get-access-token --resource https://database.windows.net/`. The
+caller must be an Entra admin on the server, which is a far lower bar than
+Directory Readers. See the ENG script for the full block, including the retry
+loop for a serverless database still resuming.
+
+Three further points carried over from the ENG fix, all worth taking at the same
+time:
+
+- **Restart and verify, don't just claim success.** The schema bootstrap runs
+  once at startup, so on a first deployment it runs *before* the grant exists
+  and fails without taking the host down. The app must be restarted after the
+  grant and `/api/health` polled until it answers 200, otherwise the script
+  reports success over a broken app.
+- **`func azure functionapp publish` is unreliable.** It failed repeatedly on
+  ENG with `Timed out waiting for SCM to update the Environment Settings` even
+  with SCM basic auth enabled, and `az functionapp deployment source config-zip`
+  answered 502. `dotnet publish` plus a POST to the Kudu
+  `api/publish?type=zip&isAsync=true` endpoint works and drops the Core Tools
+  dependency.
+- **Check `Invoke-Sqlcmd` up front.** Failing on a missing `SqlServer` module
+  after the infrastructure has been created is the wrong order.
+
+`db_ddladmin` is only needed while `<Sys>__AutoCreateSchema` is true; it should
+come back off once each schema is settled.

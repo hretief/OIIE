@@ -1,0 +1,105 @@
+@startuml FederationGuid_As_CIRID
+
+title FederationGuid as the Common Identity (CIRID)\nBorn in ENG, Registered by Every Participant
+
+skinparam backgroundColor white
+skinparam participant {
+    FontSize 11
+}
+
+database "iModel\n(ENG)" as ENG
+participant "ENG\nEngine" as ENG_E
+participant "ISBM" as ISBM
+participant "ALIM\nEngine" as ALIM_E
+database "ALIM\n(REG)" as ALIM
+database "CIR" as CIR
+actor "MMS" as MMS
+actor "CMS" as CMS
+
+== FederationGuid Is Born ==
+
+ENG -> ENG: Designer creates TIC-106\n  **FederationGuid assigned:**\n  **550e8400-e29b-41d4-a716-446655440000**
+note right of ENG #FFFDE7
+  This UUID is the identity
+  of the physical asset.
+  It will become the CIRID
+  in every system.
+end note
+
+== FederationGuid Travels Through the Chain ==
+
+ENG -> ENG_E: Named Version event
+ENG_E -> ISBM: PostPublication\n  engineering/publication\n  <SyncSegments>\n    <Segment>\n      **<FederationGuid>550e8400-...</FederationGuid>**\n      <TagID>TIC-106</TagID>\n    </Segment>\n  </SyncSegments>
+
+ISBM -> ALIM_E: webhook
+ALIM_E -> ISBM: ReadPublication
+ALIM_E -> ALIM: Persist segment\n  FederationGuid: 550e8400-...\n  TagID: TIC-106\n  Status: Pending
+
+|||
+note over ALIM: Human approves TIC-106\nMaps to LOC-000001
+|||
+
+== Every Participant Registers Against the Same FederationGuid ==
+
+ALIM_E -> CIR: ProcessRegistry\n  **CIRID: 550e8400-...**\n  Entry: TIC-106 (ENG-TAG)\n  Entry: LOC-000001 (FUNCTIONAL-LOC)
+note right of CIR #E8F5E9
+  CIR receives the CIRID
+  from ALIM — it doesn't
+  generate one. The ws-CIR
+  spec allows caller-supplied
+  CIRIDs.
+end note
+
+ALIM_E -> ISBM: PostPublication\n  asset-config/publication\n  <SyncSegments>\n    <Segment>\n      **<FederationGuid>550e8400-...</FederationGuid>**\n      <TagID>LOC-000001</TagID>\n      <EngTag>TIC-106</EngTag>\n    </Segment>\n  </SyncSegments>
+
+ISBM -> MMS: webhook
+MMS -> ISBM: ReadPublication
+MMS -> MMS: Create asset **234441**
+
+MMS -> CIR: ProcessRegistry\n  **CIRID: 550e8400-...**\n  Entry: 234441 (MMS-ASSET)
+note right of CIR #E8F5E9
+  Same CIRID — MMS got it
+  from the SyncSegments BOD.
+  No round-trip to discover it.
+end note
+
+ISBM -> CMS: webhook
+CMS -> ISBM: ReadPublication
+CMS -> CMS: Create point **CP-001**
+
+CMS -> CIR: ProcessRegistry\n  **CIRID: 550e8400-...**\n  Entry: CP-001 (CMS-POINT)
+
+== The CIR Holds the Complete Picture ==
+
+note over CIR #FFFDE7
+  **CIRID 550e8400-e29b-41d4-a716-446655440000**
+  (= FederationGuid from iModel)
+
+  ┌────────────┬──────────────────┬─────────────────┐
+  │ Native ID  │ Category         │ Registered by   │
+  ├────────────┼──────────────────┼─────────────────┤
+  │ TIC-106    │ ENG-TAG          │ ALIM            │
+  │ LOC-000001 │ FUNCTIONAL-LOC   │ ALIM            │
+  │ 234441     │ MMS-ASSET        │ MMS             │
+  │ CP-001     │ CMS-POINT        │ CMS             │
+  └────────────┴──────────────────┴─────────────────┘
+
+  Any system can query with its own ID
+  and discover all the others.
+end note
+
+== Cross-System Lookup ==
+
+MMS -> CIR: GetEquivalentEntries\n  for: 234441
+CIR --> MMS: CIRID: 550e8400-...\n  TIC-106 (ENG-TAG)\n  LOC-000001 (FUNCTIONAL-LOC)\n  **234441 (MMS-ASSET)**\n  CP-001 (CMS-POINT)
+
+note right of MMS
+  MMS now knows:
+  • The engineering tag (TIC-106)
+  • The functional location (LOC-000001)
+  • The monitoring point (CP-001)
+  • The FederationGuid to look up
+    the full iModel element directly
+end note
+
+@enduml

@@ -1,0 +1,47 @@
+@startuml Scenario_3_Topics_and_Disciplines
+
+title Topics and Disciplines Within a Channel\nWhy disciplines are topics, not channels
+
+skinparam backgroundColor white
+skinparam rectangle {
+    RoundCorner 10
+}
+
+rectangle "**iTwin: Bridge 9340 Corridor**\nFederation ID: aaa-111-..." as itwin #E3F2FD {
+
+    rectangle "**Single Channel**\n/mndot/aaa-111-.../engineering/publication" as chan #FFF3E0 {
+        rectangle "Topic: bentley:imodel/structural/changeset" as t1 #FFECB3
+        rectangle "Topic: bentley:imodel/mechanical/changeset" as t2 #FFECB3
+        rectangle "Topic: bentley:imodel/civil/changeset" as t3 #FFECB3
+        rectangle "Topic: oiie:s5/ccom:ProcessRegistry" as t4 #C8E6C9
+    }
+}
+
+actor "Structural\nEngineer" as SE
+actor "Mechanical\nEngineer" as ME
+actor "AssetWise\nALIM" as ALIM
+actor "Analytics\nDashboard" as DASH
+
+SE --> t1 : publishes
+ME --> t2 : publishes
+
+t1 --> ALIM : subscribes to\nstructural only
+t4 --> ALIM : subscribes to\nProcessRegistry
+t1 --> DASH : subscribes to\nall topics
+t2 --> DASH
+t3 --> DASH
+t4 --> DASH
+
+note bottom of chan
+  **One channel, multiple topics**
+  Each subscriber picks the topics it needs.
+  Cross-discipline subscriber: one subscription, all topics.
+  Single-discipline subscriber: one subscription, one topic.
+
+  **Alternative rejected: channel per discipline**
+  Would create 4× channels (24 total for 6 domains)
+  Cross-discipline subscriber needs 4 subscriptions
+  Same security, same owner, same lifecycle — no reason to split
+end note
+
+@enduml

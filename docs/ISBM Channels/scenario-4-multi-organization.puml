@@ -1,0 +1,78 @@
+@startuml Scenario_4_Multi_Organization
+
+title Scenario 4: Multi-Organization Collaboration\nMnDOT + External Engineering Consultant
+
+skinparam backgroundColor white
+skinparam participant {
+    FontSize 11
+}
+
+box "MnDOT Enterprise" #E8F5E9
+    actor "Facility\nAsset Mgmt" as FAC
+    database "MnDOT\nCIR" as CIR
+end box
+
+participant "ISBM\nProvider" as ISBM
+
+box "ACME Engineering (Consultant)" #E3F2FD
+    actor "Project\nDesign Team" as ACME
+end box
+
+note over ISBM
+  **MnDOT Facility channels**
+  /mndot/{facility-fed-id}/engineering/publication
+  /mndot/{facility-fed-id}/engineering/request
+
+  **Consultant Project channels**
+  /acme-eng/{project-fed-id}/engineering/publication
+
+  **Enterprise CIR**
+  /mndot/enterprise/cir/request
+end note
+
+== Security: Token-Based Access Control ==
+
+note over FAC, ISBM
+  MnDOT grants ACME a **read-only token**
+  for the facility engineering channels.
+  ACME authenticates with:
+  Authorization: Basic <token>
+end note
+
+note over ISBM, ACME
+  ACME grants MnDOT a **read-only token**
+  for the project engineering channel.
+end note
+
+== Data Flow: Consultant Reads → Designs → Delivers ==
+
+ACME -> ISBM: OpenConsumerRequestSession\n  /mndot/{facility-fed-id}/engineering/request\n  Authorization: Basic <mndot-token>
+ISBM --> ACME: sessionId (authorized)
+
+ACME -> ISBM: PostRequest: "Current state of Bridge 9340"
+FAC -> ISBM: ReadRequest → PostResponse (as-built data)
+ACME -> ISBM: ReadResponse → receives current state
+
+|||
+note over ACME: Design work happens\n(weeks/months)
+|||
+
+ACME -> ISBM: PostPublication\n  /acme-eng/{project-fed-id}/engineering/publication\n  Approved design changes
+
+ISBM -> FAC: PUT /notifications/...\n  (MnDOT subscribed to consultant's channel)
+
+FAC -> ISBM: ReadPublication → approved changes
+FAC -> CIR: Register identity mappings\n  (consultant IDs ↔ facility IDs)
+CIR --> FAC: AcknowledgeRegistry
+
+== Contract Ends ==
+
+note over FAC, ACME
+  **MnDOT revokes ACME's token**
+  ✗ ACME can no longer open sessions on MnDOT channels
+  ✓ Consultant's project channels remain (owned by ACME)
+  ✓ CIR identity mappings retained permanently
+  ✓ MnDOT revokes its own token on ACME's channels
+end note
+
+@enduml

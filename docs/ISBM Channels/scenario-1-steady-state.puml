@@ -1,0 +1,89 @@
+@startuml Scenario_1_Steady_State
+
+title Scenario 1: Single Facility iTwin — Steady-State Operations\nMnDOT Bridge 9340 (TH-61 Corridor)
+
+skinparam backgroundColor white
+skinparam participant {
+    FontSize 11
+}
+
+actor "MicroStation /\nOpenBuildings\n(ENG)" as ENG
+participant "ISBM Provider" as ISBM
+actor "AssetWise\nALIM\n(REG)" as REG
+actor "Maintenance\nSystem\n(MMS)" as MMS
+database "Enterprise\nCIR" as CIR
+
+note over ISBM
+  **Channels for iTwin aaa-111-...**
+  /mndot/aaa-111-.../engineering/publication
+  /mndot/aaa-111-.../asset-config/publication
+  /mndot/aaa-111-.../maintenance/publication
+  /mndot/enterprise/cir/request
+end note
+
+== Startup: Each participant opens sessions once ==
+
+REG -> ISBM: OpenSubscriptionSession\n  channelUri: /mndot/aaa-111-.../engineering/publication\n  topics: ["oiie:s5/ccom:ProcessRegistry"]\n  listenerUrl: https://reg-func.azurewebsites.net/api
+ISBM --> REG: sessionId: sub-reg-1
+
+MMS -> ISBM: OpenSubscriptionSession\n  channelUri: /mndot/aaa-111-.../asset-config/publication\n  topics: ["oiie:s5/ccom:ProcessRegistry"]\n  listenerUrl: https://mms-func.azurewebsites.net/api
+ISBM --> MMS: sessionId: sub-mms-1
+
+ENG -> ISBM: OpenPublicationSession\n  channelUri: /mndot/aaa-111-.../engineering/publication
+ISBM --> ENG: sessionId: pub-eng-1
+
+REG -> ISBM: OpenPublicationSession\n  channelUri: /mndot/aaa-111-.../asset-config/publication
+ISBM --> REG: sessionId: pub-reg-1
+
+== Operational Flow: Tag Update Propagates Through the Chain ==
+
+ENG -> ISBM: PostPublication\n  topic: oiie:s5/ccom:ProcessRegistry\n  body: <ProcessRegistry>\n    TIC-106 installed on Bridge 9340\n  </ProcessRegistry>
+ISBM --> ENG: messageId: msg-001
+
+ISBM -> REG: PUT /notifications/sub-reg-1/msg-001\n  { topics: ["oiie:s5/ccom:ProcessRegistry"] }
+activate REG
+
+REG -> ISBM: ReadPublication (sub-reg-1)
+ISBM --> REG: ProcessRegistry BOD (TIC-106)
+
+REG -> REG: Map TIC-106 → LOC-000001\n(functional location)
+
+REG -> ISBM: OpenConsumerRequestSession\n  channelUri: /mndot/enterprise/cir/request
+ISBM --> REG: sessionId: cons-reg-1
+
+REG -> ISBM: PostRequest (cons-reg-1)\n  ProcessRegistry: TIC-106 ↔ LOC-000001
+ISBM --> REG: requestMsgId: req-001
+
+note over CIR: CIR receives request via\nits own provider session\non /mndot/enterprise/cir/request
+
+CIR -> ISBM: PostResponse\n  AcknowledgeRegistry\n  CIRID: CIR-00042
+ISBM --> CIR: messageId: resp-001
+
+REG -> ISBM: ReadResponse (cons-reg-1, req-001)
+ISBM --> REG: AcknowledgeRegistry (CIRID: CIR-00042)
+
+REG -> ISBM: RemovePublication (sub-reg-1)
+REG -> ISBM: PostPublication (pub-reg-1)\n  topic: oiie:s5/ccom:ProcessRegistry\n  body: LOC-000001 with CIRID
+ISBM --> REG: messageId: msg-002
+deactivate REG
+
+ISBM -> MMS: PUT /notifications/sub-mms-1/msg-002\n  { topics: ["oiie:s5/ccom:ProcessRegistry"] }
+activate MMS
+
+MMS -> ISBM: ReadPublication (sub-mms-1)
+ISBM --> MMS: ProcessRegistry BOD (LOC-000001, CIRID: CIR-00042)
+
+MMS -> MMS: Map LOC-000001 → 234441\n(maintenance asset ID)
+
+MMS -> ISBM: RemovePublication (sub-mms-1)
+deactivate MMS
+
+note over ENG, MMS
+  **Result: Three systems, one physical asset**
+  ENG: TIC-106 (engineering tag)
+  REG: LOC-000001 (functional location)
+  MMS: 234441 (maintenance asset)
+  CIR: All three linked under CIRID CIR-00042
+end note
+
+@enduml

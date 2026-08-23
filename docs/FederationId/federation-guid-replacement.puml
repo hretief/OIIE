@@ -1,0 +1,54 @@
+@startuml FederationGuid_Replacement
+
+title Asset Replacement — Two FederationGuids, One Location\nTIC-106 replaced by TIC-107 at LOC-000001
+
+skinparam backgroundColor white
+
+database "CIR" as CIR
+
+note over CIR
+  **Before replacement:**
+
+  CIRID **550e8400-...** (original pump)
+  ┌────────────┬──────────────────┬────────┐
+  │ Native ID  │ Category         │ Status │
+  ├────────────┼──────────────────┼────────┤
+  │ TIC-106    │ ENG-TAG          │ Active │
+  │ LOC-000001 │ FUNCTIONAL-LOC   │ Active │
+  │ 234441     │ MMS-ASSET        │ Active │
+  │ CP-001     │ CMS-POINT        │ Active │
+  └────────────┴──────────────────┴────────┘
+end note
+
+note over CIR
+  **After replacement:**
+
+  CIRID **550e8400-...** (original pump — decommissioned)
+  ┌────────────┬──────────────────┬──────────────────┐
+  │ Native ID  │ Category         │ Status           │
+  ├────────────┼──────────────────┼──────────────────┤
+  │ TIC-106    │ ENG-TAG          │ Decommissioned   │
+  │ LOC-000001 │ FUNCTIONAL-LOC   │ (historical)     │
+  │ 234441     │ MMS-ASSET        │ Retired          │
+  │ CP-001     │ CMS-POINT        │ Archived         │
+  └────────────┴──────────────────┴──────────────────┘
+
+  CIRID **661f9511-...** (replacement pump — active)
+  ┌────────────┬──────────────────┬────────┐
+  │ Native ID  │ Category         │ Status │
+  ├────────────┼──────────────────┼────────┤
+  │ TIC-107    │ ENG-TAG          │ Active │
+  │ LOC-000001 │ FUNCTIONAL-LOC   │ Active │
+  │ 234442     │ MMS-ASSET        │ Active │
+  │ CP-002     │ CMS-POINT        │ Active │
+  └────────────┴──────────────────┴────────┘
+
+  **Key observations:**
+  • Two FederationGuids = two physical devices
+  • LOC-000001 appears in both (same location, different equipment)
+  • Full history preserved — query CIRID 550e8400-...
+    to see what was there before
+  • MMS can trace: 234442 replaced 234441 at LOC-000001
+end note
+
+@enduml
