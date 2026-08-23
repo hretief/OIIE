@@ -1,13 +1,14 @@
 @startuml FederationGuid_As_CIRID
 
-title FederationGuid as the Common Identity (CIRID)\nBorn in ENG, Registered by Every Participant
+title FederationGuid as the Common Identity (CIRID)\nBorn in ENG, Registered by Every Participant (Including ENG Composite Key)
 
 skinparam backgroundColor white
 skinparam participant {
     FontSize 11
 }
 
-database "iModel\n(ENG)" as ENG
+actor "Design Tools\n(MicroStation)" as TOOLS
+database "iModel\n(ENG)" as IMODEL
 participant "ENG\nEngine" as ENG_E
 participant "ISBM" as ISBM
 participant "ALIM\nEngine" as ALIM_E
@@ -18,56 +19,69 @@ actor "CMS" as CMS
 
 == FederationGuid Is Born ==
 
-ENG -> ENG: Designer creates TIC-106\n  **FederationGuid assigned:**\n  **550e8400-e29b-41d4-a716-446655440000**
-note right of ENG #FFFDE7
-  This UUID is the identity
-  of the physical asset.
-  It will become the CIRID
-  in every system.
+TOOLS -> IMODEL: iModel Connector sync
+
+IMODEL -> IMODEL: Element created in **im-9340-mech**:\n  ECInstanceId: **44732**\n  CodeValue: **TIC-106**\n  **FederationGuid: 550e8400-...**
+
+note right of IMODEL #FFFDE7
+  The FederationGuid is the
+  identity of the physical asset.
+
+  The ENG native key is composite:
+  **im-9340-mech :: 44732 :: TIC-106**
+  (iModelId :: ECInstanceId :: CodeValue)
+
+  All four values travel together.
 end note
 
-== FederationGuid Travels Through the Chain ==
+== FederationGuid + ENG Composite Key Travel Through the Chain ==
 
-ENG -> ENG_E: Named Version event
-ENG_E -> ISBM: PostPublication\n  engineering/publication\n  <SyncSegments>\n    <Segment>\n      **<FederationGuid>550e8400-...</FederationGuid>**\n      <TagID>TIC-106</TagID>\n    </Segment>\n  </SyncSegments>
+IMODEL -> ENG_E: Named Version event
+ENG_E -> ISBM: PostPublication\n  engineering/publication\n  <SyncSegments>\n    <Segment>\n      **<FederationGuid>550e8400-...</FederationGuid>**\n      **<IModelId>im-9340-mech</IModelId>**\n      **<ECInstanceId>44732</ECInstanceId>**\n      **<CodeValue>TIC-106</CodeValue>**\n      <Name>Temperature Indicator Controller</Name>\n      <Action>Add</Action>\n    </Segment>\n  </SyncSegments>
 
 ISBM -> ALIM_E: webhook
 ALIM_E -> ISBM: ReadPublication
-ALIM_E -> ALIM: Persist segment\n  FederationGuid: 550e8400-...\n  TagID: TIC-106\n  Status: Pending
+ALIM_E -> ALIM: Persist segment with ALL identification:\n  FederationGuid: 550e8400-...\n  iModelId: im-9340-mech\n  ECInstanceId: 44732\n  CodeValue: TIC-106\n  Status: Pending
 
 |||
 note over ALIM: Human approves TIC-106\nMaps to LOC-000001
 |||
 
-== Every Participant Registers Against the Same FederationGuid ==
+== ALIM Registers BOTH the ENG Key and Its Own Key ==
 
-ALIM_E -> CIR: ProcessRegistry\n  **CIRID: 550e8400-...**\n  Entry: TIC-106 (ENG-TAG)\n  Entry: LOC-000001 (FUNCTIONAL-LOC)
+ALIM_E -> CIR: ProcessRegistry\n  **CIRID: 550e8400-...**\n  Entry: **im-9340-mech::44732::TIC-106**\n    Category: **ENG-IMODEL**\n  Entry: **LOC-000001**\n    Category: **FUNCTIONAL-LOC**
+
 note right of CIR #E8F5E9
-  CIR receives the CIRID
-  from ALIM — it doesn't
-  generate one. The ws-CIR
-  spec allows caller-supplied
-  CIRIDs.
+  ALIM registers the ENG composite
+  key **on behalf of ENG** — because
+  ALIM has the full data from the
+  SyncSegments BOD.
+
+  The ENG Engine doesn't need to
+  interact with the CIR directly.
 end note
 
-ALIM_E -> ISBM: PostPublication\n  asset-config/publication\n  <SyncSegments>\n    <Segment>\n      **<FederationGuid>550e8400-...</FederationGuid>**\n      <TagID>LOC-000001</TagID>\n      <EngTag>TIC-106</EngTag>\n    </Segment>\n  </SyncSegments>
+ALIM_E -> ISBM: PostPublication\n  asset-config/publication\n  <SyncSegments>\n    <Segment>\n      **<FederationGuid>550e8400-...</FederationGuid>**\n      **<IModelId>im-9340-mech</IModelId>**\n      **<ECInstanceId>44732</ECInstanceId>**\n      **<CodeValue>TIC-106</CodeValue>**\n      <FunctionalLocation>LOC-000001</FunctionalLocation>\n    </Segment>\n  </SyncSegments>
+
+note over ALIM_E #E8F5E9
+  Approved SyncSegments preserves
+  the ENG composite key so downstream
+  systems can navigate back to the iModel.
+end note
+
+== MMS and CMS Register Their Native Keys ==
 
 ISBM -> MMS: webhook
 MMS -> ISBM: ReadPublication
 MMS -> MMS: Create asset **234441**
 
-MMS -> CIR: ProcessRegistry\n  **CIRID: 550e8400-...**\n  Entry: 234441 (MMS-ASSET)
-note right of CIR #E8F5E9
-  Same CIRID — MMS got it
-  from the SyncSegments BOD.
-  No round-trip to discover it.
-end note
+MMS -> CIR: ProcessRegistry\n  **CIRID: 550e8400-...**\n  Entry: **234441**\n    Category: **MMS-ASSET**
 
 ISBM -> CMS: webhook
 CMS -> ISBM: ReadPublication
 CMS -> CMS: Create point **CP-001**
 
-CMS -> CIR: ProcessRegistry\n  **CIRID: 550e8400-...**\n  Entry: CP-001 (CMS-POINT)
+CMS -> CIR: ProcessRegistry\n  **CIRID: 550e8400-...**\n  Entry: **CP-001**\n    Category: **CMS-POINT**
 
 == The CIR Holds the Complete Picture ==
 
@@ -75,31 +89,35 @@ note over CIR #FFFDE7
   **CIRID 550e8400-e29b-41d4-a716-446655440000**
   (= FederationGuid from iModel)
 
-  ┌────────────┬──────────────────┬─────────────────┐
-  │ Native ID  │ Category         │ Registered by   │
-  ├────────────┼──────────────────┼─────────────────┤
-  │ TIC-106    │ ENG-TAG          │ ALIM            │
-  │ LOC-000001 │ FUNCTIONAL-LOC   │ ALIM            │
-  │ 234441     │ MMS-ASSET        │ MMS             │
-  │ CP-001     │ CMS-POINT        │ CMS             │
-  └────────────┴──────────────────┴─────────────────┘
+  ┌──────────────────────────────────┬──────────────────┬─────────────────┐
+  │ Native Key                       │ Category         │ Registered by   │
+  ├──────────────────────────────────┼──────────────────┼─────────────────┤
+  │ im-9340-mech::44732::TIC-106     │ ENG-IMODEL       │ ALIM (for ENG)  │
+  │ LOC-000001                       │ FUNCTIONAL-LOC   │ ALIM            │
+  │ 234441                           │ MMS-ASSET        │ MMS             │
+  │ CP-001                           │ CMS-POINT        │ CMS             │
+  └──────────────────────────────────┴──────────────────┴─────────────────┘
 
-  Any system can query with its own ID
-  and discover all the others.
+  **Every participant's native key is registered.**
+  **Every participant can find every other participant's key.**
 end note
 
-== Cross-System Lookup ==
+== Cross-System Lookup: MMS Finds the iModel Element ==
 
-MMS -> CIR: GetEquivalentEntries\n  for: 234441
-CIR --> MMS: CIRID: 550e8400-...\n  TIC-106 (ENG-TAG)\n  LOC-000001 (FUNCTIONAL-LOC)\n  **234441 (MMS-ASSET)**\n  CP-001 (CMS-POINT)
+MMS -> CIR: GetEquivalentEntries\n  for: **234441**
+CIR --> MMS: CIRID: 550e8400-...\n  **im-9340-mech::44732::TIC-106** (ENG-IMODEL)\n  LOC-000001 (FUNCTIONAL-LOC)\n  234441 (MMS-ASSET)\n  CP-001 (CMS-POINT)
 
-note right of MMS
-  MMS now knows:
-  • The engineering tag (TIC-106)
-  • The functional location (LOC-000001)
-  • The monitoring point (CP-001)
-  • The FederationGuid to look up
-    the full iModel element directly
+note right of MMS #E3F2FD
+  MMS can now:
+  1. Open iModel **im-9340-mech**
+  2. Navigate to element **44732**
+  3. See 3D geometry, specs, history
+  4. Reference engineering tag **TIC-106**
+  5. Cross-check condition data at **CP-001**
+
+  The composite ENG key makes
+  the iModel directly navigable —
+  not just a label, but an address.
 end note
 
 @enduml

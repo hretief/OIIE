@@ -1,6 +1,6 @@
 @startuml FederationGuid_Replacement
 
-title Asset Replacement — Two FederationGuids, One Location\nTIC-106 replaced by TIC-107 at LOC-000001
+title Asset Replacement — Two FederationGuids, One Location\nTIC-106 (ECInstanceId 44732) replaced by TIC-107 (ECInstanceId 44891)
 
 skinparam backgroundColor white
 
@@ -10,45 +10,45 @@ note over CIR
   **Before replacement:**
 
   CIRID **550e8400-...** (original pump)
-  ┌────────────┬──────────────────┬────────┐
-  │ Native ID  │ Category         │ Status │
-  ├────────────┼──────────────────┼────────┤
-  │ TIC-106    │ ENG-TAG          │ Active │
-  │ LOC-000001 │ FUNCTIONAL-LOC   │ Active │
-  │ 234441     │ MMS-ASSET        │ Active │
-  │ CP-001     │ CMS-POINT        │ Active │
-  └────────────┴──────────────────┴────────┘
+  ┌──────────────────────────────────┬──────────────────┬────────┐
+  │ Native Key                       │ Category         │ Status │
+  ├──────────────────────────────────┼──────────────────┼────────┤
+  │ im-9340-mech::44732::TIC-106     │ ENG-IMODEL       │ Active │
+  │ LOC-000001                       │ FUNCTIONAL-LOC   │ Active │
+  │ 234441                           │ MMS-ASSET        │ Active │
+  │ CP-001                           │ CMS-POINT        │ Active │
+  └──────────────────────────────────┴──────────────────┴────────┘
 end note
 
 note over CIR
   **After replacement:**
 
   CIRID **550e8400-...** (original pump — decommissioned)
-  ┌────────────┬──────────────────┬──────────────────┐
-  │ Native ID  │ Category         │ Status           │
-  ├────────────┼──────────────────┼──────────────────┤
-  │ TIC-106    │ ENG-TAG          │ Decommissioned   │
-  │ LOC-000001 │ FUNCTIONAL-LOC   │ (historical)     │
-  │ 234441     │ MMS-ASSET        │ Retired          │
-  │ CP-001     │ CMS-POINT        │ Archived         │
-  └────────────┴──────────────────┴──────────────────┘
+  ┌──────────────────────────────────┬──────────────────┬──────────────────┐
+  │ Native Key                       │ Category         │ Status           │
+  ├──────────────────────────────────┼──────────────────┼──────────────────┤
+  │ im-9340-mech::44732::TIC-106     │ ENG-IMODEL       │ Decommissioned   │
+  │ LOC-000001                       │ FUNCTIONAL-LOC   │ (historical)     │
+  │ 234441                           │ MMS-ASSET        │ Retired          │
+  │ CP-001                           │ CMS-POINT        │ Archived         │
+  └──────────────────────────────────┴──────────────────┴──────────────────┘
 
   CIRID **661f9511-...** (replacement pump — active)
-  ┌────────────┬──────────────────┬────────┐
-  │ Native ID  │ Category         │ Status │
-  ├────────────┼──────────────────┼────────┤
-  │ TIC-107    │ ENG-TAG          │ Active │
-  │ LOC-000001 │ FUNCTIONAL-LOC   │ Active │
-  │ 234442     │ MMS-ASSET        │ Active │
-  │ CP-002     │ CMS-POINT        │ Active │
-  └────────────┴──────────────────┴────────┘
+  ┌──────────────────────────────────┬──────────────────┬────────┐
+  │ Native Key                       │ Category         │ Status │
+  ├──────────────────────────────────┼──────────────────┼────────┤
+  │ im-9340-mech::44891::TIC-107     │ ENG-IMODEL       │ Active │
+  │ LOC-000001                       │ FUNCTIONAL-LOC   │ Active │
+  │ 234442                           │ MMS-ASSET        │ Active │
+  │ CP-002                           │ CMS-POINT        │ Active │
+  └──────────────────────────────────┴──────────────────┴────────┘
 
   **Key observations:**
   • Two FederationGuids = two physical devices
+  • Two ECInstanceIds (44732, 44891) = two iModel elements in the same iModel
   • LOC-000001 appears in both (same location, different equipment)
-  • Full history preserved — query CIRID 550e8400-...
-    to see what was there before
-  • MMS can trace: 234442 replaced 234441 at LOC-000001
+  • Full audit trail: query CIRID 550e8400-... to see what was there before
+  • Navigate to either iModel element by ECInstanceId for full specs + 3D geometry
 end note
 
 @enduml
