@@ -80,7 +80,10 @@ if (-not (Get-Command Invoke-Sqlcmd -ErrorAction SilentlyContinue)) {
 # tenant, which is why the storage name carries '01'.
 # ---------------------------------------------------------------------------
 $appName      = "acme-api-eng-$Environment"
-$planName     = "acme-plan-eng-$Environment"
+# Shared across every provider in the environment, like storage and Service
+# Bus. One B1 hosts them all; a plan per provider was six B1s billing
+# continuously to run one app each. Do not reintroduce a per-provider plan.
+$planName     = "acme-plan-$Environment"
 $identityName = "acme-id-eng-$Environment"
 $storageName  = "acmestorage${Environment}01"
 $databaseName = "acme-db-eng-$Environment"

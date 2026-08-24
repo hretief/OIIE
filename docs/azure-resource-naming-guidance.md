@@ -135,20 +135,43 @@ unique.
 
 ## Supporting resources
 
-These are per-system rather than shared, and follow the same
+Identities and Key Vaults are per-system, and follow the same
 `<account>-<kind>-<system>-<environment>` shape as the tiers above.
 
 ```
-<account>-plan-<system>-<environment>
 <account>-id-<system>-<environment>
 <account>-kv-<system>-<environment>
 ```
 
 | Kind | Resource | Examples |
 |---|---|---|
-| `plan` | App Service plan | `acme-plan-cir-dev`, `acme-plan-isbm-prod` |
 | `id` | User-assigned identity | `acme-id-cir-dev`, `acme-id-cms-prod` |
 | `kv` | Key Vault | `acme-kv-isbm-dev`, `acme-kv-isbm-prod` |
+
+### App Service plans are shared
+
+```
+<account>-plan-<environment>
+```
+
+| Examples |
+|---|
+| `acme-plan-dev` |
+| `acme-plan-prod` |
+
+**One plan per environment, not one per system**, so the name carries no system
+code — the same reasoning as `acme-sb-<env>` and `acmestorage<env>01`.
+
+This was originally a plan per provider, which meant six B1 plans each billing
+continuously to host a single app. A plan is a billing and compute boundary,
+not an isolation boundary: the apps on it stay independently deployable,
+separately keyed, and individually restartable. Splitting them bought nothing
+and cost roughly five times what it needed to.
+
+The tradeoff is real and worth stating. Everything on the plan shares its CPU
+and memory, so one app under load affects the others, and B1 has no autoscale.
+That is acceptable for a demo environment and would not be for production —
+the answer there is a larger SKU, not a plan per system.
 
 A user-assigned identity is preferred over a system-assigned one wherever the
 app authenticates to SQL: the database user is keyed on the principal, so a
@@ -234,6 +257,7 @@ ISBM keeps all of its state in Azure Storage. These names are already in use:
 | SQL database | `acme-db-cms-dev` | `acme-db-cms-prod` |
 | Integration engine | `acme-engn-cms-dev` | `acme-engn-cms-prod` |
 | LOB API | `acme-api-cms-dev` | `acme-api-cms-prod` |
+| Plan *(shared)* | `acme-plan-dev` | `acme-plan-prod` |
 | Service Bus *(shared)* | `acme-sb-dev` | `acme-sb-prod` |
 | Storage account *(shared)* | `acmestoragedev01` | `acmestorageprod01` |
 
@@ -247,7 +271,8 @@ which emulates the Meridium product itself.
 |---|---|---|
 | LOB API | `acme-api-mms-dev` | `acme-api-mms-prod` |
 | SQL database | `acme-db-mms-dev` | `acme-db-mms-prod` |
-| Plan / identity | `acme-plan-mms-dev` / `acme-id-mms-dev` | `acme-plan-mms-prod` / `acme-id-mms-prod` |
+| Plan *(shared)* | `acme-plan-dev` | `acme-plan-prod` |
+| Identity | `acme-id-mms-dev` | `acme-id-mms-prod` |
 | Storage account *(shared)* | `acmestoragedev01` | `acmestorageprod01` |
 
 **There is no `acme-engn-mms-*`.** MMS deploys as a single Function App where
@@ -262,9 +287,10 @@ deployed; prod is not.
 |---|---|---|
 | CIR API | `acme-api-cir-dev` | `acme-api-cir-prod` |
 | CIR database | `acme-db-cir-dev` | `acme-db-cir-prod` |
-| CIR plan / identity | `acme-plan-cir-dev` / `acme-id-cir-dev` | `acme-plan-cir-prod` / `acme-id-cir-prod` |
+| CIR identity | `acme-id-cir-dev` | `acme-id-cir-prod` |
 | ISBM API | `acme-api-isbm-dev` | `acme-api-isbm-prod` |
-| ISBM plan / Key Vault | `acme-plan-isbm-dev` / `acme-kv-isbm-dev` | `acme-plan-isbm-prod` / `acme-kv-isbm-prod` |
+| ISBM Key Vault | `acme-kv-isbm-dev` | `acme-kv-isbm-prod` |
+| Plan *(shared)* | `acme-plan-dev` | `acme-plan-prod` |
 | Service Bus *(shared)* | `acme-sb-dev` | `acme-sb-prod` |
 | Storage account *(shared)* | `acmestoragedev01` | `acmestorageprod01` |
 
@@ -274,7 +300,8 @@ deployed; prod is not.
 |---|---|---|
 | LOB API | `acme-api-reglocation-dev` | `acme-api-reglocation-prod` |
 | SQL database | `acme-db-reglocation-dev` | `acme-db-reglocation-prod` |
-| Plan / identity | `acme-plan-reglocation-dev` / `acme-id-reglocation-dev` | `acme-plan-reglocation-prod` / `acme-id-reglocation-prod` |
+| Plan *(shared)* | `acme-plan-dev` | `acme-plan-prod` |
+| Identity | `acme-id-reglocation-dev` | `acme-id-reglocation-prod` |
 | Storage account *(shared)* | `acmestoragedev01` | `acmestorageprod01` |
 
 Only dev exists today. The prod names are reserved by the convention rather

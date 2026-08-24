@@ -49,6 +49,36 @@ $key = az keyvault secret show --vault-name mndot --name sandbox-admin-key-demo 
 are testable against it — they are not against a workstation, which has no address the
 provider can reach.
 
+### Azure environments
+
+**Only `dev` exists.** Every `prod` resource was deleted deliberately to cut
+cost, not lost to an incident: the function apps, their App Service plans,
+`acme-db-cms-prod`, `acme-db-cir-prod`, `acme-sb-prod`, `acmestorageprod01`,
+`acme-kv-isbm-prod`, the prod identities, and the associated Application
+Insights components are all gone. Prod URLs elsewhere in this runbook are
+marked decommissioned rather than removed, so the intended topology stays
+legible.
+
+Rebuilding prod is scripted but is not a single command: `provision-databases.ps1`
+and `deploy-functionapp.ps1 -Environment prod` recreate most of it, the ISBM
+Service Bus and Key Vault were provisioned separately, and the SQL grant needs
+the manual foreground step described in each provider's deploy README. Note
+also that `acme-kv-isbm-prod` is soft-deleted with a 7-day retention, so
+recreating it inside that window fails on a name conflict until it is purged.
+
+All six dev function apps share **one B1 App Service plan, `acme-plan-dev`**:
+
+```
+acme-api-cir-dev   acme-api-cms-dev   acme-api-eng-dev
+acme-api-isbm-dev  acme-api-mms-dev   acme-api-reglocation-dev
+```
+
+They remain independently deployable and separately keyed; the plan is a
+billing and compute boundary, not an isolation one. The cost of that is shared
+CPU and memory with no autoscale, which is fine for demonstration and would not
+be for production. If the apps start contending, raise the SKU — do not go back
+to a plan per provider.
+
 ### Deployed CMS provider
 
 `CmsProvider` emulates the customer's Meridium system and deploys separately from
@@ -56,7 +86,7 @@ the sandbox, on its own databases:
 
 ```
 dev  : https://acme-api-cms-dev.azurewebsites.net
-prod : https://acme-api-cms-prod.azurewebsites.net
+prod : decommissioned (see Azure environments)
 ```
 
 `/api/health` is anonymous and reports the site count; every other route needs a
@@ -143,9 +173,9 @@ original apps rather than replacing them:
 
 ```
 CIR  dev  : https://acme-api-cir-dev.azurewebsites.net
-CIR  prod : https://acme-api-cir-prod.azurewebsites.net
+CIR  prod : decommissioned
 ISBM dev  : https://acme-api-isbm-dev.azurewebsites.net
-ISBM prod : https://acme-api-isbm-prod.azurewebsites.net
+ISBM prod : decommissioned
 ```
 
 Each CIR talks to the ISBM in its own environment, on new empty databases

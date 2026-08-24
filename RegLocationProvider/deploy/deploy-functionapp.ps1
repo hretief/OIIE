@@ -72,7 +72,10 @@ $ErrorActionPreference = 'Stop'
 # which is why it carries no system code.
 # ---------------------------------------------------------------------------
 $appName      = "acme-api-reglocation-$Environment"
-$planName     = "acme-plan-reglocation-$Environment"
+# Shared across every provider in the environment, like storage and Service
+# Bus. One B1 hosts them all; a plan per provider was six B1s billing
+# continuously to run one app each. Do not reintroduce a per-provider plan.
+$planName     = "acme-plan-$Environment"
 $identityName = "acme-id-reglocation-$Environment"
 $storageName  = "acmestorage${Environment}01"
 $databaseName = "acme-db-reglocation-$Environment"

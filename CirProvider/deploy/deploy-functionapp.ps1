@@ -7,7 +7,7 @@
     Creates, if absent:
 
         acme-api-cir-dev / acme-api-cir-prod    Function App
-        acme-plan-cir-dev / acme-plan-cir-prod  App Service plan
+        acme-plan-dev / acme-plan-prod          App Service plan (SHARED)
         acme-id-cir-dev / acme-id-cir-prod      user-assigned identity
 
     and wires the app to acme-db-cir-<env> on acme-sql-server (created by
@@ -70,7 +70,10 @@ $repoRoot    = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $projectPath = Join-Path $repoRoot 'CirProvider'
 
 $appName      = "acme-api-cir-$Environment"
-$planName     = "acme-plan-cir-$Environment"
+# Shared across every provider in the environment, like storage and Service
+# Bus. One B1 hosts them all; a plan per provider was six B1s billing
+# continuously to run one app each. Do not reintroduce a per-provider plan.
+$planName     = "acme-plan-$Environment"
 $identityName = "acme-id-cir-$Environment"
 $storageName  = "acmestorage${Environment}01"
 $databaseName = "acme-db-cir-$Environment"

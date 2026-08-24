@@ -64,7 +64,10 @@ $ErrorActionPreference = 'Stop'
 # tenant, which is why the storage name carries '01'.
 # ---------------------------------------------------------------------------
 $appName      = "acme-api-cms-$Environment"
-$planName     = "acme-plan-cms-$Environment"
+# Shared across every provider in the environment, like storage and Service
+# Bus. One B1 hosts them all; a plan per provider was six B1s billing
+# continuously to run one app each. Do not reintroduce a per-provider plan.
+$planName     = "acme-plan-$Environment"
 $identityName = "acme-id-cms-$Environment"
 $storageName  = "acmestorage${Environment}01"
 $databaseName = "acme-db-cms-$Environment"

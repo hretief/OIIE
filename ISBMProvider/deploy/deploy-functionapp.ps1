@@ -57,7 +57,10 @@ $bicepFile  = Join-Path $repoRoot 'infra\isbm\main.bicep'
 $projectDir = Join-Path $repoRoot 'ISBMProvider'
 
 $appName     = "acme-api-isbm-$Environment"
-$planName    = "acme-plan-isbm-$Environment"
+# Shared across every provider in the environment, like storage and Service
+# Bus. One B1 hosts them all; a plan per provider was six B1s billing
+# continuously to run one app each. Do not reintroduce a per-provider plan.
+$planName    = "acme-plan-$Environment"
 $sbName      = "acme-sb-$Environment"
 $storageName = "acmestorage${Environment}01"
 $keyVaultName = "acme-kv-isbm-$Environment"
