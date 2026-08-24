@@ -2,6 +2,7 @@
   <Folder Name="/01-Apps/">
     <Project Path="CmsProvider/CmsProvider.csproj" />
     <Project Path="EngProvider/EngProvider.csproj" />
+    <Project Path="RegLocationProvider/RegLocationProvider.csproj" />
     <Project Path="ISBMProvider/IsbmProvider.csproj" />
     <Project Path="CirProvider/CirProvider.csproj" />
     <Project Path="Oiie.Sandbox.Api/Oiie.Sandbox.Api.csproj" />
@@ -23,4 +24,5 @@
     <File Path="NuGet.config" />
   </Folder>
 </Solution>
+
 

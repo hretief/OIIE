@@ -190,10 +190,12 @@ seeds one iTwin, one iModel, the BisCore/Functional/ENG schemas, 30 EC classes,
 and a root element in an open `Initial` draft version. `/api/classes` returning
 26 concrete ENG classes confirms it applied.
 
-Note the schema is **not** duplicated in this project. `EngProvider.csproj`
-embeds [`docs/DDL/ENG.SQL`](../../docs/DDL/ENG.SQL) directly as a linked
-resource, so there is one authoritative copy and no second file free to drift
-from it.
+The schema ships with this project. `EngProvider.csproj` embeds
+[`Infrastructure/Sql/schema.sql`](../Infrastructure/Sql/schema.sql) as a
+resource, following the same pattern as `CmsProvider`: the provider owns the
+shape it actually creates, and [`docs/DDL/ENG.SQL`](../../docs/DDL/ENG.SQL)
+stays reference material. A model change therefore needs applying in both
+places — the header of `schema.sql` says which copy runs.
 
 ## The routes
 
@@ -246,7 +248,8 @@ the rule in application code could disagree with the one actually in force.
 ## Before this is a real production deployment
 
 - **Drop `db_ddladmin`.** It is granted only because
-  `Eng__AutoCreateSchema=true` applies the embedded `docs/DDL/ENG.SQL` at
+  `Eng__AutoCreateSchema=true` applies the embedded
+  `Infrastructure/Sql/schema.sql` at
   startup. Once the schema is settled, set that to `false` and remove the role —
   a running app has no business altering its own schema.
 - **Reconsider function keys.** They are adequate for a demo and are not an

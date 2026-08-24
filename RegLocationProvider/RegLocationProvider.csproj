@@ -5,7 +5,7 @@
     <OutputType>Exe</OutputType>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>EngProvider</RootNamespace>
+    <RootNamespace>RegLocationProvider</RootNamespace>
     <_FunctionsSkipCleanOutput>true</_FunctionsSkipCleanOutput>
   </PropertyGroup>
 
@@ -15,18 +15,21 @@
   </ItemGroup>
 
   <!--
-    No ProjectReference. This app emulates a customer system: it must not see
-    Oiie.Sandbox.Core, Oiie.Ccom or any CCOM type. If a reference is ever added
-    here, the emulation has stopped being one.
+    No ProjectReference, for the same reason as EngProvider. This app emulates a
+    customer functional location registry: it must not see Oiie.Sandbox.Core,
+    Oiie.Ccom or any CCOM type. A registry does not know it is being integrated
+    with, and the moment it can name a Segment or a BOD the emulation has stopped
+    being one.
 
-    In particular it must not reference the SimHost ENG personality, which this
-    schema was derived from. That code is a vocabulary reference, not a dependency:
-    it publishes BODs, and an engineering design tool does not know what one is.
+    In particular it must not reference Oiie.Sandbox.Core's RegLocation
+    personality. That code is the integration-side stewardship model; this
+    project is the system being integrated with, and the two must not share
+    types.
   -->
 
   <ItemGroup>
     <!--
-      Versions match CmsProvider deliberately. The Worker and Sdk majors must
+      Versions match EngProvider deliberately. The Worker and Sdk majors must
       both be 2.x: FunctionsApplication.CreateBuilder does not exist in 1.x,
       and mixing the two produces a CS0234 on Worker.Builder.
     -->
@@ -61,15 +64,18 @@
   <ItemGroup>
     <!--
       The provider owns its SQL, following CmsProvider. docs/DDL is reference
-      material: it describes ENG in the abstract, and is free to carry
+      material: it describes REG-LOCATION in the abstract, and is free to carry
       commentary, one-shot DDL or dialect that no running app should depend on.
       What ships here is the shape this app actually creates, so it lives here.
 
-      The DDL is idempotent, which is what makes applying it on every cold start
-      safe. LogicalName is pinned because SchemaInitializer resolves this
-      resource by name.
+      Both scripts are re-runnable, which is what makes applying them on every
+      cold start safe. LogicalName is pinned because SchemaInitializer resolves
+      these by name.
     -->
     <EmbeddedResource Include="Infrastructure\Sql\schema.sql"
-                      LogicalName="EngProvider.Infrastructure.Sql.schema.sql" />
+                      LogicalName="RegLocationProvider.Infrastructure.Sql.schema.sql" />
+    <EmbeddedResource Include="Infrastructure\Sql\bootstrap.sql"
+                      LogicalName="RegLocationProvider.Infrastructure.Sql.bootstrap.sql" />
   </ItemGroup>
 </Project>
+

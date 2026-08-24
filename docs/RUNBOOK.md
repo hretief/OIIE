@@ -87,6 +87,30 @@ derived from, not a dependency.
 Deployment steps and traps are in
 [EngProvider/deploy/README.md](../EngProvider/deploy/README.md).
 
+### Deployed REG-LOCATION provider
+
+`RegLocationProvider` emulates the asset registry that governs functional
+locations. Dev is live and verified:
+
+```
+dev  : https://acme-api-reglocation-dev.azurewebsites.net
+prod : not yet deployed
+```
+
+`/api/health` reports row counts along with `orphanedRows` and
+`untrustedConstraints`, both of which should read `0`; a non-zero value there
+means the registry has drifted and is the first thing to check. Every other
+route needs a function key.
+
+Unlike the other providers, this one seeds itself: `SchemaInitializer` applies
+`Infrastructure/Sql/schema.sql` and then `Infrastructure/Sql/bootstrap.sql` at
+startup, so a freshly provisioned database comes up with the Global scope,
+namespaces, units, classes and sample tags already present. `docs/DDL/*.SQL`
+are reference copies and are not what the app runs.
+
+Deployment steps and traps are in
+[RegLocationProvider/deploy/README.md](../RegLocationProvider/deploy/README.md).
+
 ### Deployed CIR and ISBM providers
 
 CIR and ISBM are also deployed under the naming convention, alongside the

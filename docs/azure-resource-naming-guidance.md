@@ -97,8 +97,15 @@ ISBM session, parses BODs, and calls the LOB API over its published interface.
 | `acme-api-cir-prod` |
 | `acme-api-isbm-dev` |
 | `acme-api-isbm-prod` |
+| `acme-api-reglocation-dev` |
 
 The API tier representing the business application itself.
+
+`reglocation` is deliberately unhyphenated even though the participant is
+written `REG-LOCATION` everywhere else. The system code is a single segment of
+`<account>-<kind>-<system>-<environment>`, so an internal hyphen would make
+`acme-api-reg-location-dev` parse as a different system in every script that
+splits on `-`.
 
 `engn` and `api` are both Function Apps. They are kept separate because the
 distinction is a boundary, not a hosting detail: an engine may use only access a
@@ -242,6 +249,18 @@ which emulates the Meridium product itself.
 | ISBM plan / Key Vault | `acme-plan-isbm-dev` / `acme-kv-isbm-dev` | `acme-plan-isbm-prod` / `acme-kv-isbm-prod` |
 | Service Bus *(shared)* | `acme-sb-dev` | `acme-sb-prod` |
 | Storage account *(shared)* | `acmestoragedev01` | `acmestorageprod01` |
+
+## Example: REG-LOCATION deployment
+
+| Role | Dev | Prod |
+|---|---|---|
+| LOB API | `acme-api-reglocation-dev` | `acme-api-reglocation-prod` |
+| SQL database | `acme-db-reglocation-dev` | `acme-db-reglocation-prod` |
+| Plan / identity | `acme-plan-reglocation-dev` / `acme-id-reglocation-dev` | `acme-plan-reglocation-prod` / `acme-id-reglocation-prod` |
+| Storage account *(shared)* | `acmestoragedev01` | `acmestorageprod01` |
+
+Only dev exists today. The prod names are reserved by the convention rather
+than provisioned.
 
 These were deployed alongside the original `cir-func-44p2f3n6` and
 `isbm-func-44p2f3n6dv7p4` apps, which predate this convention and are
