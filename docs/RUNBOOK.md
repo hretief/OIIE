@@ -111,6 +111,31 @@ are reference copies and are not what the app runs.
 Deployment steps and traps are in
 [RegLocationProvider/deploy/README.md](../RegLocationProvider/deploy/README.md).
 
+### Deployed MMS provider
+
+`MmsProvider` emulates the customer's maintenance management system. Dev is
+live and verified:
+
+```
+dev  : https://acme-api-mms-dev.azurewebsites.net
+prod : not yet deployed
+```
+
+It is currently an exact replica of `CmsProvider` apart from the participant
+name — the two are expected to diverge, and nothing should be factored into a
+shared component on the strength of that resemblance. Unlike CMS it deploys as
+a single Function App with no engine, which is deliberate; see
+[participant-abstraction-spec.md §5.2](participant-abstraction-spec.md).
+
+`/api/health` is anonymous and reports the site count; every other route needs
+a function key. MMS does not mint identifiers, so `POST /api/sites` requires a
+caller-supplied `siteId` and rejects payloads without one.
+
+Deployment steps and traps are in
+[MmsProvider/deploy/README.md](../MmsProvider/deploy/README.md). The grant step
+cannot run unattended — `sqlcmd -G -U` prompts for MFA — so run the deploy
+script in a foreground terminal or apply the grant by hand.
+
 ### Deployed CIR and ISBM providers
 
 CIR and ISBM are also deployed under the naming convention, alongside the

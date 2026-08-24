@@ -59,6 +59,7 @@ of segments. Parse from the left, never by splitting on `-` and counting.
 | `acme-db-cms-prod` |
 | `acme-db-cir-dev` |
 | `acme-db-cir-prod` |
+| `acme-db-mms-dev` |
 | `acme-db-mms-prod` |
 
 **ISBM has no database.** All ISBM state lives in Azure Storage; see
@@ -97,6 +98,8 @@ ISBM session, parses BODs, and calls the LOB API over its published interface.
 | `acme-api-cir-prod` |
 | `acme-api-isbm-dev` |
 | `acme-api-isbm-prod` |
+| `acme-api-mms-dev` |
+| `acme-api-mms-prod` |
 | `acme-api-reglocation-dev` |
 
 The API tier representing the business application itself.
@@ -237,6 +240,21 @@ ISBM keeps all of its state in Azure Storage. These names are already in use:
 Service Bus and storage are shared across all systems in an environment, so they
 carry no system code. The engine is `CmsEngine`; the LOB API is `CmsProvider`,
 which emulates the Meridium product itself.
+
+## Example: MMS deployment
+
+| Role | Dev | Prod |
+|---|---|---|
+| LOB API | `acme-api-mms-dev` | `acme-api-mms-prod` |
+| SQL database | `acme-db-mms-dev` | `acme-db-mms-prod` |
+| Plan / identity | `acme-plan-mms-dev` / `acme-id-mms-dev` | `acme-plan-mms-prod` / `acme-id-mms-prod` |
+| Storage account *(shared)* | `acmestoragedev01` | `acmestorageprod01` |
+
+**There is no `acme-engn-mms-*`.** MMS deploys as a single Function App where
+CMS is split into engine and provider. The asymmetry is intentional and is not
+a gap to be filled in later; see
+[participant-abstraction-spec.md §5.2](participant-abstraction-spec.md). Dev is
+deployed; prod is not.
 
 ## Example: CIR and ISBM deployment
 
