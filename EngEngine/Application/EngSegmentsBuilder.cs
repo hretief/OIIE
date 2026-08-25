@@ -27,6 +27,19 @@ namespace EngEngine.Application;
 /// lets ENG be asked about it again later. It is a registration of ENG's identity
 /// under the federated one, not a key anybody downstream is expected to resolve
 /// on its own.
+///
+/// ENG's identity is a composite, so it takes three fields to state it:
+///
+///   iModelId     -> InfoSource.UUID
+///   ECInstanceId -> Segment.IDInInfoSource
+///   CodeValue    -> Segment.ShortName
+///
+/// All three are needed. ECInstanceId is unique only within one iModel, and
+/// CodeValue is not unique across iModels, so a receiver that holds only part of
+/// the key holds something that resolves to more than one element or to none.
+/// Together with Segment.UUID -- the FederationGuid, which is the CIRID -- these
+/// are what let a downstream system register ENG's key against the federated
+/// identity and navigate back to the exact element.
 /// </summary>
 public sealed class EngSegmentsBuilder(IOptions<EngEngineOptions> options)
 {
@@ -58,9 +71,20 @@ public sealed class EngSegmentsBuilder(IOptions<EngEngineOptions> options)
             ReferenceID = marker.Name
         };
 
+        // The iModel, not the notion "ENG". ENG's native key is a composite --
+        // iModelId, ECInstanceId, CodeValue -- and no single field identifies an
+        // element without all three: an iTwin may hold a Mechanical and a
+        // Structural iModel, and the same CodeValue can exist in both.
+        //
+        // The three parts travel as InfoSource.UUID, IDInInfoSource and ShortName
+        // respectively. This one used to be a hash of the literal "ENG", which
+        // named the kind of system rather than the instance, so a receiver holding
+        // element 44732 could not say which iModel to open it in. Every element in
+        // one publication comes from one iModel, so it belongs on the shared
+        // InfoSource rather than repeated on each segment.
         var infoSource = new InfoSource
         {
-            UUID = CcomUuid.ForInfoSource(_options.SourceId),
+            UUID = _options.IModelId,
             ShortName = _options.SourceId
         };
 
@@ -124,11 +148,21 @@ public sealed class EngSegmentsBuilder(IOptions<EngEngineOptions> options)
             // The EC class is ENG's own vocabulary, not an RDL key, so it is sourced
             // as ENG rather than MIMOSA-RDL. Claiming otherwise would tell a receiver
             // it can look the class up in a library that has never heard of it.
+            //
+            // Its own InfoSource, not the segment's: that one now identifies the
+            // iModel, and a class is not an element of the iModel the way a segment
+            // is. Reusing it would say ECInstanceId and class name are two
+            // identifiers within the same source, and a receiver reconstructing the
+            // composite key from the pair would build a key that resolves to nothing.
             segment.Type = new SegmentType
             {
                 UUID = CcomUuid.ForReferenceData(_options.SourceId, className),
                 IDInInfoSource = className,
-                InfoSource = infoSource,
+                InfoSource = new InfoSource
+                {
+                    UUID = CcomUuid.ForInfoSource(_options.SourceId),
+                    ShortName = _options.SourceId
+                },
                 ShortName = className.Split(':').Last()
             };
         }

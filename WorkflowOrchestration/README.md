@@ -1,12 +1,11 @@
 # Workflow Orchestration
 
-Interactive UI for driving the OIIE sandbox. Where `SimHost` runs scenarios
-end-to-end and checks assertions, this app is for a person working a workflow a
-step at a time.
+Interactive UI for driving the OIIE sandbox — for a person working a workflow a
+step at a time, seeing what a participant sees while it happens.
 
-Both are kept deliberately: the audiences differ, and so does what "done" means.
-SimHost proves a scenario passes; this shows what a participant sees while it
-happens.
+This is the only UI. A Blazor operator UI (`SimHost`) preceded it and has been
+removed: it was a useful stepping stone, but the demo runs on this app. Scenario
+assertions still run end-to-end, as tests rather than through a UI.
 
 ## Running it
 

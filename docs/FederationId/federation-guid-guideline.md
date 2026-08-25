@@ -45,17 +45,44 @@ ENG's native key is a **composite** — no single field uniquely identifies an e
 |---|---|---|---|
 | `iModelId` | Which iModel the element lives in | An iTwin may have multiple iModels (Mechanical, Structural, Civil) — the same CodeValue could exist in two of them | `im-9340-mech` |
 | `ECInstanceId` | Element ID within that iModel | Unique within one iModel but meaningless outside it | `44732` |
-| `CodeValue` | Human-readable engineering tag | What engineers call it — but not unique across iModels | `TIC-106` |
+| `CodeValue` | The element's human-readable code | What engineers write on a drawing — but not unique across iModels | `TIC-106` |
 
 All three parts together resolve uniquely to one element. The FederationGuid is the
 iModel platform's answer to this: a single UUID that resolves all three parts, assigned at
 element creation and never changed.
 
+**A note on vocabulary.** ENG is an ECSchema-based schema and knows nothing about tags. Its
+unit of identity is an element, but *not* every element — the equivalence is with the
+functional branch of the hierarchy specifically:
+
+```
+BisCore.Element                          (abstract — everything, including geometry)
+  └── BisCore.RoleElement                (abstract)
+      └── Functional.FunctionalElement   (abstract — the functional role)
+          └── Functional.FunctionalComponentElement
+              └── ENG.Controller, ENG.LightingColumn, ENG.PtzCamera, …  (sealed)
+```
+
+It is `Functional.FunctionalElement` and its descendants that correspond to a
+REG-LOCATION tag. `BisCore.Element` also covers physical and geometric elements, which have
+no tag counterpart at all — a lantern's geometry is not a thing REG-LOCATION registers.
+
+| ENG (ECSchema) | REG-LOCATION (ALIM) |
+|---|---|
+| `Functional.FunctionalElement` (and descendants) | `Tag` |
+| `Element.CodeValue` | `Tag.Code` |
+| `Element.FederationGuid` | the CIRID both sides register against |
+
+A tag is the ALIM-side counterpart of a *functional* element in ENG. Two errors follow from
+getting this wrong: reading ENG in tag vocabulary (an ENG element has a `CodeValue`, never a
+tag number), and assuming every ENG element has a tag counterpart. Only the functional ones
+do, which is also why `IsPublishable` matters — what ENG publishes is the functional view.
+
 **With FederationGuid as the CIRID:**
 
 Every system registers its native key — including ENG's composite key — against the same
 UUID. Any system can query the CIR with its own ID and discover every other system's ID for
-the same physical asset, including the exact iModel, element, and tag to navigate to.
+the same physical asset, including the exact iModel and element to navigate to.
 
 ---
 
@@ -82,24 +109,70 @@ iModel "im-9340-mech" creates element:
 ### Step 2: The FederationGuid and ENG Key Travel With the Data
 
 When the ENG Engine compiles a SyncSegments BOD from a Named Version, each segment
-carries its FederationGuid AND the composite ENG key:
+carries its FederationGuid AND the composite ENG key.
+
+CCOM has no `FederationGuid`, `IModelId`, `ECInstanceId` or `CodeValue` element, and
+inventing them produces a document that fails validation against `CCOM.xsd`. The four
+values map onto CCOM's existing identity fields instead — see
+[SyncSegmentsWithoutAttributes.xml](../Sample%20BODs/SyncSegmentsWithoutAttributes.xml)
+for the authoritative shape:
+
+| ENG value | CCOM field | Why |
+|---|---|---|
+| FederationGuid | `Segment/UUID` | The federated identity of the thing, which is the CIRID |
+| iModelId | `Segment/InfoSource/UUID` | Identifies *which* collection ENG's record lives in |
+| ECInstanceId | `Segment/IDInInfoSource` | ENG's own record id within that InfoSource |
+| CodeValue | `Segment/ShortName` | The element's code as an engineer writes it |
+| UserLabel | `Segment/FullName` | The human-readable label |
 
 ```xml
-<SyncSegments>
-  <Segment>
-    <FederationGuid>550e8400-e29b-41d4-a716-446655440000</FederationGuid>
-    <IModelId>im-9340-mech</IModelId>
-    <ECInstanceId>44732</ECInstanceId>
-    <CodeValue>TIC-106</CodeValue>
-    <Name>Temperature Indicator Controller</Name>
-    <AssetType>Instrument</AssetType>
-    <Action>Add</Action>
-  </Segment>
+<SyncSegments xmlns="http://www.mimosa.org/ccom4" releaseID="1.0">
+  <ApplicationArea xmlns="http://www.openapplications.org/oagis/9">
+    <Sender>
+      <LogicalID>ENG</LogicalID>
+      <ComponentID>EngEngine</ComponentID>
+      <ReferenceID>Design Release 3</ReferenceID>
+    </Sender>
+    <CreationDateTime>2026-08-20T13:21:00Z</CreationDateTime>
+    <BODID>62a1a6dd-a0f8-4609-970c-a2cadd75c740</BODID>
+  </ApplicationArea>
+  <DataArea>
+    <Sync xmlns="http://www.openapplications.org/oagis/9">
+      <ActionCriteria>
+        <ActionExpression actionCode="Replace"
+                          expressionLanguage="Xpath">/SyncSegments/DataArea/Segments</ActionExpression>
+      </ActionCriteria>
+    </Sync>
+    <Segments>
+      <Segment>
+        <!-- FederationGuid: the CIRID, unaltered -->
+        <UUID>550e8400-e29b-41d4-a716-446655440000</UUID>
+        <!-- ECInstanceId: ENG's record id -->
+        <IDInInfoSource>44732</IDInInfoSource>
+        <InfoSource>
+          <!-- iModelId: which iModel that record lives in -->
+          <UUID>9f3d2a10-4b7c-4e88-9a11-0c5e7d3f4a22</UUID>
+          <IDInInfoSource>im-9340-mech</IDInInfoSource>
+          <ShortName>ENG</ShortName>
+        </InfoSource>
+        <!-- CodeValue -->
+        <ShortName>TIC-106</ShortName>
+        <!-- UserLabel -->
+        <FullName>Temperature Indicator Controller</FullName>
+      </Segment>
+    </Segments>
+  </DataArea>
 </SyncSegments>
 ```
 
-The FederationGuid, iModelId, ECInstanceId, and CodeValue are all required fields.
-They are never omitted and never generated downstream.
+The iModelId is a UUID, so it goes in `InfoSource/UUID`; the readable code
+(`im-9340-mech`) travels alongside it as `InfoSource/IDInInfoSource` for a human
+reading the message. All four identity values are required. They are never omitted
+and never generated downstream.
+
+Note that `Add` and `Remove` are not per-segment elements either. The action applies
+to the whole `Segments` collection through the OAGIS `ActionExpression`, so a
+publication that adds and one that removes are two BODs, not one BOD with mixed rows.
 
 ### Step 3: Every Participant Registers Its Native Key
 
@@ -112,9 +185,9 @@ ALIM → CIR: ProcessRegistry (CIRID: 550e8400-...)
   Entry: LOC-000001                     (Category: FUNCTIONAL-LOC)
 ```
 
-ALIM registers the ENG key on behalf of ENG because it has the full composite key from
-the SyncSegments BOD. This ensures the ENG identification is in the CIR even though the
-ENG Engine itself doesn't interact with the CIR directly.
+ALIM registers the ENG key because it has the full composite key from the SyncSegments
+BOD. ENG registers what it originates as well; both target the same CIRID, so the two
+registrations converge rather than competing (see rule 4).
 
 When ALIM publishes the approved segment to the asset-config channel, the SyncSegments
 BOD still carries the FederationGuid and the ENG composite key. MMS receives it, creates
@@ -162,7 +235,7 @@ CIR returns:
 MMS now knows:
   → iModel: im-9340-mech
   → Element: ECInstanceId 44732
-  → Engineering tag: TIC-106
+  → CodeValue: TIC-106
   → Can open the exact iModel, navigate to element 44732,
     see the 3D geometry, specifications, and full history
 ```
@@ -266,12 +339,13 @@ each asset within that iTwin a stable identity.
 
   SyncSegments BOD on this channel:
     <Segment>
-      <FederationGuid>661f9511-f30c-52e5-b827-557766551111</FederationGuid>
-      <IModelId>im-9340-mech</IModelId>
-      <ECInstanceId>44891</ECInstanceId>
-      <CodeValue>TIC-107</CodeValue>
-                      ▲ Segment FederationGuid + ENG composite key
-                      │ Identifies the physical asset and its exact location in the iModel
+      <UUID>661f9511-f30c-52e5-b827-557766551111</UUID>   ... Segment FederationGuid
+      <IDInInfoSource>44891</IDInInfoSource>              ... ECInstanceId
+      <InfoSource>
+        <UUID>9f3d2a10-4b7c-4e88-9a11-0c5e7d3f4a22</UUID> ... iModelId
+      </InfoSource>
+      <ShortName>TIC-107</ShortName>                      ... CodeValue
+                      ▲ Identifies the physical asset and its exact location in the iModel
     </Segment>
 ```
 
@@ -284,15 +358,16 @@ against the FederationGuid for the interoperability chain to be complete:
 
 | Participant | Native key format | Example | Category | Who registers |
 |---|---|---|---|---|
-| ENG (iModel) | iModelId::ECInstanceId::CodeValue (composite) | im-9340-mech::44732::TIC-106 | ENG-IMODEL | ALIM (on behalf of ENG) |
+| ENG (iModel) | iModelId::ECInstanceId::CodeValue (composite) | im-9340-mech::44732::TIC-106 | ENG-IMODEL | ENG and ALIM (both, same CIRID) |
 | ALIM (REG-LOCATION) | Functional location ID | LOC-000001 | FUNCTIONAL-LOC | ALIM |
 | MMS (Maintenance) | Maintenance asset number | 234441 | MMS-ASSET | MMS |
 | CMS (Condition) | Monitoring point ID | CP-001 | CMS-POINT | CMS |
 
-**Why ALIM registers the ENG key:** The ENG Engine publishes SyncSegments but doesn't
-interact with the CIR directly. ALIM receives the full segment data including the composite
-ENG key and registers it alongside its own functional location. This keeps the ENG Engine
-simple (publish-only) while ensuring the CIR has the engineering identification.
+**Why ALIM also registers the ENG key:** ALIM receives the full segment data and holds
+the complete composite key, so it can register ENG-IMODEL alongside its own functional
+location. ENG registers what it originates too — both register against the same CIRID,
+and registration order does not matter, so whichever arrives first establishes the entry
+and the other converges on it.
 
 ---
 
@@ -352,8 +427,10 @@ with different specifications, created as a new element in the same iModel.
    → TIC-106: ECInstanceId: 44732, FederationGuid: 550e8400-... (marked decommissioned)
 
 2. ENG Engine publishes SyncSegments:
-   → Segment: TIC-107 (Add, FederationGuid: 661f9511-..., iModelId: im-9340-mech, ECInstanceId: 44891)
-   → Segment: TIC-106 (Remove, FederationGuid: 550e8400-..., iModelId: im-9340-mech, ECInstanceId: 44732)
+   → Segment: TIC-107 (FederationGuid: 661f9511-..., iModelId: im-9340-mech, ECInstanceId: 44891)
+   → Segment: TIC-106 (FederationGuid: 550e8400-..., iModelId: im-9340-mech, ECInstanceId: 44732)
+   Note: the action code applies to the whole Segments collection, not to individual
+   segments, so an add and a removal are two BODs rather than two rows in one.
 
 3. ALIM approves both:
    → TIC-107 → LOC-000001 (same location, new equipment)
@@ -403,7 +480,7 @@ MMS needs to find the engineering specification for maintenance asset 234441.
 3. MMS now knows:
    → iModel: im-9340-mech (can open in Bentley tools)
    → Element: ECInstanceId 44732 (can navigate directly to it)
-   → Engineering tag: TIC-106 (human-readable reference)
+   → CodeValue: TIC-106 (human-readable reference)
    → Functional location: LOC-000001 (ALIM reference)
    → Monitoring point: CP-001 (CMS reference)
    → FederationGuid: 550e8400-... (universal resolver)
@@ -484,20 +561,41 @@ not the facility iModel. When the project closes:
 
 ## Rules for Implementers
 
-1. **The iModel assigns the FederationGuid.** No other system creates or overrides it.
-   It is born in ENG and travels outbound through every system.
+1. **The iModel assigns the FederationGuid.** It is born in ENG and travels outbound
+   through every system. No system downstream of ENG creates or overrides it.
+
+   The one exception is brownfield adoption: where an entity already carries an
+   identity in a tag register, handover sheet or predecessor system, ENG adopts that
+   value instead of minting a new one. Minting would produce a second identity for a
+   thing that already had one, which is the duplication this guideline exists to
+   prevent. The sandbox ENG authoring UI is the sanctioned path — it accepts an
+   operator-supplied FederationGuid and refuses one already held by another segment.
+   Adoption happens at creation and once only; the id is immutable thereafter under
+   rule 7.
 
 2. **Every SyncSegments BOD must include the FederationGuid AND the full ENG composite key**
-   (iModelId, ECInstanceId, CodeValue). These are required fields, not optional. The ENG Engine
-   includes them from the iModel; the ALIM Engine preserves them when republishing.
+   (iModelId, ECInstanceId, CodeValue). These are required, not optional. They travel in
+   CCOM's existing identity fields — `Segment/UUID`, `Segment/InfoSource/UUID`,
+   `Segment/IDInInfoSource` and `Segment/ShortName` respectively — because CCOM defines no
+   elements by those names and inventing them yields a BOD that fails `CCOM.xsd` validation.
+   The ENG Engine populates them from the iModel; the ALIM Engine preserves them when
+   republishing.
 
 3. **Every participant registers its native key against the FederationGuid as the CIRID.**
    Use the ws-CIR `ProcessRegistry` operation with the CIRID field set to the FederationGuid.
    The CIR stores it as-is.
 
-4. **ALIM registers the ENG composite key on behalf of ENG.** The ENG Engine doesn't interact
-   with the CIR directly. ALIM receives the full segment data and registers both the ENG key
-   (im-9340-mech::44732::TIC-106 as ENG-IMODEL) and its own key (LOC-000001 as FUNCTIONAL-LOC).
+4. **ENG and ALIM both register, each against the same CIRID.** ENG registers the key
+   it originates; ALIM registers its own functional location (LOC-000001 as
+   FUNCTIONAL-LOC) against that same FederationGuid. ALIM additionally registers the
+   ENG composite key as ENG-IMODEL, because it holds the full key from the
+   SyncSegments BOD and a legacy consumer may only ever see codes.
+
+   Both registering is deliberate rather than redundant. Registration order does not
+   matter (rule 5) and the CIRID is what links the entries, so whichever arrives first
+   establishes the entry and the second converges on it. Requiring exactly one
+   registrar would mean a failure at that one participant leaves the identity absent
+   from the registry with nothing to notice.
 
 5. **Registration order doesn't matter.** Any participant can register at any time. The CIR
    links entries by CIRID regardless of which system registered first.
@@ -524,11 +622,11 @@ not the facility iModel. When the project closes:
 | Question | Answer |
 |---|---|
 | What is the FederationGuid? | A UUID assigned to every engineering segment at creation in the iModel |
-| Who creates it? | The iModel platform (ENG) |
+| Who creates it? | The iModel platform (ENG), or adopted from an existing identity in brownfield |
 | Can it change? | No — immutable for the life of the physical asset |
 | What is it used as? | The CIRID in the Common Interoperability Registry |
 | What is the ENG native key? | iModelId::ECInstanceId::CodeValue (composite, all three required) |
-| Who registers the ENG key in CIR? | ALIM, on behalf of ENG |
+| Who registers the ENG key in CIR? | ENG and ALIM both, against the same CIRID |
 | Who registers their own native key? | Every participant — ALIM (LOC-*), MMS (asset number), CMS (point ID) |
 | Does registration order matter? | No — any participant can register at any time |
 | How does it relate to the iTwin FederationId? | Same principle, different level: iTwin FederationId identifies the facility, segment FederationGuid identifies the asset within it |

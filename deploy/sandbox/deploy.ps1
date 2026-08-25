@@ -6,17 +6,16 @@
     Provisions infrastructure, publishes the apps, and verifies the deployment
     actually works rather than merely that the upload succeeded.
 
-    The sandbox is TWO App Services sharing one plan:
+    The sandbox is ONE App Service:
 
       oiie-sandbox-{env}  the API. Owns /admin and /health, runs the inbox pump
-                          and outbox dispatcher. Keeps the historic name because
-                          external callers already hold that URL.
-      oiie-simhost-{env}  the Blazor operator UI. Serves no API routes and runs
-                          no pumps; it calls the API over HTTP.
+                          and outbox dispatcher.
 
-    Publish them separately. Zip deploy never deletes, so pushing one app's
-    output into the other's slot leaves both sets of assemblies on the server
-    and the wrong entry point may win.
+    The Blazor operator UI that used to deploy alongside it (oiie-simhost-{env})
+    has been removed -- the demo uses the TypeScript UI in WorkflowOrchestration/,
+    which is built into this API's wwwroot. The App Service still exists in Azure
+    and is still declared in infra/sandbox/main.bicep; delete it per environment
+    with -DeleteLegacyUi, then drop the resource from the template.
 
     Assumes deploy/provision.ps1 has already run for this environment: the database,
     schemas, contained users and Key Vault secrets come from there. This script adds
@@ -34,10 +33,11 @@
     .\deploy.ps1 -Environment demo -StorageAccount mndotsandbox
 
 .EXAMPLE
-    .\deploy.ps1 -Environment demo -StorageAccount mndotsandbox -Target api
+    .\deploy.ps1 -Environment demo -StorageAccount mndotsandbox -SkipInfrastructure
 
 .EXAMPLE
-    .\deploy.ps1 -Environment demo -StorageAccount mndotsandbox -SkipInfrastructure
+    # One-off: delete the retired Blazor UI site for this environment.
+    .\deploy.ps1 -Environment demo -StorageAccount mndotsandbox -DeleteLegacyUi
 #>
 
 [CmdletBinding()]
@@ -48,10 +48,6 @@ param(
 
     [Parameter(Mandatory)]
     [string]$StorageAccount,
-
-    # Which app to publish. Infrastructure covers both regardless.
-    [ValidateSet('api', 'ui', 'both')]
-    [string]$Target = 'both',
 
     [string]$ResourceGroup = 'HilmarRetiefRG',
     [string]$KeyVault = 'mndot',
@@ -76,7 +72,17 @@ param(
     [switch]$SkipWeb,
 
     [switch]$SkipInfrastructure,
-    [switch]$SkipVerify
+    [switch]$SkipVerify,
+
+    # Delete the retired Blazor UI site (oiie-simhost-{env}) and exit.
+    #
+    # Not part of a normal deployment. The Blazor UI was removed from the
+    # solution, but the site is still declared in main.bicep and still running
+    # a stale SimHost.dll with live Key Vault and Storage role assignments.
+    # Incremental-mode Bicep would not delete it, so this is deliberate and
+    # explicit. Run once per environment, then remove the uiApp resource from
+    # main.bicep.
+    [switch]$DeleteLegacyUi
 )
 
 $ErrorActionPreference = 'Stop'
@@ -133,19 +139,36 @@ $databaseName = switch ($Environment) {
 }
 
 $apiAppName = "oiie-sandbox-$Environment"
-$uiAppName = "oiie-simhost-$Environment"
 $isbmBaseUrl = "https://$IsbmApp.azurewebsites.net/api"
 
 Write-Host "Environment : $Environment"
 Write-Host "API         : $apiAppName"
-Write-Host "UI          : $uiAppName"
-Write-Host "Target      : $Target"
 Write-Host "Database    : $databaseName"
 Write-Host "Storage     : $StorageAccount"
 Write-Host ''
 
 if ($SubscriptionId) {
     Invoke-Az @('account', 'set', '--subscription', $SubscriptionId) -Because 'Setting subscription'
+}
+
+if ($DeleteLegacyUi) {
+    $legacyUiApp = "oiie-simhost-$Environment"
+
+    Write-Host "Deleting the retired Blazor UI site: $legacyUiApp"
+    Write-Host "The API at $apiAppName is not affected."
+
+    # Deleting the site removes its system-assigned identity, and with it the
+    # Key Vault and Storage role assignments granted to that principal. No
+    # separate cleanup is needed for those.
+    Invoke-Az @(
+        'webapp', 'delete',
+        '--resource-group', $ResourceGroup,
+        '--name', $legacyUiApp
+    ) -Because "Deletion of $legacyUiApp"
+
+    Write-Host "`nDeleted $legacyUiApp." -ForegroundColor Green
+    Write-Host "Once every environment is done, remove the uiApp resource from infra/sandbox/main.bicep."
+    return
 }
 
 # The database must already exist. Deploying an app that cannot reach its database
@@ -366,15 +389,8 @@ function Publish-SandboxApp {
     ) -Because "Deployment of $Label"
 }
 
-if ($Target -in @('api', 'both')) {
-    Publish-SandboxApp -ProjectPath 'Oiie.Sandbox.Api/Oiie.Sandbox.Api.csproj' `
-        -AppName $apiAppName -Label 'api'
-}
-
-if ($Target -in @('ui', 'both')) {
-    Publish-SandboxApp -ProjectPath 'SimHost/SimHost.csproj' `
-        -AppName $uiAppName -Label 'ui'
-}
+Publish-SandboxApp -ProjectPath 'Oiie.Sandbox.Api/Oiie.Sandbox.Api.csproj' `
+    -AppName $apiAppName -Label 'api'
 
 # --- Verify ----------------------------------------------------------------
 
@@ -384,34 +400,6 @@ if ($SkipVerify) {
 }
 
 $apiUrl = "https://$apiAppName.azurewebsites.net"
-$uiUrl = "https://$uiAppName.azurewebsites.net"
-
-# Health lives on the API only. Verifying the UI against /health/participants
-# would fail forever now that the route has moved.
-if ($Target -eq 'ui') {
-    Write-Host "`nVerifying $uiUrl"
-
-    $ok = $false
-    for ($attempt = 1; $attempt -le 12; $attempt++) {
-        try {
-            Invoke-WebRequest $uiUrl -TimeoutSec 30 -UseBasicParsing | Out-Null
-            $ok = $true
-            break
-        }
-        catch {
-            Write-Host "  starting ($attempt)..." -ForegroundColor DarkGray
-            Start-Sleep -Seconds 10
-        }
-    }
-
-    if (-not $ok) {
-        throw "The UI did not respond. Check the log stream: az webapp log tail -g $ResourceGroup -n $uiAppName"
-    }
-
-    Write-Host "`nDeployed: $uiUrl" -ForegroundColor Green
-    Write-Host "The UI calls $apiUrl for reset and scenario launch; that app must be running."
-    return
-}
 
 Write-Host "`nVerifying $apiUrl"
 
@@ -467,9 +455,6 @@ catch {
 }
 
 Write-Host "`nDeployed API: $apiUrl" -ForegroundColor Green
-if ($Target -eq 'both') {
-    Write-Host "Deployed UI : $uiUrl" -ForegroundColor Green
-}
 
 # The React app is served by the API, so a successful API deployment does not by
 # itself mean the UI shipped. Checked separately, because a missing wwwroot

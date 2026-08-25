@@ -200,6 +200,20 @@ resource apiApp 'Microsoft.Web/sites@2023-12-01' = {
   }
 }
 
+// ORPHANED: the Blazor operator UI this site hosted has been deleted from the
+// solution. The demo uses the TypeScript UI in WorkflowOrchestration/, which the
+// API serves from its own wwwroot.
+//
+// Left declared deliberately. This template is deployed in Incremental mode, so
+// removing the resource here would NOT delete the Azure site -- it would simply
+// stop managing it, leaving a running app serving a stale SimHost.dll with a
+// Key Vault and Storage role assignment nobody is reviewing. Delete the site
+// explicitly, per environment:
+//
+//   ./deploy/sandbox/deploy.ps1 -Environment <env> -StorageAccount <acct> -DeleteLegacyUi
+//
+// Once that is done for every environment, remove this resource, uiAppName, the
+// two role assignments below, and the three ui* outputs.
 resource uiApp 'Microsoft.Web/sites@2023-12-01' = {
   name: uiAppName
   location: location

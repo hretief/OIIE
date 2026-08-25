@@ -6,42 +6,61 @@ yet done.
 
 ## Verify CIR interaction against the FederationGuid guideline
 
-**Status:** not started. Raised 2026-08-20, next session.
+**Status:** partly done 2026-08-20. Rules 1, 2, 3, 5, 6, 7, 9 resolved; rules 4
+and 8 outstanding.
 
 [federation-guid-guideline.md](FederationId/federation-guid-guideline.md) states
-how FederationGuid is meant to become the CIRID. Nothing has checked the
-implementation against it. The engine and sandbox work just completed touches
-federation identity in several places, so the gap is now worth closing before
-more is built on top.
+how FederationGuid is meant to become the CIRID. The review is done; what follows
+is what it found and what remains.
 
-Specific claims in the guideline to verify, each of which the code may or may
-not honour:
+**Resolved:**
 
-- **Rule 3** — participants register their native key against the FederationGuid
-  as the CIRID, via `ProcessRegistry` with CIRID set to the FederationGuid and
-  stored as-is. Confirm the sandbox does this rather than letting the CIR mint
-  its own identifier.
-- **Rule 4** — ENG does *not* talk to the CIR directly; ALIM/REG-LOCATION
-  registers the ENG composite key on ENG's behalf. `EngEngine` was written with
-  no CIR dependency, which appears to match, but REG-LOCATION registering
-  `ENG-IMODEL` on ENG's behalf has not been confirmed to exist at all.
-- **Rule 2** — every `SyncSegments` BOD carries the FederationGuid *and* the full
-  ENG composite key (`iModelId`, `ECInstanceId`, `CodeValue`) as required fields.
-  `EngSegmentsBuilder` currently sends the FederationGuid as `Segment.UUID` and
-  only `ECInstanceId` as `IDInInfoSource`. The composite key is not assembled, so
-  this rule is likely not met and the guideline's "direct iModel navigation"
-  claim (rule 8) cannot hold downstream.
-- **Rule 1** — the iModel assigns the FederationGuid and no other system creates
-  or overrides it. This is now in tension with a deliberate decision: the sandbox
-  ENG UI accepts an operator-supplied FederationGuid and offers a Suggest button
-  that mints one. Either the guideline needs to admit brownfield adoption
-  (example 5 already gestures at it), or the UI needs to be reconciled with the
-  rule. Worth resolving explicitly rather than leaving the two to disagree.
+- **Rule 3 holds.** `CirRegistrationService` uses `ProcessRegistry` with
+  `entry.CIRID` set to the FederationGuid, and `SqlCirStore.MergeCiridAsync`
+  stores it as-is. §3.1.2 prevents a supplied CIRID overwriting a held one, so
+  rules 5, 6 and 7 are enforced by the registry rather than by convention. ENG
+  and REG-LOCATION assert the same UUID and converge without a steward.
+- **Rule 2 holds, after a fix.** The guideline's XML sketch was illustrative and
+  wrong — CCOM has no `FederationGuid`, `IModelId`, `ECInstanceId` or `CodeValue`
+  element. Three of the four parts were already travelling correctly; only
+  `InfoSource/UUID` was wrong, carrying a hash of the string `ENG` rather than the
+  iModelId. Fixed and covered by `EngSegmentsBuilderTests`. See DR-018.
+- **Rule 1 amended.** The guideline now admits brownfield adoption of an existing
+  FederationGuid, with the sandbox ENG UI as the sanctioned path.
 
-Also confirm the two sandbox identity paths agree: `EngService` (sandbox
-personality, mints via `ITagIdentityService`) and `EngProvider` (`ElementUpsert`,
-accepts but never mints). They are separate implementations and only one of them
-is governed by anything the guideline says.
+**Outstanding:**
+
+- **Publication does not filter to the functional branch.** A tag corresponds to
+  `Functional.FunctionalElement` and its descendants, not to `BisCore.Element` generally.
+  But `EngPublicationService` filters a marker's contents only by
+  `IsPublishable` (`FederationGuid is not null`), and `GetNamedVersionElementsAsync` selects
+  every element at the marker position regardless of class. Today every concrete ENG class
+  in `ENG_BOOTSTRAP.SQL` derives from `FunctionalComponentElement`, so the two sets coincide
+  and nothing misbehaves — but that is a property of the current seed data, not a constraint
+  the code enforces. Adding one physical or geometric class would start publishing segments
+  that have no tag counterpart, and REG-LOCATION would raise stewardship proposals for
+  geometry. Decide whether the filter belongs in the SQL (`vNamedVersionElement` joined to
+  the class hierarchy) or in `IsPublishable` via `FullyQualifiedECClassName`. `EngElement`
+  already carries the class name, so the engine-side check is available without a schema
+  change.
+
+- **Rule 4 — no ENG-IMODEL entry is registered from the ECSchema path.** Decided that ENG
+  and ALIM both register against the same CIRID. Neither does so from the real design yet.
+  `SyncEngAsync` registers from the sandbox `Tag` table, which is the *sandbox* ENG
+  personality, not `EngProvider`/ENG ECSchema — ENG proper has elements, not tags. That
+  sandbox path is superseded by the ECSchema decision, so it is not the registration this
+  rule means. REG-LOCATION already retains the FederationGuid, ECInstanceId and CodeValue
+  from the inbound BOD, and with DR-018 can also read the iModelId from `InfoSource/UUID`,
+  so the composite key is reconstructable on the ALIM side — but nothing registers it.
+  Rule 8's "direct iModel navigation" claim does not hold until something does.
+- **Confirm the sandbox `Tag`-based ENG personality is being retired.** `EngService` and
+  `SyncEngAsync` operate on `Tag`/`TagNumber`; `EngProvider` operates on `EngElement`/
+  `CodeValue` per the ECSchema. Two implementations, different vocabularies, and only the
+  ECSchema one is the design going forward. Decide whether the sandbox path is retired or
+  kept as a simulator, and mark it so — it currently reads as if it were ENG.
+- **No BOD is validated against `CCOM.xsd`.** The schemas are in `schemas/ccom/`.
+  A schema-validity assertion would have caught the guideline's invented shape
+  immediately, and would guard every future BOD change.
 
 ## ENG spine tables leak into every participant schema
 
@@ -157,7 +176,7 @@ outbound `MessageRecord`. Nothing exercises it. It cannot be reached from the ha
 path by construction — it only fires on a retry after a lost confirmation — so the
 absence of failures says nothing about whether it works.
 
-The obstacle is that there is no harness for the dispatcher at all. `SimHost.Tests`
+The obstacle is that there is no harness for the dispatcher at all. `Oiie.Sandbox.Tests`
 builds `ParticipantDbContext` against a dummy connection string for model inspection
 only, and there are no fakes for `IIsbmClientAccessor`, `IBodBuilder` or
 `IIsbmSessionStoreAccessor`. Writing the first real test for a background service is
@@ -287,7 +306,7 @@ boundary converts every design flaw into a distributed-systems problem.
 **Status:** not started. Agreed at the end of the 2026-08-14 session, deferred so
 the demo could be walked through first.
 
-The 88 tests in `tests/SimHost.Tests` are structural: they assert schema
+The 88 tests in `tests/Oiie.Sandbox.Tests` are structural: they assert schema
 fidelity and identity semantics. That is the right thing for them to do, and it
 is also why they could not catch either bug found on 2026-08-14. Both were in
 the read/response path rather than in the registry logic:
@@ -376,7 +395,7 @@ if (tag.FederationId != Guid.Empty)    // ~line 593
 if (location.FederationId != Guid.Empty) // ~line 733
 ```
 
-`SimHost.Tests` passes 99/99 against this, but nothing in it reaches the
+`Oiie.Sandbox.Tests` passes 99/99 against this, but nothing in it reaches the
 registration path — the run confirms the change broke no existing behaviour, not
 that the new behaviour is correct. The closest case,
 `ContextOwnershipTests.Cms_site_retains_the_publisher_uuid_without_naming_it_a_twin`,

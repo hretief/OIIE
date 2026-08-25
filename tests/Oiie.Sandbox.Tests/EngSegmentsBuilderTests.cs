@@ -1,0 +1,124 @@
+using System.Linq;
+using Microsoft.Extensions.Options;
+using EngEngine.Application;
+using Oiie.Ccom.Oagis;
+using Oiie.Ccom.Types;
+using Xunit;
+
+namespace SimHost.Tests;
+
+/// <summary>
+/// The ENG composite key on the wire.
+///
+/// ENG's native identity is three values -- iModelId, ECInstanceId, CodeValue --
+/// and none of them identifies an element alone: ECInstanceId is unique only
+/// within one iModel, and CodeValue can repeat across the iModels of a single
+/// iTwin. A receiver that holds a partial key holds something that resolves to
+/// several elements or to none, and it cannot register ENG's identification
+/// against the FederationGuid in the CIR.
+///
+/// These tests pin which BOD field carries which part. They exist because the
+/// mapping is a wire contract with downstream participants that the compiler
+/// cannot check: InfoSource.UUID previously carried a hash of the literal "ENG",
+/// which is well-formed, plausible on inspection, and silently useless.
+/// </summary>
+public class EngSegmentsBuilderTests
+{
+    private static readonly Guid IModelId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid FederationGuid = Guid.Parse("550e8400-e29b-41d4-a716-446655440000");
+
+    private static EngSegmentsBuilder Builder() =>
+        new(Options.Create(new EngEngineOptions
+        {
+            IModelId = IModelId,
+            SourceId = "ENG",
+            LogicalId = "ENG"
+        }));
+
+    private static EngNamedVersion Marker() =>
+        new(1, Guid.NewGuid(), IModelId, "Design Release 3", null,
+            "abc", 3, "engineer", DateTime.UtcNow, DateTime.UtcNow, 1);
+
+    private static EngElement Element(string? codeValue = "TIC-106") =>
+        ElementWith(FederationGuid, codeValue);
+
+    // Separate from Element so that passing null means null. A defaulted
+    // parameter coalescing to the fixture guid cannot express "unfederated",
+    // which is the case IsPublishable exists to catch.
+    private static EngElement ElementWith(Guid? federationGuid, string? codeValue = "TIC-106") =>
+        new(44732, IModelId, 99, "Bis:PhysicalElement", federationGuid,
+            codeValue, "Temperature Indicator Controller", "TIC-106 Controller",
+            null, 3, DateTime.UtcNow, DateTime.UtcNow);
+
+    private static Segment FirstSegment(System.Xml.Linq.XElement bod)
+    {
+        // Parsed back through BodEnvelope rather than read off the builder's
+        // objects: that is the path a receiving participant takes, so a field
+        // that fails to serialise fails here too.
+        var envelope = BodEnvelope.Parse(bod.ToString());
+        return envelope.NounsAs(e => new Segment(e)).Single();
+    }
+
+    [Fact]
+    public void Segment_uuid_is_the_federation_guid_unaltered()
+    {
+        var bod = Builder().Build(Marker(), [Element()], "corr-1");
+
+        // The CIRID. Every participant registers its own key against this value,
+        // so any transformation here silently splits one asset into two.
+        Assert.Equal(FederationGuid, FirstSegment(bod).UUID);
+    }
+
+    [Fact]
+    public void InfoSource_uuid_carries_the_imodel_id_not_a_hash_of_the_source_name()
+    {
+        var bod = Builder().Build(Marker(), [Element()], "corr-2");
+
+        var infoSource = FirstSegment(bod).InfoSource;
+
+        Assert.Equal(IModelId, infoSource?.UUID);
+
+        // The specific value it must not be: a hash of "ENG" names the kind of
+        // system rather than the instance, which leaves a receiver unable to say
+        // which iModel to open element 44732 in.
+        Assert.NotEqual(CcomUuid.ForInfoSource("ENG"), infoSource?.UUID);
+
+        // ShortName still says who sent it, so the source stays readable.
+        Assert.Equal("ENG", infoSource?.ShortName);
+    }
+
+    [Fact]
+    public void Ec_instance_id_and_code_value_complete_the_composite_key()
+    {
+        var bod = Builder().Build(Marker(), [Element()], "corr-3");
+
+        var segment = FirstSegment(bod);
+
+        Assert.Equal("44732", segment.IDInInfoSource);
+        Assert.Equal("TIC-106", segment.ShortName);
+    }
+
+    [Fact]
+    public void Segment_type_does_not_reuse_the_imodel_info_source()
+    {
+        var bod = Builder().Build(Marker(), [Element()], "corr-4");
+
+        var segment = FirstSegment(bod);
+
+        // An EC class is not an element of the iModel the way a segment is.
+        // Sharing the InfoSource would say ECInstanceId and the class name are
+        // two identifiers within one source, and a receiver composing the
+        // composite key from that pair would build one that resolves to nothing.
+        Assert.NotNull(segment.Type);
+        Assert.NotEqual(IModelId, segment.Type?.InfoSource?.UUID);
+    }
+
+    [Fact]
+    public void An_element_without_a_federation_guid_is_not_publishable()
+    {
+        // Publishing nothing is recoverable; publishing a fabricated identity is
+        // not, because it looks correct until the element is really federated.
+        Assert.False(EngSegmentsBuilder.IsPublishable(ElementWith(null)));
+        Assert.True(EngSegmentsBuilder.IsPublishable(Element()));
+    }
+}

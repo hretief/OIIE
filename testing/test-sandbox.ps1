@@ -22,7 +22,7 @@
 #>
 [CmdletBinding()]
 param(
-    # The Sandbox API, not SimHost. /admin and /health moved to Oiie.Sandbox.Api
+    # /admin and /health are served by Oiie.Sandbox.Api
     # when the hosts were split; 7180 is the Blazor UI and serves neither, so
     # pointing here at it makes every phase below fail on a 404.
     [string] $SandboxUrl = 'https://localhost:7241',
@@ -245,7 +245,7 @@ $health = Invoke-Sandbox GET '/health/participants'
 if ($health.Status -ne 200) {
     Fail 'Sandbox is running' 'ENVIRONMENT' `
         "GET /health/participants returned $($health.Status): $($health.Raw)" `
-        'Start SimHost. Nothing below can run.'
+        'Start the Sandbox API. Nothing below can run.'
     Write-Host "`nAborted: the Sandbox is not reachable." -ForegroundColor Red
     return
 }

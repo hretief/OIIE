@@ -5,8 +5,8 @@
       The assembly is Oiie.Sandbox.Core but the root namespace stays SimHost.
       The engine types moved out of the SimHost project wholesale, and their
       namespaces (SimHost.Application.*, SimHost.Domain.*, SimHost.Infrastructure.*,
-      SimHost.Personalities.*) are referenced from the API host, the Blazor host and
-      the test project. Renaming them would be a rename of every using in the
+      SimHost.Personalities.*) are referenced from the API host and the test
+      project. Renaming them would be a rename of every using in the
       solution for no behavioural gain, so the project name and the namespace root
       are allowed to differ here deliberately.
     -->
@@ -64,7 +64,7 @@
     code, and they live here beside the engine that loads them. They are not copied
     to this library's own output: the loaders resolve them from the *host's*
     ContentRootPath, so each host links them in from this folder instead. See the
-    Content globs in Oiie.Sandbox.Api and SimHost.
+    Content globs in Oiie.Sandbox.Api.
   -->
   <ItemGroup>
     <None Include="PersonalityPacks\**\*.yaml" />

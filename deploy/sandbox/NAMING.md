@@ -141,37 +141,36 @@ cross-schema grants.
 
 ## Deployed application
 
-The sandbox is **two App Services sharing one plan**, not one.
+The sandbox is **one App Service**.
 
-| Environment | API | Blazor UI |
-|---|---|---|
-| dev | `oiie-sandbox-dev` | `oiie-simhost-dev` |
-| CI | `oiie-sandbox-ci` | `oiie-simhost-ci` |
-| demo | `oiie-sandbox-demo` | `oiie-simhost-demo` |
+| Environment | API |
+|---|---|
+| dev | `oiie-sandbox-dev` |
+| CI | `oiie-sandbox-ci` |
+| demo | `oiie-sandbox-demo` |
 
-Both at `https://{name}.azurewebsites.net`. Plan `plan-oiie-sandbox-{env}`,
-Application Insights `appi-oiie-sandbox-{env}`, workspace `log-oiie-sandbox-{env}`
-— shared, so one correlation id still reconstructs an exchange across both.
+At `https://{name}.azurewebsites.net`. Plan `plan-oiie-sandbox-{env}`,
+Application Insights `appi-oiie-sandbox-{env}`, workspace `log-oiie-sandbox-{env}`.
 
-| | `oiie-sandbox-{env}` (API) | `oiie-simhost-{env}` (UI) |
-|---|---|---|
-| Project | `Oiie.Sandbox.Api` | `SimHost` |
-| Serves | `/admin/*`, `/health/*` | Blazor Server UI |
-| Message pumps | **yes** | **no** |
-| Always On | required | on (cold start only) |
-| WebSockets | off | required (SignalR circuit) |
-| Health probe | `/health/participants` | `/` |
-| Audience | scripts, scenarios, React app | end-to-end automated testing |
+| | `oiie-sandbox-{env}` (API) |
+|---|---|
+| Project | `Oiie.Sandbox.Api` |
+| Serves | `/admin/*`, `/health/*`, and the TypeScript UI from `wwwroot` |
+| Message pumps | **yes** |
+| Always On | required |
+| Health probe | `/health/participants` |
+| Audience | scripts, scenarios, the React app |
 
 The API keeps the historic `oiie-sandbox-{env}` name deliberately. That value is
 already baked into `Isbm__ListenerBaseUrl`, the CIR's configuration and every
-script holding a sandbox URL; renaming it would break those silently. The UI is
-new as a separate address, so it takes the new name.
+script holding a sandbox URL; renaming it would break those silently.
 
-**Only the API runs the pumps.** This is enforced in code, not in Bicep:
-`SimHost/Program.cs` calls `AddSandboxCore` but never `AddSandboxMessagePumps`.
-If both hosts pumped, two consumers would race the same ISBM sessions and
-messages would appear to vanish at random. Do not add the pumps to the UI.
+**The Blazor UI has been removed.** `oiie-simhost-{env}` used to host it. The
+demo uses the TypeScript UI in `WorkflowOrchestration/`, served by the API from
+its own `wwwroot`. The App Service is still declared in
+`infra/sandbox/main.bicep` so the template keeps managing it until the sites are
+explicitly deleted — see the note on the `uiApp` resource. Nothing publishes to
+it any more.
 
 `Always On` is required on the API, not optional: the inbox pump and outbox
 dispatcher are hosted services, and an unloaded app stops consuming in a way that

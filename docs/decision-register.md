@@ -542,7 +542,7 @@ narrows the window; it does not eliminate it.
 
 ### Caveats carried forward
 
-- **Untested.** There is no harness for the dispatcher: `SimHost.Tests` builds `ParticipantDbContext`
+- **Untested.** There is no harness for the dispatcher: `Oiie.Sandbox.Tests` builds `ParticipantDbContext`
   against a dummy connection string for model inspection only, and there are no fakes for
   `IIsbmClientAccessor`, `IBodBuilder` or `IIsbmSessionStoreAccessor`. The guard is unexercised on the happy
   path by construction, since it only fires on a retry after a lost confirmation.
@@ -1078,6 +1078,116 @@ FederationGuid with a Suggest button, and refuses a value already held by anothe
 - **The two ENG implementations still diverge.** `EngService` (sandbox) mints via
   `ITagIdentityService`; `EngProvider` (`ElementUpsert`) accepts but never mints. Only one of
   them is governed by anything the guideline says.
-- **The composite ENG key is not on the wire.** Rule 2 requires `iModelId`, `ECInstanceId` and
-  `CodeValue` on every `SyncSegments`; only `ECInstanceId` travels today.
+- **The composite ENG key was thought to be missing from the wire.** Superseded by DR-018:
+  three of the four parts were already travelling, and the fourth is now fixed.
+
+---
+
+## DR-018 — The ENG composite key travels in CCOM's identity fields, not in invented elements
+
+**Status:** Decided
+**Date:** 2026-08-20
+**Context:** DR-017 recorded that rule 2 of the
+[FederationGuid guideline](FederationId/federation-guid-guideline.md) was unmet — that only
+`ECInstanceId` reached the wire. Reviewing the actual BOD against
+[SyncSegmentsWithoutAttributes.xml](Sample%20BODs/SyncSegmentsWithoutAttributes.xml) showed
+that was wrong.
+
+### Decision
+
+ENG's composite key maps onto CCOM's existing identity fields:
+
+| ENG value | CCOM field |
+|---|---|
+| FederationGuid | `Segment/UUID` |
+| iModelId | `Segment/InfoSource/UUID` |
+| ECInstanceId | `Segment/IDInInfoSource` |
+| CodeValue | `Segment/ShortName` |
+| UserLabel | `Segment/FullName` |
+
+Three of these were already correct. `InfoSource/UUID` was not: it carried
+`CcomUuid.ForInfoSource("ENG")`. It now carries the iModelId. `Segment/Type` was given its
+own `InfoSource` rather than sharing the segment's.
+
+### Why
+
+- **The guideline's XML sketch was illustrative and became load-bearing.** It showed
+  `<FederationGuid>`, `<IModelId>`, `<ECInstanceId>`, `<CodeValue>` and `<Action>` as
+  elements. CCOM defines none of them; a BOD in that shape fails `CCOM.xsd` validation. The
+  sketch caused a review to conclude the implementation was broken when the implementation was
+  closer to right than the document describing it.
+- **A hash of the string "ENG" names the kind of system, not the instance.** It is a
+  well-formed, stable UUID that looks correct on inspection and is useless: it cannot say
+  which iModel element 44732 lives in, which is exactly what rule 8 promises a CIR holder can
+  determine. This is the same failure class as DR-017's derived UUID — a fabricated identifier
+  that passes every check except being true.
+- **Sharing the InfoSource with `Segment/Type` would corrupt the key.** Once `InfoSource/UUID`
+  means "the iModel", reusing it for the EC class asserts that the class name and the
+  `ECInstanceId` are two identifiers within one source; a receiver composing the composite key
+  from that pair builds one that resolves to nothing.
+- **Action codes are collection-level in OAGIS.** `Add`/`Remove` per segment is not
+  expressible, so an add and a removal are two BODs.
+
+### What this leaves open
+
+- **The BOD had no test coverage before this change.** 113 tests passed while
+  `EngSegmentsBuilder` was entirely unexercised, so the suite was not evidence for a wire
+  change. `EngSegmentsBuilderTests` now pins the mapping and parses through `BodEnvelope`, the
+  path a receiver takes. Other builders may be in the same position and have not been checked.
+- **Nothing validates a published BOD against `CCOM.xsd`.** The schemas are in `schemas/ccom/`
+  and the mapping is now asserted field by field, but no test asserts the document is
+  schema-valid. That is what would have caught the guideline's shape immediately.
+- **`InfoSource/IDInInfoSource` carries the readable iModel code in the documented example but
+  the engine does not populate it.** Only the UUID travels. Harmless, but a human reading the
+  message sees a bare GUID.
+
+---
+
+## DR-019 — Rule 1 admits brownfield adoption; rule 4 has ENG and ALIM both register
+
+**Status:** Decided
+**Date:** 2026-08-20
+**Context:** Verifying the implementation against the
+[FederationGuid guideline](FederationId/federation-guid-guideline.md) surfaced two places
+where the code and the guideline disagreed, each of which could have been resolved in either
+direction.
+
+### Decision
+
+**Rule 1** now admits brownfield adoption. Where an entity already carries an identity in a
+tag register, handover sheet or predecessor system, ENG adopts that value rather than minting
+a new one. The sandbox ENG authoring UI is the sanctioned path. Adoption happens at creation
+and once only; rule 7 immutability applies thereafter.
+
+**Rule 4** now has ENG and ALIM both register against the same CIRID, rather than ALIM
+registering solely on ENG's behalf. ALIM continues to register the ENG composite key as
+ENG-IMODEL because it holds the full key from the BOD.
+
+### Why
+
+- **Minting over an existing identity creates the duplication the guideline exists to
+  prevent.** A greenfield-only rule 1 would have forced the UI to be removed, and the
+  brownfield case — the common one — would then acquire a second identity for a thing that
+  already had one. Example 5 already gestured at this; the rule now says it.
+- **A single registrar is a single point of silent failure.** Rule 5 makes registration order
+  irrelevant and §3.1.2 makes a second assertion of a held CIRID a no-op, so both registering
+  is convergent, not conflicting. With one registrar, a failure at that participant leaves the
+  identity absent from the registry with nothing positioned to notice.
+- **The alternative for rule 4 was to keep ENG publish-only for simplicity.** Rejected: the
+  simplicity is real but buys little, since ENG already holds the key it would register and
+  the registry tolerates the duplicate assertion by design.
+
+### What this leaves open
+
+- **Neither registration is implemented on the ECSchema path.** No ENG-IMODEL entry is
+  written by either participant. `SyncEngAsync` does register, but from the sandbox `Tag`
+  table — the sandbox ENG personality, not `EngProvider`. ENG proper is ECSchema-based and
+  has elements with a `CodeValue`, not tags with a `TagNumber`; a tag is REG-LOCATION's
+  ALIM-side counterpart (`Element.CodeValue` = `Tag.Code`). The sandbox path is therefore
+  not the registration rule 4 means, and rule 8's "direct iModel navigation" claim does not
+  hold until the ECSchema path registers. Tracked in [open-items.md](open-items.md).
+- **Two ENG implementations with different vocabularies coexist.** `EngService`/`SyncEngAsync`
+  on `Tag`, and `EngProvider` on `EngElement` per the ECSchema. Only the latter is the design
+  going forward. Whether the sandbox path is retired or explicitly marked a simulator is
+  undecided, and the ambiguity has already caused one misreading.
 

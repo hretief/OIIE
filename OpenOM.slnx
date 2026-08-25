@@ -8,7 +8,6 @@
     <Project Path="ISBMProvider/IsbmProvider.csproj" />
     <Project Path="CirProvider/CirProvider.csproj" />
     <Project Path="Oiie.Sandbox.Api/Oiie.Sandbox.Api.csproj" />
-    <Project Path="SimHost/SimHost.csproj" />
   </Folder>
   <Folder Name="/02-Shared/">
     <Project Path="Oiie.Ccom/Oiie.Ccom.csproj" />
@@ -17,8 +16,8 @@
     <Project Path="Oiie.Sandbox.Core/Oiie.Sandbox.Core.csproj" />
   </Folder>
   <Folder Name="/03-Tests/">
-    <Project Path="tests/SimHost.Tests/SimHost.Tests.csproj" />
     <Project Path="tests/EngProvider.E2E.Tests/EngProvider.E2E.Tests.csproj" />
+    <Project Path="tests/Oiie.Sandbox.Tests/Oiie.Sandbox.Tests.csproj" />
   </Folder>
   <Folder Name="/04-Solution Items/">
     <File Path="README.md" />

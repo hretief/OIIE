@@ -260,6 +260,45 @@ that can disagree, and that particular disagreement delivers a handover to the
 wrong twin's subscribers while looking, from the engine's side, like a successful
 publication.
 
+### How ENG's identity travels in the BOD
+
+ENG's native key is a composite — `iModelId`, `ECInstanceId`, `CodeValue` — and no
+single part identifies an element on its own: `ECInstanceId` is unique only within one
+iModel, and `CodeValue` can repeat across the iModels of one iTwin.
+
+CCOM has no elements by those names, so the parts map onto CCOM's existing identity
+fields. The authoritative shape is
+[SyncSegmentsWithoutAttributes.xml](../Sample%20BODs/SyncSegmentsWithoutAttributes.xml),
+which validates against `CCOM.xsd`:
+
+| ENG value | CCOM field |
+|---|---|
+| FederationGuid | `Segment/UUID` |
+| iModelId | `Segment/InfoSource/UUID` |
+| ECInstanceId | `Segment/IDInInfoSource` |
+| CodeValue | `Segment/ShortName` |
+| UserLabel | `Segment/FullName` |
+
+`Segment/UUID` is the FederationGuid unaltered, because that value becomes the CIRID
+and every participant registers its own key against it. An element with no
+FederationGuid is not published at all — see DR-017.
+
+`InfoSource/UUID` carries the iModelId rather than an identifier for "ENG" as a kind
+of system. The distinction is easy to get wrong and expensive to find: a well-formed
+UUID derived from the string `ENG` looks correct on inspection, but leaves a receiver
+holding element `44732` with no way to say which iModel to open it in, which is
+precisely what rule 8 of the FederationGuid guideline promises it can do.
+
+`Segment/Type` carries its own `InfoSource`, not the segment's. Once `InfoSource/UUID`
+means "the iModel", sharing it would assert that the EC class name and the
+`ECInstanceId` are two identifiers within one source, and a receiver composing the
+composite key from that pair would build one that resolves to nothing.
+
+Action codes apply to the whole `Segments` collection through the OAGIS
+`ActionExpression`, not to individual segments. The engine publishes `Replace`, since
+receivers upsert on the sender's identifier and `Replace` makes republication after a
+failed drain idempotent rather than duplicating rows.
+
 The federation id is used rather than a readable site name because names change.
 A corridor renamed or a project re-scoped would break every subscription pointing
 at it; the UUID is assigned once and never moves. The readable name belongs in the

@@ -407,5 +407,5 @@ Write-Host @"
   "Sandbox": { "Environment": "$Environment", "Database": "$databaseName" }
 "@
 Write-Host ""
-Write-Host "Per-participant connection strings are built by SimHost from"
+Write-Host "Per-participant connection strings are built by the Sandbox API from"
 Write-Host "sandbox-sql-$Environment-{participantId}. Nothing needs pasting by hand."

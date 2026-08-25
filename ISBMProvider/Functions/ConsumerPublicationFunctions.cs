@@ -63,7 +63,7 @@ public sealed class ConsumerPublicationFunctions(IChannelStore channels, IMessag
         var resolved = await payloads.ResolveAsync(next.MessageContent);
 
         // Body-level filter (XPath 1.0 / JSONPath). Topics returned = intersection with subscription.
-        if (!filters.Matches(resolved, state.Metadata.FilterExpressions, state.Metadata.FilterNamespaces))
+        if (!filters.Matches(resolved, state.Metadata!.FilterExpressions, state.Metadata.FilterNamespaces))
             return req.NoMessage();
 
         // SETTLE ON READ: complete the broker message and record the read in the cursor —

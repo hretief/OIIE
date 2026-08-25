@@ -10,10 +10,10 @@
 
 | Scenario | File | Trigger |
 | --- | --- | --- |
-| 1 | `SimHost/Scenarios/sc01-design-release.yaml` | ENG promotes a named version |
-| 1 | `SimHost/Scenarios/sc01-greenfield-allocation.yaml` | ENG promotes a named version, with the code allocated rather than authored |
-| 2 | `SimHost/Scenarios/sc02-operations-release.yaml` | A steward approves the tag at REG-LOCATION |
-| 11 | `SimHost/Scenarios/sc11-asset-install.yaml` | A planner signs off a completed work order |
+| 1 | `Oiie.Sandbox.Core/Scenarios/sc01-design-release.yaml` | ENG promotes a named version |
+| 1 | `Oiie.Sandbox.Core/Scenarios/sc01-greenfield-allocation.yaml` | ENG promotes a named version, with the code allocated rather than authored |
+| 2 | `Oiie.Sandbox.Core/Scenarios/sc02-operations-release.yaml` | A steward approves the tag at REG-LOCATION |
+| 11 | `Oiie.Sandbox.Core/Scenarios/sc11-asset-install.yaml` | A planner signs off a completed work order |
 
 ### REG-LOCATION is a release gate
 

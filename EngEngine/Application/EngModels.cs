@@ -56,8 +56,10 @@ public sealed record EngNamedVersion(
 /// the engine answers it by which marker it arrived under.
 ///
 /// FederationGuid is nullable: ENG does not mint it, since assigning a
-/// federation identity is the job of whoever federates. The BOD builder
-/// substitutes a deterministic UUID when it is absent.
+/// federation identity is the job of whoever federates. An element without one
+/// is not published at all -- see EngSegmentsBuilder.IsPublishable. An earlier
+/// version substituted a deterministic UUID here, which fabricated an identity
+/// that would collide with the real one the day someone federated the element.
 /// </summary>
 public sealed record EngElement(
     long ECInstanceId,
