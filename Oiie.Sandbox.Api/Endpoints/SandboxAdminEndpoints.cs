@@ -2536,23 +2536,47 @@ app.MapGet("/admin/eng/tags", async (
 app.MapPost("/admin/eng/tags", async (
     EngService eng, HttpRequest http, AddTagRequest request, CancellationToken ct) =>
 {
-    var tag = await eng.AddTagAsync(
-        request.TagNumber, request.ServiceDescription, request.UnitNumber, request.ClassKey,
-        request.RangeMinimum, request.RangeMaximum, request.ControlAction, request.CodePrefix,
-        ResolveTwin(request.ITwinId, http), ct);
-
-    // The identity is returned because in the allocation case the caller did not
-    // choose either value and has no other way to learn what it was given. The twin
-    // is returned for the same reason: it may have come from a header or a default.
-    return Results.Ok(new
+    try
     {
-        tag.Id,
-        tag.TagNumber,
-        federationId = tag.FederationId,
-        iTwinId = tag.ITwinId,
-        maturity = tag.Maturity.ToString()
-    });
+        var tag = await eng.AddTagAsync(
+            request.TagNumber, request.ServiceDescription, request.UnitNumber, request.ClassKey,
+            request.RangeMinimum, request.RangeMaximum, request.ControlAction, request.CodePrefix,
+            ResolveTwin(request.ITwinId, http), request.FederationId, ct);
+
+        // The identity is returned because in the allocation case the caller did not
+        // choose either value and has no other way to learn what it was given. The twin
+        // is returned for the same reason: it may have come from a header or a default.
+        return Results.Ok(new
+        {
+            tag.Id,
+            tag.TagNumber,
+            federationId = tag.FederationId,
+            iTwinId = tag.ITwinId,
+            maturity = tag.Maturity.ToString()
+        });
+    }
+    catch (InvalidOperationException ex)
+    {
+        // A federation id already in use. 409 rather than 400: the request is
+        // well-formed and the user did nothing malformed -- they pasted a real
+        // identifier that happens to belong to something else, and the state of the
+        // twin is what refuses it.
+        return Results.Conflict(new { error = ex.Message });
+    }
 });
+
+// A candidate identity for an operator who has no register to copy one from.
+//
+// Server-side rather than generated in the browser, so a suggested id is minted by
+// the same service and the same version-7 scheme as one ENG assigns itself. A UUID
+// built in the client would be indistinguishable to a reviewer but would not be
+// time-ordered, and the sandbox is meant to demonstrate the real identity rules
+// rather than something that merely looks like them.
+//
+// Nothing is reserved or persisted. This only answers "what would you have used",
+// and the identity is not real until it is submitted with a segment.
+app.MapGet("/admin/eng/federation-id/suggest", (ITagIdentityService identities) =>
+    Results.Ok(new { federationId = identities.Mint() }));
 
 // The release event. Only a passing validation gate writes outbox rows.
 app.MapPost("/admin/eng/promote", async (
@@ -2795,7 +2819,8 @@ internal sealed record AddTagRequest(
     decimal? RangeMaximum = null,
     string? ControlAction = null,
     string? CodePrefix = null,
-    Guid? ITwinId = null);
+    Guid? ITwinId = null,
+    Guid? FederationId = null);
 
 internal sealed record RegisterTwinRequest(
     Guid ITwinId,

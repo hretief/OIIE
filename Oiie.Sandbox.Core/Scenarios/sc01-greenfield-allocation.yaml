@@ -40,7 +40,10 @@ setup:
   # that it works against whatever has already been issued, so a scenario that only
   # passes on an empty database would be testing the reset, not the allocator.
   channels:
-    - uri: /OIIE-SANDBOX/Enterprise/Site/Eng
+    # Moved with the ENG personality's publisher channel, which is what actually
+    # decides where a release lands. The operations channel below has not moved,
+    # because it is shared with scenarios 2 and 11.
+    - uri: /acme/8f2f5e1c-6a1e-4c8e-9a5c-2b0e7d3f4a11/engineering/publication
       type: Publication
       subscribers:
         - reg-location
@@ -179,7 +182,7 @@ steps:
   # -- REG-LOCATION receives and governs -----------------------------------------
   - at: reg-location
     assert: message_received
-    channel: /OIIE-SANDBOX/Enterprise/Site/Eng
+    channel: /acme/8f2f5e1c-6a1e-4c8e-9a5c-2b0e7d3f4a11/engineering/publication
     verb: Sync
     noun: Segments
     within: 60s
@@ -257,7 +260,7 @@ steps:
 
   - at: reg-location
     assert: message_received
-    channel: /OIIE-SANDBOX/Enterprise/Site/Eng
+    channel: /acme/8f2f5e1c-6a1e-4c8e-9a5c-2b0e7d3f4a11/engineering/publication
     verb: Sync
     noun: SegmentMeshConnections
     within: 60s

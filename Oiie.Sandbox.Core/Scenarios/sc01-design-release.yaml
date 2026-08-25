@@ -43,8 +43,27 @@ setup:
   # Reset first: a stewardship queue left over from a previous run would let scenario 2
   # approve something this run never authored.
   reset: true
+
+  # Channels follow the OIIE naming convention:
+  #
+  #     /{enterprise}/{itwin-federation-id}/{domain}/{type}
+  #
+  # The UUID below is the sandbox's standing iTwin. It is a literal rather than a
+  # name because that is the whole point of the convention: the readable name of a
+  # site changes and the identity does not, so anything that names the site in a URI
+  # breaks the day somebody renames it. It is fixed here rather than generated per
+  # run because scenario 2 has to publish onto the same channels this run subscribed
+  # to, and a fresh id each run would put them on different ones.
+  #
+  # Both legs would carry the same federation id under the convention, since design
+  # and operations are two functions of one twin separated by the domain segment.
+  # Only the engineering leg has been converted so far: the operations channel is
+  # shared with scenarios 2 and 11 and with the MMS and CMS personalities, and moving
+  # it here alone would leave MMS subscribed to a URI nothing publishes to -- which
+  # would make the gate assertion below pass for the wrong reason. It moves when those
+  # scenarios get their own engines.
   channels:
-    - uri: /OIIE-SANDBOX/Enterprise/Site/Eng
+    - uri: /acme/8f2f5e1c-6a1e-4c8e-9a5c-2b0e7d3f4a11/engineering/publication
       type: Publication
       subscribers:
         - reg-location
@@ -133,7 +152,7 @@ steps:
   # -- REG-LOCATION receives and holds ------------------------------------------
   - at: reg-location
     assert: message_received
-    channel: /OIIE-SANDBOX/Enterprise/Site/Eng
+    channel: /acme/8f2f5e1c-6a1e-4c8e-9a5c-2b0e7d3f4a11/engineering/publication
     verb: Sync
     noun: Segments
     within: 60s
@@ -175,7 +194,7 @@ steps:
 
   - at: reg-location
     assert: message_received
-    channel: /OIIE-SANDBOX/Enterprise/Site/Eng
+    channel: /acme/8f2f5e1c-6a1e-4c8e-9a5c-2b0e7d3f4a11/engineering/publication
     verb: Sync
     noun: SegmentMeshConnections
     within: 60s

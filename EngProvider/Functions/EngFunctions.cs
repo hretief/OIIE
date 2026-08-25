@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -111,21 +112,11 @@ public sealed class EngFunctions(IEngDesignStore store, ILogger<EngFunctions> lo
             namedVersionId = parsed;
         }
 
-        bool? released = null;
-        var releasedRaw = query["released"];
+        if (!TryParseOptionalUtc(query["modifiedSince"], out var modifiedSince, out var sinceError))
+            return await ProblemAsync(req, HttpStatusCode.BadRequest, sinceError!, ct);
 
-        if (!string.IsNullOrWhiteSpace(releasedRaw))
-        {
-            if (!bool.TryParse(releasedRaw, out var parsed))
-            {
-                return await ProblemAsync(req, HttpStatusCode.BadRequest,
-                    $"released must be true or false, but was '{releasedRaw}'.", ct);
-            }
-
-            released = parsed;
-        }
-
-        return await OkAsync(req, await store.GetElementsAsync(iModelId, namedVersionId, released, ct), ct);
+        return await OkAsync(req,
+            await store.GetElementsAsync(iModelId, namedVersionId, modifiedSince, ct), ct);
     }
 
     [Function("GetElement")]
@@ -175,21 +166,22 @@ public sealed class EngFunctions(IEngDesignStore store, ILogger<EngFunctions> lo
     }
 
     /// <summary>
-    /// Creates or updates elements within one draft named version.
+    /// Creates or updates elements in an iModel.
     ///
-    /// The version is in the route rather than in each item, so a batch cannot
-    /// span versions and half-succeed.
+    /// The iModel is in the route, not a named version: elements are authored
+    /// into the model itself, and a marker is cut afterwards over whatever is
+    /// then present. One batch is one changeset, so it lands at one position.
     /// </summary>
     [Function("UpsertElements")]
     public async Task<HttpResponseData> UpsertElements(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "named-versions/{namedVersionId}/elements")] HttpRequestData req,
-        string namedVersionId,
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "imodels/{iModelId}/elements")] HttpRequestData req,
+        string iModelId,
         CancellationToken ct)
     {
-        if (!long.TryParse(namedVersionId, out var versionId))
+        if (!Guid.TryParse(iModelId, out var modelId))
         {
             return await ProblemAsync(req, HttpStatusCode.BadRequest,
-                $"Named version identifier must be an integer, but was '{namedVersionId}'.", ct);
+                $"iModel identifier must be a UUID, but was '{iModelId}'.", ct);
         }
 
         ElementUpsert[]? requested;
@@ -210,11 +202,11 @@ public sealed class EngFunctions(IEngDesignStore store, ILogger<EngFunctions> lo
                 "The request carried no elements.", ct);
         }
 
-        var result = await store.UpsertElementsAsync(versionId, requested, ct);
+        var result = await store.UpsertElementsAsync(modelId, requested, ct);
 
         logger.LogInformation(
-            "ENG created {Created}, updated {Updated}, rejected {Rejected} of {Total} element(s) in version {Version}.",
-            result.Created, result.Updated, result.Rejections.Count, requested.Length, versionId);
+            "ENG created {Created}, updated {Updated}, rejected {Rejected} of {Total} element(s) in iModel {IModel}.",
+            result.Created, result.Updated, result.Rejections.Count, requested.Length, modelId);
 
         return await UpsertResponseAsync(
             req, result, result.Elements.Count, result.Rejections, ct);
@@ -232,7 +224,10 @@ public sealed class EngFunctions(IEngDesignStore store, ILogger<EngFunctions> lo
         if (!TryParseOptionalGuid(query["iModelId"], out var iModelId, out var error))
             return await ProblemAsync(req, HttpStatusCode.BadRequest, error!, ct);
 
-        return await OkAsync(req, await store.GetNamedVersionsAsync(iModelId, ct), ct);
+        if (!TryParseOptionalUtc(query["modifiedSince"], out var modifiedSince, out var sinceError))
+            return await ProblemAsync(req, HttpStatusCode.BadRequest, sinceError!, ct);
+
+        return await OkAsync(req, await store.GetNamedVersionsAsync(iModelId, modifiedSince, ct), ct);
     }
 
     [Function("GetNamedVersion")]
@@ -286,15 +281,15 @@ public sealed class EngFunctions(IEngDesignStore store, ILogger<EngFunctions> lo
     }
 
     /// <summary>
-    /// Releases a named version, if the gate allows.
+    /// The elements a marker contains.
     ///
-    /// A refusal is a 409, not a 400: the request is well formed and the caller
-    /// may well be entitled to make it — the server's state is what says no, and
-    /// the same request may succeed once the findings are resolved.
+    /// Derived on read from changeset position rather than stored, so the answer
+    /// is the same however long after the fact it is asked for. This is what a
+    /// consumer fetches after being told a named version exists.
     /// </summary>
-    [Function("ReleaseNamedVersion")]
-    public async Task<HttpResponseData> ReleaseNamedVersion(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "named-versions/{namedVersionId}/release")] HttpRequestData req,
+    [Function("GetNamedVersionElements")]
+    public async Task<HttpResponseData> GetNamedVersionElements(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "named-versions/{namedVersionId}/elements")] HttpRequestData req,
         string namedVersionId,
         CancellationToken ct)
     {
@@ -304,113 +299,11 @@ public sealed class EngFunctions(IEngDesignStore store, ILogger<EngFunctions> lo
                 $"Named version identifier must be an integer, but was '{namedVersionId}'.", ct);
         }
 
-        var result = await store.ReleaseNamedVersionAsync(id, ct);
+        if (await store.FindNamedVersionAsync(id, ct) is null)
+            return await ProblemAsync(req, HttpStatusCode.NotFound, $"No named version '{id}'.", ct);
 
-        if (result.Released)
-        {
-            logger.LogInformation(
-                "ENG released named version {Version} '{Name}' with {Count} element(s).",
-                result.NamedVersionId, result.Name, result.ElementCount);
-
-            return await OkAsync(req, result, ct);
-        }
-
-        logger.LogInformation(
-            "ENG refused to release named version {Version}: {Reason}", id, result.Reason);
-
-        // A version that does not exist is a 404; anything else is a state conflict.
-        var status = result.Reason is not null && result.Reason.StartsWith("No named version")
-            ? HttpStatusCode.NotFound
-            : HttpStatusCode.Conflict;
-
-        return await WriteAsync(req, status, result, ct);
+        return await OkAsync(req, await store.GetNamedVersionElementsAsync(id, ct), ct);
     }
-
-    // ---- Validation findings ----------------------------------------------
-
-    [Function("GetFindings")]
-    public async Task<HttpResponseData> GetFindings(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "named-versions/{namedVersionId}/findings")] HttpRequestData req,
-        string namedVersionId,
-        CancellationToken ct)
-    {
-        if (!long.TryParse(namedVersionId, out var id))
-        {
-            return await ProblemAsync(req, HttpStatusCode.BadRequest,
-                $"Named version identifier must be an integer, but was '{namedVersionId}'.", ct);
-        }
-
-        var query = System.Web.HttpUtility.ParseQueryString(req.Url.Query);
-        var openOnly = !string.Equals(query["all"], "true", StringComparison.OrdinalIgnoreCase);
-
-        return await OkAsync(req, await store.GetFindingsAsync(id, openOnly, ct), ct);
-    }
-
-    [Function("RaiseFinding")]
-    public async Task<HttpResponseData> RaiseFinding(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "named-versions/{namedVersionId}/findings")] HttpRequestData req,
-        string namedVersionId,
-        CancellationToken ct)
-    {
-        if (!long.TryParse(namedVersionId, out var id))
-        {
-            return await ProblemAsync(req, HttpStatusCode.BadRequest,
-                $"Named version identifier must be an integer, but was '{namedVersionId}'.", ct);
-        }
-
-        FindingRequest? body;
-
-        try
-        {
-            body = await JsonSerializer.DeserializeAsync<FindingRequest>(req.Body, Json, ct);
-        }
-        catch (JsonException ex)
-        {
-            return await ProblemAsync(req, HttpStatusCode.BadRequest,
-                $"Malformed request body: {ex.Message}", ct);
-        }
-
-        if (body is null || string.IsNullOrWhiteSpace(body.Message))
-        {
-            return await ProblemAsync(req, HttpStatusCode.BadRequest,
-                "message is required.", ct);
-        }
-
-        var severity = string.IsNullOrWhiteSpace(body.Severity) ? "Error" : body.Severity;
-
-        if (severity is not ("Error" or "Warning"))
-        {
-            return await ProblemAsync(req, HttpStatusCode.BadRequest,
-                $"severity must be Error or Warning, but was '{severity}'.", ct);
-        }
-
-        var created = await store.RaiseFindingAsync(
-            new FindingDraft(id, body.CodeValue, severity, body.Message), ct);
-
-        return await WriteAsync(req, HttpStatusCode.Created, created, ct);
-    }
-
-    [Function("ResolveFinding")]
-    public async Task<HttpResponseData> ResolveFinding(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "findings/{findingId}/resolve")] HttpRequestData req,
-        string findingId,
-        CancellationToken ct)
-    {
-        if (!long.TryParse(findingId, out var id))
-        {
-            return await ProblemAsync(req, HttpStatusCode.BadRequest,
-                $"Finding identifier must be an integer, but was '{findingId}'.", ct);
-        }
-
-        var query = System.Web.HttpUtility.ParseQueryString(req.Url.Query);
-        var resolved = await store.ResolveFindingAsync(id, query["resolvedBy"], ct);
-
-        return resolved
-            ? await OkAsync(req, new { findingId = id, state = "Resolved" }, ct)
-            : await ProblemAsync(req, HttpStatusCode.NotFound,
-                $"No open finding '{id}'.", ct);
-    }
-
     // ---- Health ----------------------------------------------------------
 
     [Function("Health")]
@@ -433,12 +326,6 @@ public sealed class EngFunctions(IEngDesignStore store, ILogger<EngFunctions> lo
 
     // ---- Helpers ---------------------------------------------------------
 
-    /// <summary>
-    /// Body of a raise-finding request. The version comes from the route, so it
-    /// is absent here: two sources for one value could disagree.
-    /// </summary>
-    private sealed record FindingRequest(string? CodeValue, string? Severity, string Message);
-
     private static bool TryParseOptionalGuid(string? raw, out Guid? value, out string? error)
     {
         value = null;
@@ -453,6 +340,35 @@ public sealed class EngFunctions(IEngDesignStore store, ILogger<EngFunctions> lo
         }
 
         value = parsed;
+        return true;
+    }
+
+    /// <summary>
+    /// Parses an optional instant supplied as a query parameter.
+    ///
+    /// Round-trip format is required rather than accepted-if-parseable. A caller
+    /// polling for changes is comparing against timestamps this service stores in
+    /// UTC, and a value carrying no offset would be read in the server's local
+    /// zone -- silently shifting the window by hours and skipping whatever fell
+    /// inside the shift. Demanding an explicit offset makes that impossible to
+    /// express by accident.
+    /// </summary>
+    private static bool TryParseOptionalUtc(string? raw, out DateTime? value, out string? error)
+    {
+        value = null;
+        error = null;
+
+        if (string.IsNullOrWhiteSpace(raw)) return true;
+
+        if (!DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind | DateTimeStyles.AssumeUniversal, out var parsed))
+        {
+            error = $"modifiedSince must be an ISO 8601 instant such as "
+                  + $"'2026-08-24T19:30:00Z', but was '{raw}'.";
+            return false;
+        }
+
+        value = parsed.UtcDateTime;
         return true;
     }
 

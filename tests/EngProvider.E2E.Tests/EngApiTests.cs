@@ -12,7 +12,7 @@ namespace EngProvider.E2E.Tests;
 /// Every assertion here is made through HTTP against a live host and a live
 /// database. The suite deliberately concentrates on the seams that only an
 /// end-to-end run can exercise: route templates, JSON shape on the wire, the
-/// mapping from database rules to status codes, and the release workflow taken
+/// mapping from database rules to status codes, and baseline behaviour taken
 /// as a whole rather than a step at a time.
 /// </summary>
 [Collection("eng-host")]
@@ -93,10 +93,9 @@ public sealed class EngApiTests(EngHostFixture host)
     [Fact]
     public async Task Element_can_be_created_and_read_back_by_code()
     {
-        var version = await CreateDraftAsync("elements-roundtrip");
         var code = UniqueCode("P");
 
-        var result = await UpsertAsync(version, new
+        var result = await UpsertAsync(new
         {
             ecClassId = host.ConcreteClassId,
             codeValue = code,
@@ -112,34 +111,87 @@ public sealed class EngApiTests(EngHostFixture host)
         Assert.Equal(code, element.GetProperty("codeValue").GetString());
         Assert.Equal("Feed pump", element.GetProperty("userLabel").GetString());
 
-        // Maturity is derived from the version, never stored on the element.
-        Assert.False(element.GetProperty("isReleased").GetBoolean());
-        Assert.Equal("Draft", element.GetProperty("namedVersionState").GetString());
+        // Position, not maturity: an element is simply somewhere in the model's
+        // history, and whether a marker has passed over it is asked separately.
+        Assert.True(element.GetProperty("changesetIndex").GetInt32() > 0);
     }
 
     /// <summary>
-    /// Enum values must travel as names. An ordinal survives a schema reorder
-    /// only by luck, and a caller reading 1 has no way to notice it changed.
+    /// A marker is pinned when it is created, not later. If the changeset were
+    /// assigned by some subsequent act, there would be a window in which a
+    /// named version existed without saying what it referred to.
     /// </summary>
     [Fact]
-    public async Task Named_version_state_is_serialized_as_a_name()
+    public async Task Named_version_is_pinned_to_a_changeset_when_created()
     {
-        var version = await CreateDraftAsync("enum-shape");
-        var raw = await Client.GetStringAsync($"api/named-versions/{version}");
+        var version = await CreateMarkerAsync("pinned-on-create");
 
-        Assert.Contains("\"state\":\"Draft\"", raw);
+        var body = await Client.GetFromJsonAsync<JsonElement>(
+            $"api/named-versions/{version}", EngHostFixture.Json);
+
+        Assert.False(string.IsNullOrWhiteSpace(body.GetProperty("changesetId").GetString()));
+        Assert.True(body.GetProperty("changesetIndex").GetInt32() > 0);
+    }
+
+    /// <summary>
+    /// Membership is derived from position, so a marker cut after work exists
+    /// contains that work without anything having been recorded against it.
+    /// </summary>
+    [Fact]
+    public async Task Marker_contains_the_work_authored_before_it()
+    {
+        var before = UniqueCode("BEFORE");
+        await UpsertAsync(new { ecClassId = host.ConcreteClassId, codeValue = before });
+
+        var version = await CreateMarkerAsync("membership");
+
+        var after = UniqueCode("AFTER");
+        await UpsertAsync(new { ecClassId = host.ConcreteClassId, codeValue = after });
+
+        var contents = await Client.GetFromJsonAsync<List<JsonElement>>(
+            $"api/named-versions/{version}/elements", EngHostFixture.Json);
+
+        Assert.Contains(contents!, e => e.GetProperty("codeValue").GetString() == before);
+        Assert.DoesNotContain(contents!, e => e.GetProperty("codeValue").GetString() == after);
+    }
+
+    /// <summary>
+    /// What a marker described has already been published, so it cannot be
+    /// rewritten afterwards. Remediation is forward-only: new work, new marker.
+    /// </summary>
+    [Fact]
+    public async Task Work_below_a_marker_can_no_longer_be_edited()
+    {
+        var code = UniqueCode("FROZEN");
+
+        var created = await UpsertAsync(
+            new { ecClassId = host.ConcreteClassId, codeValue = code });
+
+        var elementId = created.GetProperty("elements")[0]
+            .GetProperty("ecInstanceId").GetInt64();
+
+        await CreateMarkerAsync("freeze");
+
+        var late = await UpsertAsync(new
+        {
+            ecInstanceId = elementId,
+            ecClassId = host.ConcreteClassId,
+            codeValue = code,
+            userLabel = "Edited after the baseline"
+        });
+
+        Assert.NotEmpty(RejectionsOf(late));
     }
 
     [Fact]
     public async Task Duplicate_code_is_rejected_without_losing_the_rest_of_the_batch()
     {
-        var version = await CreateDraftAsync("duplicate-code");
         var duplicated = UniqueCode("DUP");
         var accepted = UniqueCode("OK");
 
-        await UpsertAsync(version, new { ecClassId = host.ConcreteClassId, codeValue = duplicated });
+        await UpsertAsync(new { ecClassId = host.ConcreteClassId, codeValue = duplicated });
 
-        var result = await UpsertAsync(version,
+        var result = await UpsertAsync(
             new { ecClassId = host.ConcreteClassId, codeValue = duplicated },
             new { ecClassId = host.ConcreteClassId, codeValue = accepted });
 
@@ -156,9 +208,7 @@ public sealed class EngApiTests(EngHostFixture host)
     [Fact]
     public async Task Empty_element_batch_is_400()
     {
-        var version = await CreateDraftAsync("empty-batch");
-
-        using var response = await PostJsonAsync($"api/named-versions/{version}/elements", "[]");
+        using var response = await PostJsonAsync($"api/imodels/{host.IModelId}/elements", "[]");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -166,9 +216,8 @@ public sealed class EngApiTests(EngHostFixture host)
     [Fact]
     public async Task Malformed_element_body_is_400_not_500()
     {
-        var version = await CreateDraftAsync("malformed-body");
-
-        using var response = await PostJsonAsync($"api/named-versions/{version}/elements", "{ this is not json");
+        using var response = await PostJsonAsync(
+            $"api/imodels/{host.IModelId}/elements", "{ this is not json");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -181,137 +230,12 @@ public sealed class EngApiTests(EngHostFixture host)
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
-    // ---- The release gate ------------------------------------------------
-
-    /// <summary>
-    /// The workflow this whole system exists to enforce, driven end to end:
-    /// a draft with an open finding cannot be released; once the finding is
-    /// resolved it can; and once released it is frozen.
-    /// </summary>
-    [Fact]
-    public async Task Open_finding_blocks_release_until_resolved_then_version_is_frozen()
-    {
-        var version = await CreateDraftAsync("release-gate");
-        var code = UniqueCode("GATE");
-
-        await UpsertAsync(version, new { ecClassId = host.ConcreteClassId, codeValue = code });
-
-        var finding = await Client.PostAsJsonAsync(
-            $"api/named-versions/{version}/findings",
-            new { codeValue = code, severity = "Error", message = "Missing datasheet." },
-            EngHostFixture.Json);
-
-        Assert.Equal(HttpStatusCode.Created, finding.StatusCode);
-
-        var findingId = (await finding.Content.ReadFromJsonAsync<JsonElement>())
-            .GetProperty("findingId").GetInt64();
-
-        // Refused: well-formed request, but server state says no. That is a 409,
-        // not a 400 and emphatically not a 500.
-        using (var blocked = await Client.PostAsync($"api/named-versions/{version}/release", null))
-        {
-            Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
-
-            var body = await blocked.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.False(body.GetProperty("released").GetBoolean());
-            Assert.NotNull(body.GetProperty("reason").GetString());
-        }
-
-        using (var resolved = await Client.PostAsync($"api/findings/{findingId}/resolve", null))
-        {
-            Assert.Equal(HttpStatusCode.OK, resolved.StatusCode);
-        }
-
-        using (var released = await Client.PostAsync($"api/named-versions/{version}/release", null))
-        {
-            Assert.Equal(HttpStatusCode.OK, released.StatusCode);
-
-            var body = await released.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.True(body.GetProperty("released").GetBoolean());
-            Assert.Equal("Released", body.GetProperty("state").GetString());
-        }
-
-        // The element's maturity follows the version without being restated.
-        var element = await Client.GetFromJsonAsync<JsonElement>(
-            $"api/imodels/{host.IModelId}/elements/by-code/{code}", EngHostFixture.Json);
-
-        Assert.True(element.GetProperty("isReleased").GetBoolean());
-
-        // A release is a handover record; what was handed over cannot be edited.
-        var afterRelease = await UpsertAsync(version,
-            new { ecClassId = host.ConcreteClassId, codeValue = UniqueCode("LATE") });
-
-        Assert.NotEmpty(RejectionsOf(afterRelease));
-        Assert.Equal(0, afterRelease.GetProperty("created").GetInt32());
-    }
-
-    [Fact]
-    public async Task Empty_version_cannot_be_released()
-    {
-        var version = await CreateDraftAsync("empty-version");
-
-        using var response = await Client.PostAsync($"api/named-versions/{version}/release", null);
-
-        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Resolving_an_unknown_finding_is_404()
-    {
-        using var response = await Client.PostAsync("api/findings/999999999/resolve", null);
-
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Findings_route_returns_only_open_findings_when_asked()
-    {
-        var version = await CreateDraftAsync("finding-filter");
-        var code = UniqueCode("FIND");
-
-        await UpsertAsync(version, new { ecClassId = host.ConcreteClassId, codeValue = code });
-
-        using var raised = await Client.PostAsJsonAsync(
-            $"api/named-versions/{version}/findings",
-            new { codeValue = code, severity = "Warning", message = "Check line size." },
-            EngHostFixture.Json);
-
-        var findingId = (await raised.Content.ReadFromJsonAsync<JsonElement>())
-            .GetProperty("findingId").GetInt64();
-
-        await Client.PostAsync($"api/findings/{findingId}/resolve", null);
-
-        // The route filters on ?all=true; anything else means open-only.
-        var open = await Client.GetFromJsonAsync<List<JsonElement>>(
-            $"api/named-versions/{version}/findings", EngHostFixture.Json);
-
-        Assert.DoesNotContain(open!, f => f.GetProperty("findingId").GetInt64() == findingId);
-
-        var all = await Client.GetFromJsonAsync<List<JsonElement>>(
-            $"api/named-versions/{version}/findings?all=true", EngHostFixture.Json);
-
-        Assert.Contains(all!, f => f.GetProperty("findingId").GetInt64() == findingId);
-    }
-
-    [Fact]
-    public async Task Invalid_finding_severity_is_400()
-    {
-        var version = await CreateDraftAsync("bad-severity");
-
-        using var response = await Client.PostAsJsonAsync(
-            $"api/named-versions/{version}/findings",
-            new { severity = "Catastrophic", message = "Nope." },
-            EngHostFixture.Json);
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
     // ---- Helpers ---------------------------------------------------------
 
     private static string UniqueCode(string prefix) =>
         $"{prefix}-{Guid.NewGuid():N}"[..12];
 
-    private async Task<long> CreateDraftAsync(string name)
+    private async Task<long> CreateMarkerAsync(string name)
     {
         using var response = await Client.PostAsJsonAsync("api/named-versions", new
         {
@@ -329,10 +253,10 @@ public sealed class EngApiTests(EngHostFixture host)
         return body.GetProperty("namedVersionId").GetInt64();
     }
 
-    private async Task<JsonElement> UpsertAsync(long namedVersionId, params object[] elements)
+    private async Task<JsonElement> UpsertAsync(params object[] elements)
     {
         using var response = await Client.PostAsJsonAsync(
-            $"api/named-versions/{namedVersionId}/elements", elements, EngHostFixture.Json);
+            $"api/imodels/{host.IModelId}/elements", elements, EngHostFixture.Json);
 
         Assert.True(response.IsSuccessStatusCode,
             $"Upsert returned {(int)response.StatusCode}. Host output:{Environment.NewLine}{host.HostOutput}");

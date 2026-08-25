@@ -10,8 +10,14 @@ identifierStyle: isa-tag
 
 # Publishes only. The self-subscription used for the phase 0 loopback is gone now
 # that a real receiver exists.
+#
+# The URI follows the OIIE naming convention, /{enterprise}/{itwin-federation-id}/
+# {domain}/{type}. The federation id is the sandbox's standing iTwin and has to match
+# the one in the scenarios byte for byte: this list is what the participant actually
+# publishes to, while the scenario's setup.channels only provisions and asserts, so a
+# divergence shows up as a run where nothing arrives and nothing says why.
 channels:
-  - channelUri: /OIIE-SANDBOX/Enterprise/Site/Eng
+  - channelUri: /acme/8f2f5e1c-6a1e-4c8e-9a5c-2b0e7d3f4a11/engineering/publication
     role: Publisher
     topics:
       - Segments

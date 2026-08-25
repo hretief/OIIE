@@ -26,12 +26,10 @@ public sealed class SqlEngDesignStore(
 {
     private readonly EngOptions _options = options.Value;
 
-    // Error numbers THROWn by the schema's gate triggers. Matching on these
+    // Error number THROWn by the schema's immutability trigger. Matching on this
     // rather than on message text: the text is a UI string and may be reworded,
     // the number is the contract.
-    private const int ErrFindingsOpen = 50001;
-    private const int ErrVersionEmpty = 50002;
-    private const int ErrReleasedImmutable = 50003;
+    private const int ErrBaselineImmutable = 50003;
 
     private async Task<SqlConnection> OpenAsync(CancellationToken ct)
     {
@@ -162,10 +160,7 @@ public sealed class SqlEngDesignStore(
             UserLabel,
             DisplayName,
             ParentECInstanceId,
-            NamedVersionId,
-            NamedVersionName,
-            NamedVersionState,
-            IsReleased,
+            ChangesetIndex,
             CreatedUtc,
             ModifiedUtc
         FROM dbo.vElement
@@ -181,15 +176,9 @@ public sealed class SqlEngDesignStore(
         r.IsDBNull(6) ? null : r.GetString(6),
         r.IsDBNull(7) ? null : r.GetString(7),
         r.IsDBNull(8) ? null : r.GetInt64(8),
-        r.GetInt64(9),
-        r.GetString(10),
-        ParseState(r.GetString(11)),
-        r.GetBoolean(12),
-        r.GetDateTime(13),
-        r.GetDateTime(14));
-
-    private static NamedVersionState ParseState(string state) =>
-        state == "Released" ? NamedVersionState.Released : NamedVersionState.Draft;
+        r.GetInt32(9),
+        r.GetDateTime(10),
+        r.GetDateTime(11));
 
     public async Task<EngElement?> FindElementAsync(long ecInstanceId, CancellationToken ct)
     {
@@ -215,21 +204,59 @@ public sealed class SqlEngDesignStore(
     }
 
     public async Task<IReadOnlyList<EngElement>> GetElementsAsync(
-        Guid? iModelId, long? namedVersionId, bool? released, CancellationToken ct)
+        Guid? iModelId, long? namedVersionId,
+        DateTime? modifiedSince, CancellationToken ct)
     {
+        // Ordered by ModifiedUtc for an incremental read so a caller that stops
+        // partway through resumes without a gap; by code otherwise, which is the
+        // order a person reading a list expects.
+        var order = modifiedSince is null
+            ? "ORDER BY CodeValue, ECInstanceId"
+            : "ORDER BY ModifiedUtc, ECInstanceId";
+
+        // Membership is derived, so filtering by named version asks the view
+        // rather than a column: the element itself does not know which markers
+        // enclose it.
         var sql = $"""
             {ElementSelect}
             WHERE (@iModelId IS NULL OR iModelId = @iModelId)
-              AND (@namedVersionId IS NULL OR NamedVersionId = @namedVersionId)
-              AND (@released IS NULL OR IsReleased = @released)
-            ORDER BY CodeValue, ECInstanceId;
+              AND (@modifiedSince IS NULL OR ModifiedUtc >= @modifiedSince)
+              AND (@namedVersionId IS NULL OR ECInstanceId IN (
+                    SELECT ECInstanceId FROM dbo.vNamedVersionElement
+                     WHERE NamedVersionId = @namedVersionId))
+            {order};
             """;
 
         await using var cn = await OpenAsync(ct);
         await using var cmd = new SqlCommand(sql, cn);
         cmd.Parameters.AddWithValue("@iModelId", (object?)iModelId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@namedVersionId", (object?)namedVersionId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@released", (object?)released ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@modifiedSince", (object?)modifiedSince ?? DBNull.Value);
+
+        var elements = new List<EngElement>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct)) elements.Add(ReadElement(reader));
+        return elements;
+    }
+
+    /// <summary>
+    /// The elements a marker encloses, straight from the derivation view so this
+    /// and every other caller get the same answer.
+    /// </summary>
+    public async Task<IReadOnlyList<EngElement>> GetNamedVersionElementsAsync(
+        long namedVersionId, CancellationToken ct)
+    {
+        var sql = $"""
+            {ElementSelect}
+            WHERE ECInstanceId IN (
+                SELECT ECInstanceId FROM dbo.vNamedVersionElement
+                 WHERE NamedVersionId = @id)
+            ORDER BY ChangesetIndex, ECInstanceId;
+            """;
+
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand(sql, cn);
+        cmd.Parameters.AddWithValue("@id", namedVersionId);
 
         var elements = new List<EngElement>();
         await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -238,7 +265,7 @@ public sealed class SqlEngDesignStore(
     }
 
     public async Task<ElementUpsertResult> UpsertElementsAsync(
-        long namedVersionId, IReadOnlyList<ElementUpsert> elements, CancellationToken ct)
+        Guid iModelId, IReadOnlyList<ElementUpsert> elements, CancellationToken ct)
     {
         var upserted = new List<UpsertedElement>();
         var rejections = new List<UpsertRejection>();
@@ -247,30 +274,25 @@ public sealed class SqlEngDesignStore(
 
         await using var cn = await OpenAsync(ct);
 
-        // The version determines the target iModel and whether writing is allowed
-        // at all. Resolved once, before the transaction: if the version is
-        // released or absent, no item in the batch can succeed.
-        var version = await ReadVersionTargetAsync(cn, null, namedVersionId, ct);
-
-        if (version is null)
+        // The iModel must exist before anything can be positioned within it.
+        // Resolved once, before the transaction: if it is absent, no item in the
+        // batch can succeed.
+        if (!await IModelExistsAsync(cn, iModelId, ct))
         {
             return new ElementUpsertResult([], [.. elements.Select(e => new UpsertRejection(
-                KeyOf(e), $"No named version '{namedVersionId}'.", false))]);
-        }
-
-        if (version.Value.State == "Released")
-        {
-            return new ElementUpsertResult([], [.. elements.Select(e => new UpsertRejection(
-                KeyOf(e),
-                "That named version is released. A release is a handover record; "
-                    + "new work belongs in a new draft version.",
-                false))]);
+                KeyOf(e), $"No iModel '{iModelId}'.", false))]);
         }
 
         await using var tx = (SqlTransaction)await cn.BeginTransactionAsync(ct);
 
         try
         {
+            // One position for the whole batch: these edits were made together,
+            // so a marker cut afterwards should enclose all of them or none.
+            // Allocated inside the transaction under UPDLOCK/HOLDLOCK, so two
+            // concurrent batches cannot claim the same position.
+            var changesetIndex = await AllocateChangesetIndexAsync(cn, tx, iModelId, ct);
+
             foreach (var element in elements)
             {
                 if (element.ECClassId <= 0)
@@ -283,9 +305,9 @@ public sealed class SqlEngDesignStore(
                 try
                 {
                     upserted.Add(await UpsertOneElementAsync(
-                        cn, tx, namedVersionId, version.Value.IModelId, element, ct));
+                        cn, tx, iModelId, changesetIndex, element, ct));
                 }
-                catch (SqlException ex) when (!IsTransient(ex))
+                catch (SqlException ex) when (!IsTransient(ex) && !IsFatalToBatch(ex))
                 {
                     // A per-item fault: a duplicate code, an abstract class, a
                     // parent in another iModel. Reject the item and keep going,
@@ -298,7 +320,7 @@ public sealed class SqlEngDesignStore(
         }
         catch (SqlException ex)
         {
-            await tx.RollbackAsync(ct);
+            await RollbackQuietlyAsync(tx, ct);
 
             return new ElementUpsertResult(
                 [],
@@ -307,6 +329,34 @@ public sealed class SqlEngDesignStore(
         }
 
         return new ElementUpsertResult(upserted, rejections);
+    }
+
+    /// <summary>
+    /// True for faults that take the whole transaction down with them.
+    ///
+    /// A THROW inside a trigger dooms the transaction: the statement after it
+    /// cannot run, so there is nothing left to continue with. A constraint
+    /// violation is different -- only that one statement failed, and the batch
+    /// carries on. Treating the two alike is what turns a clean rejection into
+    /// "this SqlTransaction has completed".
+    /// </summary>
+    private static bool IsFatalToBatch(SqlException ex) =>
+        ex.Number == ErrBaselineImmutable;
+
+    /// <summary>
+    /// Rolls back if there is still anything to roll back. A doomed transaction
+    /// has already been undone by the server, and asking again throws an
+    /// exception that would replace the real cause with a misleading one.
+    /// </summary>
+    private static async Task RollbackQuietlyAsync(SqlTransaction tx, CancellationToken ct)
+    {
+        try
+        {
+            await tx.RollbackAsync(ct);
+        }
+        catch (InvalidOperationException)
+        {
+        }
     }
 
     private static string KeyOf(ElementUpsert e) =>
@@ -323,13 +373,16 @@ public sealed class SqlEngDesignStore(
     private static async Task<UpsertedElement> UpsertOneElementAsync(
         SqlConnection cn,
         SqlTransaction tx,
-        long namedVersionId,
         Guid iModelId,
+        int changesetIndex,
         ElementUpsert element,
         CancellationToken ct)
     {
         if (element.ECInstanceId is { } id)
         {
+            // The position moves forward on edit: a change is itself new work,
+            // and leaving the element at its original position would place the
+            // edit inside a baseline that was cut before it happened.
             const string update = """
                 UPDATE dbo.Element
                    SET ECClassId          = @classId,
@@ -337,12 +390,19 @@ public sealed class SqlEngDesignStore(
                        CodeValue          = @code,
                        UserLabel          = @label,
                        DisplayName        = @display,
-                       ParentECInstanceId = @parent
+                       ParentECInstanceId = @parent,
+                       -- Set when supplied, left alone when not. An update that
+                       -- omitted the guid would otherwise revoke an identity
+                       -- other systems are already holding, over a field the
+                       -- caller never mentioned.
+                       FederationGuid     = COALESCE(@federationGuid, FederationGuid),
+                       ChangesetIndex     = @changesetIndex
                  WHERE ECInstanceId = @id;
                 """;
 
             await using var cmd = new SqlCommand(update, cn, tx);
             cmd.Parameters.AddWithValue("@id", id);
+            cmd.Parameters.AddWithValue("@changesetIndex", changesetIndex);
             AddElementParameters(cmd, element);
 
             var affected = await cmd.ExecuteNonQueryAsync(ct);
@@ -362,12 +422,13 @@ public sealed class SqlEngDesignStore(
 
             INSERT INTO dbo.Element
                 (ECClassId, ECClassModifier, CodeValue, UserLabel, DisplayName,
-                 ParentECInstanceId, iModelId, NamedVersionId)
+                 ParentECInstanceId, iModelId, ChangesetIndex, FederationGuid)
             OUTPUT inserted.ECInstanceId INTO @new (ECInstanceId)
             VALUES
                 (@classId,
                  (SELECT ClassModifier FROM dbo.ECClass WHERE ECClassId = @classId),
-                 @code, @label, @display, @parent, @iModelId, @namedVersionId);
+                 @code, @label, @display, @parent, @iModelId, @changesetIndex,
+                 @federationGuid);
 
             SELECT ECInstanceId FROM @new;
             """;
@@ -375,10 +436,54 @@ public sealed class SqlEngDesignStore(
         await using var insertCmd = new SqlCommand(insert, cn, tx);
         AddElementParameters(insertCmd, element);
         insertCmd.Parameters.AddWithValue("@iModelId", iModelId);
-        insertCmd.Parameters.AddWithValue("@namedVersionId", namedVersionId);
+        insertCmd.Parameters.AddWithValue("@changesetIndex", changesetIndex);
 
         var newId = (long)(await insertCmd.ExecuteScalarAsync(ct))!;
         return new UpsertedElement(newId, element.CodeValue, true);
+    }
+
+    private static async Task<bool> IModelExistsAsync(
+        SqlConnection cn, Guid iModelId, CancellationToken ct)
+    {
+        await using var cmd = new SqlCommand(
+            "SELECT 1 FROM dbo.iModel WHERE iModelId = @id;", cn);
+        cmd.Parameters.AddWithValue("@id", iModelId);
+        return await cmd.ExecuteScalarAsync(ct) is not null;
+    }
+
+    /// <summary>
+    /// Takes the next changeset position in an iModel.
+    ///
+    /// The next position is one past the highest already in use by either an
+    /// element or a marker, so a position is never reused and work can never
+    /// land at or below an existing baseline.
+    ///
+    /// UPDLOCK, HOLDLOCK because this is a read-then-write: without it two
+    /// concurrent writers read the same maximum and both claim it, which for a
+    /// marker collides on the unique index and for elements silently interleaves
+    /// two batches at one position.
+    /// </summary>
+    private static async Task<int> AllocateChangesetIndexAsync(
+        SqlConnection cn, SqlTransaction tx, Guid iModelId, CancellationToken ct)
+    {
+        const string sql = """
+            SELECT 1 + ISNULL(
+                (
+                    SELECT MAX(used.ChangesetIndex)
+                    FROM
+                    (
+                        SELECT ChangesetIndex FROM dbo.Element WITH (UPDLOCK, HOLDLOCK)
+                         WHERE iModelId = @iModelId
+                        UNION ALL
+                        SELECT ChangesetIndex FROM dbo.NamedVersion WITH (UPDLOCK, HOLDLOCK)
+                         WHERE iModelId = @iModelId
+                    ) AS used
+                ), 0);
+            """;
+
+        await using var cmd = new SqlCommand(sql, cn, tx);
+        cmd.Parameters.AddWithValue("@iModelId", iModelId);
+        return (int)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
     private static void AddElementParameters(SqlCommand cmd, ElementUpsert e)
@@ -388,6 +493,7 @@ public sealed class SqlEngDesignStore(
         cmd.Parameters.AddWithValue("@label", (object?)e.UserLabel ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@display", (object?)e.DisplayName ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@parent", (object?)e.ParentECInstanceId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@federationGuid", (object?)e.FederationGuid ?? DBNull.Value);
     }
 
     // ---- Named versions ---------------------------------------------------
@@ -395,44 +501,53 @@ public sealed class SqlEngDesignStore(
     private const string VersionSelect = """
         SELECT
             nv.NamedVersionId,
+            nv.VersionGuid,
             nv.iModelId,
             nv.Name,
             nv.Description,
-            nv.State,
+            nv.ChangesetId,
+            nv.ChangesetIndex,
             nv.CreatedBy,
             nv.CreatedUtc,
-            nv.ReleasedUtc,
-            (SELECT COUNT(*) FROM dbo.Element AS e
-              WHERE e.NamedVersionId = nv.NamedVersionId),
-            (SELECT COUNT(*) FROM dbo.ValidationFinding AS f
-              WHERE f.NamedVersionId = nv.NamedVersionId AND f.State = N'Open')
+            nv.ModifiedUtc,
+            (SELECT COUNT(*) FROM dbo.vNamedVersionElement AS m
+              WHERE m.NamedVersionId = nv.NamedVersionId)
         FROM dbo.NamedVersion AS nv
         """;
 
     private static EngNamedVersion ReadVersion(SqlDataReader r) => new(
         r.GetInt64(0),
         r.GetGuid(1),
-        r.GetString(2),
-        r.IsDBNull(3) ? null : r.GetString(3),
-        ParseState(r.GetString(4)),
+        r.GetGuid(2),
+        r.GetString(3),
+        r.IsDBNull(4) ? null : r.GetString(4),
         r.GetString(5),
-        r.GetDateTime(6),
-        r.IsDBNull(7) ? null : r.GetDateTime(7),
-        r.GetInt32(8),
-        r.GetInt32(9));
+        r.GetInt32(6),
+        r.GetString(7),
+        r.GetDateTime(8),
+        r.GetDateTime(9),
+        r.GetInt32(10));
 
     public async Task<IReadOnlyList<EngNamedVersion>> GetNamedVersionsAsync(
-        Guid? iModelId, CancellationToken ct)
+        Guid? iModelId, DateTime? modifiedSince, CancellationToken ct)
     {
+        // Newest first for a browsing caller; oldest change first for an
+        // incremental one, which has to process in the order things happened.
+        var order = modifiedSince is null
+            ? "ORDER BY nv.CreatedUtc DESC"
+            : "ORDER BY nv.ModifiedUtc, nv.NamedVersionId";
+
         var sql = $"""
             {VersionSelect}
             WHERE (@iModelId IS NULL OR nv.iModelId = @iModelId)
-            ORDER BY nv.CreatedUtc DESC;
+              AND (@modifiedSince IS NULL OR nv.ModifiedUtc >= @modifiedSince)
+            {order};
             """;
 
         await using var cn = await OpenAsync(ct);
         await using var cmd = new SqlCommand(sql, cn);
         cmd.Parameters.AddWithValue("@iModelId", (object?)iModelId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@modifiedSince", (object?)modifiedSince ?? DBNull.Value);
 
         var versions = new List<EngNamedVersion>();
         await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -458,215 +573,72 @@ public sealed class SqlEngDesignStore(
         return await reader.ReadAsync(ct) ? ReadVersion(reader) : null;
     }
 
-    private static async Task<(Guid IModelId, string State)?> ReadVersionTargetAsync(
-        SqlConnection cn, SqlTransaction? tx, long namedVersionId, CancellationToken ct)
-    {
-        await using var cmd = new SqlCommand(
-            "SELECT iModelId, State FROM dbo.NamedVersion WHERE NamedVersionId = @id;", cn, tx);
-        cmd.Parameters.AddWithValue("@id", namedVersionId);
-
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        return await reader.ReadAsync(ct)
-            ? (reader.GetGuid(0), reader.GetString(1))
-            : null;
-    }
-
+    /// <summary>
+    /// Creates the marker, pinned at the iModel's current position.
+    ///
+    /// One transaction, because allocating the position and writing the row that
+    /// claims it is a read-then-write: a marker created between the two would
+    /// leave this one pinned where work has since landed.
+    ///
+    /// A real iModels pins a named version to a changeset it already has; this
+    /// emulation has no changeset history, so an identifier is synthesised from
+    /// the version GUID. It is meaningful only inside ENG: it describes a
+    /// position in this model's own history and means nothing to any other
+    /// participant, so nothing downstream may key or reconcile against it.
+    /// </summary>
     public async Task<EngNamedVersion> CreateNamedVersionAsync(
         NamedVersionDraft draft, CancellationToken ct)
     {
-        // State is not a parameter. A version is created as a Draft and reaches
-        // Released only through the gate; accepting it here would be a way past.
         const string sql = """
-            INSERT INTO dbo.NamedVersion (iModelId, Name, Description, CreatedBy)
+            INSERT INTO dbo.NamedVersion
+                (iModelId, Name, Description, CreatedBy, ChangesetIndex, ChangesetId)
             OUTPUT inserted.NamedVersionId
-            VALUES (@iModelId, @name, @description, @createdBy);
+            VALUES
+                (@iModelId, @name, @description, @createdBy, @changesetIndex,
+                 CONVERT(VARCHAR(64),
+                     HASHBYTES('SHA2_256',
+                         CONVERT(NVARCHAR(100), NEWID())
+                         + CONVERT(NVARCHAR(50), SYSUTCDATETIME())), 2));
             """;
 
         await using var cn = await OpenAsync(ct);
-        await using var cmd = new SqlCommand(sql, cn);
-        cmd.Parameters.AddWithValue("@iModelId", draft.IModelId);
-        cmd.Parameters.AddWithValue("@name", draft.Name);
-        cmd.Parameters.AddWithValue("@description", (object?)draft.Description ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@createdBy", draft.CreatedBy ?? "system");
+        await using var tx = (SqlTransaction)await cn.BeginTransactionAsync(ct);
 
-        var id = (long)(await cmd.ExecuteScalarAsync(ct))!;
+        long id;
+
+        try
+        {
+            var changesetIndex = await AllocateChangesetIndexAsync(cn, tx, draft.IModelId, ct);
+
+            await using var cmd = new SqlCommand(sql, cn, tx);
+            cmd.Parameters.AddWithValue("@iModelId", draft.IModelId);
+            cmd.Parameters.AddWithValue("@name", draft.Name);
+            cmd.Parameters.AddWithValue("@description", (object?)draft.Description ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@createdBy", draft.CreatedBy ?? "system");
+            cmd.Parameters.AddWithValue("@changesetIndex", changesetIndex);
+
+            id = (long)(await cmd.ExecuteScalarAsync(ct))!;
+
+            await tx.CommitAsync(ct);
+        }
+        catch
+        {
+            await RollbackQuietlyAsync(tx, ct);
+            throw;
+        }
 
         return await FindVersionAsync(cn, null, id, ct)
             ?? throw new InvalidOperationException($"Named version '{id}' vanished after insert.");
     }
 
     /// <summary>
-    /// Attempts the release and lets the database decide.
-    ///
-    /// The gate conditions are not re-checked here first. Checking in the
-    /// application and then relying on the trigger would be two rules that can
-    /// disagree, and the check-then-act window is exactly when another caller
-    /// raises a finding. The UPDATE is issued, and a refusal is translated.
-    /// </summary>
-    public async Task<ReleaseResult> ReleaseNamedVersionAsync(
-        long namedVersionId, CancellationToken ct)
-    {
-        await using var cn = await OpenAsync(ct);
-
-        var before = await FindVersionAsync(cn, null, namedVersionId, ct);
-
-        if (before is null)
-        {
-            return new ReleaseResult(
-                false, namedVersionId, string.Empty, NamedVersionState.Draft, 0,
-                $"No named version '{namedVersionId}'.", []);
-        }
-
-        if (before.State == NamedVersionState.Released)
-        {
-            // Already where the caller wants it. Reporting success on a no-op
-            // would imply this call released it.
-            return new ReleaseResult(
-                false, namedVersionId, before.Name, before.State, before.ElementCount,
-                "That named version is already released.",
-                await ReadFindingsAsync(cn, null, namedVersionId, openOnly: true, ct));
-        }
-
-        const string release = """
-            UPDATE dbo.NamedVersion
-               SET State = N'Released', ReleasedUtc = SYSUTCDATETIME()
-             WHERE NamedVersionId = @id;
-            """;
-
-        try
-        {
-            await using var cmd = new SqlCommand(release, cn);
-            cmd.Parameters.AddWithValue("@id", namedVersionId);
-            await cmd.ExecuteNonQueryAsync(ct);
-        }
-        catch (SqlException ex) when (ex.Number is ErrFindingsOpen or ErrVersionEmpty)
-        {
-            var reason = ex.Number == ErrFindingsOpen
-                ? "Validation findings are still open against this version."
-                : "This version contains no elements.";
-
-            return new ReleaseResult(
-                false, namedVersionId, before.Name, before.State, before.ElementCount,
-                reason,
-                await ReadFindingsAsync(cn, null, namedVersionId, openOnly: true, ct));
-        }
-
-        var after = await FindVersionAsync(cn, null, namedVersionId, ct)
-            ?? throw new InvalidOperationException($"Named version '{namedVersionId}' vanished.");
-
-        return new ReleaseResult(
-            true, after.NamedVersionId, after.Name, after.State, after.ElementCount, null, []);
-    }
-
-    // ---- Validation findings ----------------------------------------------
-
-    private const string FindingSelect = """
-        SELECT
-            FindingId, NamedVersionId, CodeValue, Severity, Message,
-            State, CreatedUtc, ResolvedUtc, ResolvedBy
-        FROM dbo.ValidationFinding
-        """;
-
-    private static EngValidationFinding ReadFinding(SqlDataReader r) => new(
-        r.GetInt64(0),
-        r.GetInt64(1),
-        r.IsDBNull(2) ? null : r.GetString(2),
-        r.GetString(3),
-        r.GetString(4),
-        r.GetString(5),
-        r.GetDateTime(6),
-        r.IsDBNull(7) ? null : r.GetDateTime(7),
-        r.IsDBNull(8) ? null : r.GetString(8));
-
-    public async Task<IReadOnlyList<EngValidationFinding>> GetFindingsAsync(
-        long namedVersionId, bool openOnly, CancellationToken ct)
-    {
-        await using var cn = await OpenAsync(ct);
-        return await ReadFindingsAsync(cn, null, namedVersionId, openOnly, ct);
-    }
-
-    private static async Task<IReadOnlyList<EngValidationFinding>> ReadFindingsAsync(
-        SqlConnection cn, SqlTransaction? tx, long namedVersionId, bool openOnly,
-        CancellationToken ct)
-    {
-        var sql = $"""
-            {FindingSelect}
-            WHERE NamedVersionId = @id
-              AND (@openOnly = 0 OR State = N'Open')
-            ORDER BY CreatedUtc, FindingId;
-            """;
-
-        await using var cmd = new SqlCommand(sql, cn, tx);
-        cmd.Parameters.AddWithValue("@id", namedVersionId);
-        cmd.Parameters.AddWithValue("@openOnly", openOnly);
-
-        var findings = new List<EngValidationFinding>();
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct)) findings.Add(ReadFinding(reader));
-        return findings;
-    }
-
-    public async Task<EngValidationFinding> RaiseFindingAsync(
-        FindingDraft draft, CancellationToken ct)
-    {
-        const string sql = """
-            INSERT INTO dbo.ValidationFinding (NamedVersionId, CodeValue, Severity, Message)
-            OUTPUT inserted.FindingId
-            VALUES (@versionId, @code, @severity, @message);
-            """;
-
-        await using var cn = await OpenAsync(ct);
-        await using var cmd = new SqlCommand(sql, cn);
-        cmd.Parameters.AddWithValue("@versionId", draft.NamedVersionId);
-        cmd.Parameters.AddWithValue("@code", (object?)draft.CodeValue ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@severity", draft.Severity);
-        cmd.Parameters.AddWithValue("@message", draft.Message);
-
-        var id = (long)(await cmd.ExecuteScalarAsync(ct))!;
-
-        await using var read = new SqlCommand($"{FindingSelect} WHERE FindingId = @id;", cn);
-        read.Parameters.AddWithValue("@id", id);
-
-        await using var reader = await read.ExecuteReaderAsync(ct);
-        return await reader.ReadAsync(ct)
-            ? ReadFinding(reader)
-            : throw new InvalidOperationException($"Finding '{id}' vanished after insert.");
-    }
-
-    public async Task<bool> ResolveFindingAsync(
-        long findingId, string? resolvedBy, CancellationToken ct)
-    {
-        // Guarded on State = 'Open' so re-resolving reports false rather than
-        // silently restamping who closed it and when.
-        const string sql = """
-            UPDATE dbo.ValidationFinding
-               SET State = N'Resolved',
-                   ResolvedUtc = SYSUTCDATETIME(),
-                   ResolvedBy = @by
-             WHERE FindingId = @id AND State = N'Open';
-            """;
-
-        await using var cn = await OpenAsync(ct);
-        await using var cmd = new SqlCommand(sql, cn);
-        cmd.Parameters.AddWithValue("@id", findingId);
-        cmd.Parameters.AddWithValue("@by", resolvedBy ?? "system");
-
-        return await cmd.ExecuteNonQueryAsync(ct) > 0;
-    }
-
-    // ---- Error translation ------------------------------------------------
-
-    /// <summary>
     /// Turns a SQL fault into something a caller can act on.
-    ///
-    /// The raw message names constraints, which is an internal detail and tells
-    /// an API caller nothing they can use.
     /// </summary>
     private static string Explain(SqlException ex) => ex.Number switch
     {
-        ErrReleasedImmutable =>
-            "That element belongs to a released named version and cannot be changed. "
-                + "New work belongs in a new draft version.",
+        ErrBaselineImmutable =>
+            "That element is at or below the most recent named version and cannot be changed. "
+                + "Author new work and create a new named version instead.",
 
         // 2601/2627 are the two duplicate-key numbers: unique index and unique
         // constraint respectively.
@@ -689,10 +661,8 @@ public sealed class SqlEngDesignStore(
         547 when ex.Message.Contains("FK_Element_Parent") =>
             "The parent element does not exist in this iModel.",
 
-        547 when ex.Message.Contains("FK_Element_NamedVersion") =>
-            "That named version does not belong to this iModel.",
-
-        547 => "The request references something that does not exist.",
+        547 =>
+            "The request references something that does not exist.",
 
         _ => ex.Message
     };

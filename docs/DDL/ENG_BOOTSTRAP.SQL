@@ -261,9 +261,10 @@ GO
    -- the three above it are Abstract and ENG.SQL would reject an Element
    created on any of them.
 
-   It is created into an open Draft named version, because ENG.SQL requires
-   every element to belong to one. The version is left in Draft: bootstrapping
-   seeds work in progress, it does not perform a handover.
+   No named version is created. Bootstrapping seeds work, it does not cut a
+   baseline: a marker here would freeze the seed and leave the first real
+   authoring session unable to touch it. The element sits at changeset 1, above
+   nothing, and the first marker anyone creates will pick it up.
 
    ECClassModifier is read from ECClass rather than written as a literal; the
    composite FK in ENG.SQL requires the two to agree.
@@ -272,24 +273,6 @@ GO
    yet, and ENG does not mint that identifier for itself.
    ============================================================================ */
 DECLARE @RootiModelId UNIQUEIDENTIFIER = (SELECT TOP 1 iModelId FROM #BootstrapIds);
-
-INSERT INTO dbo.NamedVersion (iModelId, Name, Description, CreatedBy)
-SELECT
-    @RootiModelId,
-    N'Initial',
-    N'Initial draft created by bootstrap',
-    N'bootstrap'
-WHERE NOT EXISTS
-(
-    SELECT 1 FROM dbo.NamedVersion
-    WHERE iModelId = @RootiModelId AND Name = N'Initial'
-);
-
-DECLARE @RootNamedVersionId BIGINT =
-(
-    SELECT NamedVersionId FROM dbo.NamedVersion
-    WHERE iModelId = @RootiModelId AND Name = N'Initial'
-);
 
 DECLARE @RootClassId BIGINT =
 (
@@ -305,8 +288,8 @@ DECLARE @RootClassModifier NVARCHAR(20) =
     SELECT ClassModifier FROM dbo.ECClass WHERE ECClassId = @RootClassId
 );
 
-IF @RootiModelId IS NULL OR @RootClassId IS NULL OR @RootNamedVersionId IS NULL
-    THROW 50000, 'Bootstrap identifiers, root class or named version missing; cannot create root element.', 1;
+IF @RootiModelId IS NULL OR @RootClassId IS NULL
+    THROW 50000, 'Bootstrap identifiers or root class missing; cannot create root element.', 1;
 
 INSERT INTO dbo.Element
 (
@@ -317,7 +300,7 @@ INSERT INTO dbo.Element
     DisplayName,
     ParentECInstanceId,
     iModelId,
-    NamedVersionId
+    ChangesetIndex
 )
 SELECT
     @RootClassId,
@@ -327,7 +310,7 @@ SELECT
     N'ENG Root',
     NULL,
     @RootiModelId,
-    @RootNamedVersionId
+    1
 WHERE NOT EXISTS
 (
     SELECT 1 FROM dbo.Element

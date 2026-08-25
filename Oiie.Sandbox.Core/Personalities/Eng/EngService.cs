@@ -116,6 +116,19 @@ public sealed class EngService(
     /// <paramref name="twinId"/> names the plant being designed. It is what makes the
     /// tag number unambiguous: the same TIC-106 in two twins is two instruments, and
     /// the upsert below must not treat one as an edit of the other.
+    ///
+    /// <paramref name="federationId"/> is the identity the entity already has
+    /// elsewhere -- a tag register, a handover spreadsheet, an earlier project. When
+    /// given it is adopted verbatim, because the whole purpose of a federated
+    /// identifier is that two systems can hold the same one; minting a fresh id for
+    /// something already identified would create a second identity for one pump and
+    /// leave nothing to indicate they are the same. When omitted ENG mints, which is
+    /// its right as the design tool: a tag first drawn here has no prior identity to
+    /// adopt.
+    ///
+    /// Ignored on edit. The identity is fixed for the entity's whole lifecycle, and
+    /// letting an edit reassign it would silently orphan every downstream record
+    /// already keyed to the old value.
     /// </summary>
     public async Task<Tag> AddTagAsync(
         string? tagNumber,
@@ -127,6 +140,7 @@ public sealed class EngService(
         string? controlAction = null,
         string? codePrefix = null,
         Guid? twinId = null,
+        Guid? federationId = null,
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(tagNumber) && string.IsNullOrWhiteSpace(codePrefix))
@@ -196,15 +210,40 @@ public sealed class EngService(
         // mistake.
         var existing = await db.Set<Tag>().FirstOrDefaultAsync(t => t.TagNumber == tagNumber, ct);
 
+        // A pasted identity that is already in use is refused rather than accepted.
+        // Copy-paste from a tag register is exactly the workflow this supports, and
+        // pasting the wrong row is exactly how it goes wrong -- silently, because two
+        // segments sharing an identity look fine here and only become visible
+        // downstream, where a receiver upserting on the identity sees the second
+        // segment overwrite the first and reports no error either.
+        if (existing is null && federationId is { } claimed && claimed != Guid.Empty)
+        {
+            var heldBy = await db.Set<Tag>()
+                .FirstOrDefaultAsync(t => t.FederationId == claimed, ct);
+
+            if (heldBy is not null)
+            {
+                throw new InvalidOperationException(
+                    $"Federation id {claimed} already identifies {heldBy.TagNumber} in this twin. " +
+                    "An identity names one entity; leave the field empty to have ENG mint a new one.");
+            }
+        }
+
         // ENG is the design tool, so a tag it has not seen before is a tag coming into
-        // existence, and this is the one place in the sandbox entitled to mint. The
-        // identity is minted once and never revisited on update: correcting a class or
+        // existence, and this is the one place in the sandbox entitled to mint. But
+        // minting is the fallback, not the rule: if the caller brought an identity the
+        // entity already has somewhere else, that one is adopted, because an identifier
+        // two systems share is worth more than one ENG invented.
+        //
+        // The identity is set once and never revisited on update: correcting a class or
         // adding a range is an edit to the same entity, not a new one.
         var tag = existing ?? new Tag
         {
             ITwinId = twin,
             TagNumber = tagNumber,
-            FederationId = identities.Mint()
+            FederationId = federationId is { } supplied && supplied != Guid.Empty
+                ? supplied
+                : identities.Mint()
         };
 
         if (existing is null)

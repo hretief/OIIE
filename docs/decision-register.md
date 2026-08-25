@@ -992,3 +992,92 @@ therefore MUST poll as a backstop, and the existing ws-CIR timer drain is kept r
 - **No existing code has been changed.** DR-013's in-process handlers, `InboxPump` and the ws-CIR
   direct endpoint all still run. Standalone participants are built and proven first; migration
   follows. `Oiie.Participants.Contract` is superseded but still on disk.
+
+---
+
+## DR-016 — The ISBM channel is derived from the iTwin federation id, not configured
+
+**Status:** Decided
+**Date:** 2026-08-20
+**Context:** `EngEngine` was built with a hardcoded `ChannelUri` of
+`/OIIE-SANDBOX/Enterprise/Site/Eng` and a topic of `Sync.Segments`, both of which predate
+[isbm-channel-naming-convention.md](ISBM%20Channels/isbm-channel-naming-convention.md).
+
+### Decision
+
+The engine holds `Enterprise` and `Domain` and composes
+`/{enterprise}/{itwin-federation-id}/{domain}/publication`, resolving the iTwin from ENG at
+drain time. Topic is `oiie:sc01/ccom:SyncSegments`. A `ChannelUriOverride` exists for brokers
+provisioned before the convention, and is empty by default.
+
+### Why
+
+- **A configured URI is a copy of the convention that can drift from it**, and a settings file
+  is exactly where that drift goes unnoticed. Deriving it states the convention once.
+- **Configuring the iTwin next to the iModel creates a pair that can disagree.** The failure
+  mode is a handover delivered to the wrong twin's subscribers, which from the engine's side
+  is indistinguishable from success. Resolving it from ENG removes the possibility.
+- **The federation id outlives the name.** A renamed corridor or re-scoped project breaks every
+  subscription keyed to a readable name. The readable name goes in the channel description.
+- **The scenario belongs in the topic** because the same BOD means different things at different
+  points in a journey: `SyncSegments` from ENG is a design proposal, from REG-LOCATION it is an
+  approved location, and a subscriber wanting only one could not otherwise tell them apart.
+
+### What this leaves open
+
+- **Only the engineering leg was converted.** `sc01-design-release.yaml`,
+  `sc01-greenfield-allocation.yaml` and the `eng` and `reg-location` personality packs moved.
+  The `/OIIE-SANDBOX/Enterprise/Site/OandM` leg did not, because it is shared with SC02, SC11
+  and the MMS/CMS packs. Moving it in isolation would have left MMS subscribed to a URI nothing
+  publishes to — and SC01's central assertion is that *nothing reaches MMS*, which would then
+  pass for the wrong reason.
+- **The participant channel list is what actually binds.** `ScenarioChannels.RequirePublisher`
+  and `InboxPump` read the PersonalityPack; `setup.channels` only provisions and asserts. A
+  scenario renamed without its pack produces a run where nothing arrives and nothing says why.
+- **The sandbox iTwin federation id is a literal repeated in four files.** It should become a
+  single shared constant when the remaining scenarios convert.
+
+---
+
+## DR-017 — ENG adopts a supplied FederationGuid and mints only as a fallback
+
+**Status:** Decided
+**Date:** 2026-08-20
+**Context:** `EngSegmentsBuilder` derived a UUID via `CcomUuid.FromKey(iModelId, code)` when an
+element had no `FederationGuid`, and the sandbox ENG UI minted one server-side with no way for an
+operator to supply the identity the entity already had elsewhere.
+
+### Decision
+
+An element without a `FederationGuid` is not published; it is filtered out of the drain with a
+warning, and the marker still goes. `Segment.UUID` is the `FederationGuid` and `IDInInfoSource`
+carries ENG's `ECInstanceId` registered against it. The sandbox ENG UI accepts an operator-supplied
+FederationGuid with a Suggest button, and refuses a value already held by another segment with a 409.
+
+### Why
+
+- **The derived-UUID fallback was wrong in an expensive way.** It is stable, so it looks correct
+  for as long as nobody federates the element. The day someone does, the same pump arrives
+  downstream under a second identity with nothing to indicate it was ever one thing. Publishing
+  nothing is recoverable; publishing a fabricated identity is not.
+- **Adoption beats minting when the entity is already identified.** A tag register or handover
+  sheet already holds an id; minting a fresh one produces two identities for one pump.
+- **A pasted id that is already in use must be refused.** Copy-paste is the workflow, and pasting
+  the wrong row is how it fails — silently, because two segments sharing an identity look fine in
+  ENG and only surface downstream, where a receiver upserting on the identity has the second
+  overwrite the first and reports no error either.
+- **Suggest mints server-side** so a suggested id uses the same version-7 scheme as one ENG
+  assigns itself. A client-side v4 would look identical to a reviewer but not be time-ordered.
+
+### What this leaves open
+
+- **Rule 1 of the FederationGuid guideline says the iModel assigns the FederationGuid and no
+  other system creates or overrides it.** The UI change is in tension with that. Either the
+  guideline admits brownfield adoption (example 5 gestures at it) or the UI is reconciled with
+  the rule. Tracked in [open-items.md](open-items.md).
+- **The two ENG implementations still diverge.** `EngService` (sandbox) mints via
+  `ITagIdentityService`; `EngProvider` (`ElementUpsert`) accepts but never mints. Only one of
+  them is governed by anything the guideline says.
+- **The composite ENG key is not on the wire.** Rule 2 requires `iModelId`, `ECInstanceId` and
+  `CodeValue` on every `SyncSegments`; only `ECInstanceId` travels today.
+

@@ -1,0 +1,22 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+
+    "EngEngine__Enabled": "false",
+    "EngEngine__EngBaseUrl": "http://localhost:7071/api",
+    "EngEngine__EngApiKey": "",
+    "EngEngine__IModelId": "00000000-0000-0000-0000-000000000000",
+    "EngEngine__Enterprise": "acme",
+    "EngEngine__Domain": "engineering",
+    "EngEngine__Topics__0": "oiie:sc01/ccom:SyncSegments",
+    "EngEngine__SourceId": "ENG",
+    "EngEngine__LogicalId": "ENG",
+
+    "Isbm__BaseUrl": "https://isbm-func-44p2f3n6dv7p4.azurewebsites.net/api",
+    "Isbm__ApiKey": "",
+
+    "EngEnginePollSchedule": "*/15 * * * * *"
+  }
+}

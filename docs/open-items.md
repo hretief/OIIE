@@ -4,6 +4,45 @@ Pending work carried between sessions. Decisions belong in
 [decision-register.md](decision-register.md); this file is only for things not
 yet done.
 
+## Verify CIR interaction against the FederationGuid guideline
+
+**Status:** not started. Raised 2026-08-20, next session.
+
+[federation-guid-guideline.md](FederationId/federation-guid-guideline.md) states
+how FederationGuid is meant to become the CIRID. Nothing has checked the
+implementation against it. The engine and sandbox work just completed touches
+federation identity in several places, so the gap is now worth closing before
+more is built on top.
+
+Specific claims in the guideline to verify, each of which the code may or may
+not honour:
+
+- **Rule 3** — participants register their native key against the FederationGuid
+  as the CIRID, via `ProcessRegistry` with CIRID set to the FederationGuid and
+  stored as-is. Confirm the sandbox does this rather than letting the CIR mint
+  its own identifier.
+- **Rule 4** — ENG does *not* talk to the CIR directly; ALIM/REG-LOCATION
+  registers the ENG composite key on ENG's behalf. `EngEngine` was written with
+  no CIR dependency, which appears to match, but REG-LOCATION registering
+  `ENG-IMODEL` on ENG's behalf has not been confirmed to exist at all.
+- **Rule 2** — every `SyncSegments` BOD carries the FederationGuid *and* the full
+  ENG composite key (`iModelId`, `ECInstanceId`, `CodeValue`) as required fields.
+  `EngSegmentsBuilder` currently sends the FederationGuid as `Segment.UUID` and
+  only `ECInstanceId` as `IDInInfoSource`. The composite key is not assembled, so
+  this rule is likely not met and the guideline's "direct iModel navigation"
+  claim (rule 8) cannot hold downstream.
+- **Rule 1** — the iModel assigns the FederationGuid and no other system creates
+  or overrides it. This is now in tension with a deliberate decision: the sandbox
+  ENG UI accepts an operator-supplied FederationGuid and offers a Suggest button
+  that mints one. Either the guideline needs to admit brownfield adoption
+  (example 5 already gestures at it), or the UI needs to be reconciled with the
+  rule. Worth resolving explicitly rather than leaving the two to disagree.
+
+Also confirm the two sandbox identity paths agree: `EngService` (sandbox
+personality, mints via `ITagIdentityService`) and `EngProvider` (`ElementUpsert`,
+accepts but never mints). They are separate implementations and only one of them
+is governed by anything the guideline says.
+
 ## ENG spine tables leak into every participant schema
 
 **Status:** diagnosed, not fixed. Agreed 2026-08-19 to document only.

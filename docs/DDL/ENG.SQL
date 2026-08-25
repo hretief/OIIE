@@ -1,12 +1,22 @@
 /* ============================================================================
    ENG -- authoritative source, as a simplified relational iModel.
 
+   Owned by EngProvider. This is the shape the app creates at startup, so it
+   ships with the app rather than being linked out of docs/DDL. Those files are
+   reference material describing ENG in the abstract; they are free to carry
+   commentary or one-shot DDL that a running app must not depend on.
+
+   Derived from docs/DDL/ENG.SQL. When the two need to agree, this copy is what
+   actually runs -- change it here, and update the reference material separately
+   if the model itself has moved.
+
    Purpose:
      - Acts as the authoritative source and a simplified relational iModel.
      - Uses BIGINT identity values for locally-created ECInstanceId values.
      - Represents Element-to-ECClass as a foreign-key relationship.
      - Preserves FederationGuid as the durable cross-system identifier.
-     - Releases work through named versions, which is what ENG hands over.
+     - Marks points in the iModel's history with named versions, whose contents
+       are derived from changeset position rather than stored.
 
    Notes:
      - Source ECInstanceId values are local to this database.
@@ -18,6 +28,11 @@
    that already exists is deliberately out of scope -- a guard cannot tell an
    older shape from the current one, and silently leaving a stale table in
    place is safer than silently changing one holding data.
+
+   There are no exceptions to that rule. Databases predating the current shape
+   are dropped and recreated rather than migrated: they are disposable dev and
+   demo databases, and a clean rebuild is both simpler and safer than a
+   reshaping script that has to guess what an older table meant.
 
    Simplifications worth knowing about, all deliberate:
 
@@ -198,16 +213,24 @@ GO
 /* ============================================================================
    Named version
 
-   The release container, and what ENG actually hands over. A Bentley Named
-   Version marks a point in an iModel's timeline; this models the same idea
-   without a changeset history to anchor to, so a version instead accumulates
-   the elements released under it.
+   A marker, not a container. A Bentley Named Version pins a point in an
+   iModel's timeline; this models the same idea, so a version does not hold
+   elements -- it records the changeset position elements are measured against.
 
-   State is checked rather than free text. A release is a small closed
-   lifecycle, and an unconstrained column would let a bad write produce a
-   state the promotion gate cannot reason about.
+   Membership is therefore derived, never stored: a marker's contents are the
+   elements lying between the previous marker's position and this one's. That
+   is what makes a baseline reconstructable after the fact. If membership were
+   a column on Element, a marker nobody remembered to create up front could
+   never be recovered, and the first baseline of a database could not exist at
+   all.
 
-   Declared before Element because Element points at it.
+   There is no lifecycle here. Creating the marker is the publication: there is
+   nothing to declare first and release later, and consequently nothing to
+   validate against. ENG publishes what the design says; whether that content
+   is acceptable is REG-LOCATION's judgement, reported back out of band and
+   remedied by cutting a new marker.
+
+   Declared before Element only for readability; nothing points at it now.
    ============================================================================ */
 IF OBJECT_ID('dbo.NamedVersion', 'U') IS NULL
 BEGIN
@@ -216,16 +239,53 @@ BEGIN
         NamedVersionId  BIGINT IDENTITY(1,1) NOT NULL,
         iModelId        UNIQUEIDENTIFIER NOT NULL,
 
+        /* ---- Bentley-shaped identifiers ------------------------------------
+           Real iModels identifies a named version by GUID and pins it to a
+           changeset. This emulation allocates a BIGINT, which cannot appear in
+           an iModels event payload.
+
+           These columns exist so the published event carries the identifiers
+           the real system would emit. They are emulation scaffolding standing
+           in for values Bentley mints, not integration state: when a real
+           iModels replaces this database, they are supplied by the source and
+           nothing downstream changes.
+
+           VersionGuid is defaulted rather than assigned by the application so a
+           row inserted by any path still has one. A GUID that could be absent
+           would eventually be absent, and the event could not be built. */
+        VersionGuid     UNIQUEIDENTIFIER NOT NULL
+            CONSTRAINT DF_NamedVersion_VersionGuid DEFAULT NEWID(),
+
+        /* Where this marker sits in the iModel's history. NOT NULL: a marker
+           that is not pinned to a position cannot have its contents derived,
+           and an unpinned marker is not a baseline at all.
+
+           This is the column membership is computed from -- see the
+           NamedVersionElement view.
+
+           Both are ENG-internal. They describe a position in this model's own
+           history and carry no meaning for any other participant, so they are
+           for correlation within ENG and the notification envelope only and
+           must never be keyed, stored or reconciled against downstream. */
+        ChangesetId     VARCHAR(64) NOT NULL,
+        ChangesetIndex  INT NOT NULL,
+
         Name            NVARCHAR(200) NOT NULL,
         Description     NVARCHAR(1000) NULL,
-        State           NVARCHAR(20) NOT NULL
-            CONSTRAINT DF_NamedVersion_State DEFAULT N'Draft',
 
         CreatedBy       NVARCHAR(100) NOT NULL
             CONSTRAINT DF_NamedVersion_CreatedBy DEFAULT N'system',
         CreatedUtc      DATETIME2(7) NOT NULL
             CONSTRAINT DF_NamedVersion_CreatedUtc DEFAULT SYSUTCDATETIME(),
-        ReleasedUtc     DATETIME2(7) NULL,
+
+        /* What an incremental reader polls on. Every other table here carries
+           one; NamedVersion did not, because nothing had needed to ask when a
+           version last changed. Maintained by trigger below, since a column the
+           application had to remember to set would drift on the one write path
+           that forgot. */
+        ModifiedUtc     DATETIME2(7) NOT NULL
+            CONSTRAINT DF_NamedVersion_ModifiedUtc DEFAULT SYSUTCDATETIME(),
+
         RowVersion      ROWVERSION NOT NULL,
 
         CONSTRAINT PK_NamedVersion PRIMARY KEY (NamedVersionId),
@@ -236,21 +296,11 @@ BEGIN
         CONSTRAINT UQ_NamedVersion_iModel_Name
             UNIQUE (iModelId, Name),
 
-        /* Redundant as a key, present so Element can carry a composite FK
-           and be prevented from publishing into another iModel's version. */
-        CONSTRAINT UQ_NamedVersion_Id_iModel
-            UNIQUE (NamedVersionId, iModelId),
-
-        CONSTRAINT CK_NamedVersion_State
-            CHECK (State IN (N'Draft', N'Released')),
-
-        /* The timestamp and the state cannot disagree. */
-        CONSTRAINT CK_NamedVersion_ReleasedUtc
-            CHECK (
-                (State = N'Released' AND ReleasedUtc IS NOT NULL)
-                OR (State = N'Draft' AND ReleasedUtc IS NULL)
-            )
-    );
+                /* The identifier that leaves this system must be unique across it,
+                   not merely within an iModel: a consumer holds the GUID alone. */
+                CONSTRAINT UQ_NamedVersion_VersionGuid
+                    UNIQUE (VersionGuid)
+            );
 END
 GO
 
@@ -289,14 +339,22 @@ BEGIN
         ParentECInstanceId  BIGINT NULL,
         iModelId            UNIQUEIDENTIFIER NOT NULL,
 
-        /* Mandatory. An element is created directly into an open Draft
-           version, so it belongs to one from birth and is never version-less.
+        /* Where this element sits in the iModel's history, and the only thing
+           that ties it to a baseline.
 
-           Maturity is therefore NOT a property of the element: it is read from
-           the state of the version the element sits in. Draft means work in
-           progress, Released means handed over. There is deliberately no
-           status column on the element, because it could contradict this. */
-        NamedVersionId      BIGINT NOT NULL,
+           An element deliberately does NOT point at a named version. Elements
+           accumulate as work is done, with no knowledge of which baselines will
+           later be drawn around them; a marker cut afterwards derives its
+           contents from this column. Storing a version reference instead would
+           force the baseline to be chosen before the work, and would make the
+           first baseline of a database -- and any baseline nobody thought to
+           declare in advance -- impossible to reconstruct.
+
+           There is likewise no status column. An element is not draft or
+           released; it is simply at a position, and whether that position falls
+           inside a published baseline is a question about markers, not about
+           the element. */
+        ChangesetIndex      INT NOT NULL,
 
         CreatedUtc          DATETIME2(7) NOT NULL
             CONSTRAINT DF_Element_CreatedUtc DEFAULT SYSUTCDATETIME(),
@@ -331,72 +389,15 @@ BEGIN
             FOREIGN KEY (ParentECInstanceId, iModelId)
             REFERENCES dbo.Element (ECInstanceId, iModelId),
 
-        /* Likewise: an element cannot belong to a version owned by some other
-           iModel. */
-        CONSTRAINT FK_Element_NamedVersion
-            FOREIGN KEY (NamedVersionId, iModelId)
-            REFERENCES dbo.NamedVersion (NamedVersionId, iModelId),
-
         /* Blocks the one-step cycle only. A longer parent loop is not
            reachable declaratively. */
         CONSTRAINT CK_Element_NotSelfParent
-            CHECK (ParentECInstanceId IS NULL OR ParentECInstanceId <> ECInstanceId)
-    );
-END
-GO
+            CHECK (ParentECInstanceId IS NULL OR ParentECInstanceId <> ECInstanceId),
 
-/* ============================================================================
-   Validation findings
-
-   Why a promotion was refused. A finding is open until somebody resolves it,
-   and an open finding blocks release of its version -- enforced by trigger
-   below, not merely by application convention.
-
-   Findings are therefore NOT cleared and rewritten on each attempt: doing so
-   would silently reopen the gate, since the record of what was wrong is the
-   very thing holding it shut. Resolution is explicit.
-
-   The element is recorded by CodeValue rather than by ECInstanceId: a finding
-   may be about a code that does not resolve to an element at all, which is
-   itself one of the things the gate objects to.
-   ============================================================================ */
-IF OBJECT_ID('dbo.ValidationFinding', 'U') IS NULL
-BEGIN
-    CREATE TABLE dbo.ValidationFinding
-    (
-        FindingId       BIGINT IDENTITY(1,1) NOT NULL,
-        NamedVersionId  BIGINT NOT NULL,
-
-        CodeValue       NVARCHAR(255) NULL,
-        Severity        NVARCHAR(20) NOT NULL
-            CONSTRAINT DF_ValidationFinding_Severity DEFAULT N'Error',
-        Message         NVARCHAR(1000) NOT NULL,
-
-        /* Open until explicitly resolved. This is what the release gate
-           reads. */
-        State           NVARCHAR(20) NOT NULL
-            CONSTRAINT DF_ValidationFinding_State DEFAULT N'Open',
-
-        CreatedUtc      DATETIME2(7) NOT NULL
-            CONSTRAINT DF_ValidationFinding_CreatedUtc DEFAULT SYSUTCDATETIME(),
-        ResolvedUtc     DATETIME2(7) NULL,
-        ResolvedBy      NVARCHAR(100) NULL,
-
-        CONSTRAINT PK_ValidationFinding PRIMARY KEY (FindingId),
-        CONSTRAINT FK_ValidationFinding_NamedVersion
-            FOREIGN KEY (NamedVersionId)
-            REFERENCES dbo.NamedVersion (NamedVersionId),
-        CONSTRAINT CK_ValidationFinding_Severity
-            CHECK (Severity IN (N'Error', N'Warning')),
-        CONSTRAINT CK_ValidationFinding_State
-            CHECK (State IN (N'Open', N'Resolved')),
-
-        /* The timestamp and the state cannot disagree. */
-        CONSTRAINT CK_ValidationFinding_ResolvedUtc
-            CHECK (
-                (State = N'Resolved' AND ResolvedUtc IS NOT NULL)
-                OR (State = N'Open' AND ResolvedUtc IS NULL)
-            )
+        /* A position in history is an ordinal; zero or negative would place an
+           element before the beginning of the iModel. */
+        CONSTRAINT CK_Element_ChangesetIndex
+            CHECK (ChangesetIndex > 0)
     );
 END
 GO
@@ -485,28 +486,25 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_Element_iModel_CodeVal
         WHERE CodeValue IS NOT NULL;
 GO
 
-/* The gate's hot path: every element in a given version. Not filtered, since
-   NamedVersionId is now mandatory and there is no null case to exclude. */
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Element_NamedVersionId' AND object_id = OBJECT_ID('dbo.Element'))
-    CREATE INDEX IX_Element_NamedVersionId
-        ON dbo.Element (NamedVersionId);
-GO
-
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_NamedVersion_iModelId' AND object_id = OBJECT_ID('dbo.NamedVersion'))
     CREATE INDEX IX_NamedVersion_iModelId
         ON dbo.NamedVersion (iModelId);
 GO
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ValidationFinding_NamedVersionId' AND object_id = OBJECT_ID('dbo.ValidationFinding'))
-    CREATE INDEX IX_ValidationFinding_NamedVersionId
-        ON dbo.ValidationFinding (NamedVersionId);
+/* A changeset index orders markers within one iModel, so two markers claiming
+   the same position would make the ordering membership is derived from
+   ambiguous. Unfiltered: ChangesetIndex is NOT NULL, since a marker is always
+   pinned. */
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_NamedVersion_iModel_ChangesetIndex' AND object_id = OBJECT_ID('dbo.NamedVersion'))
+    CREATE UNIQUE INDEX UX_NamedVersion_iModel_ChangesetIndex
+        ON dbo.NamedVersion (iModelId, ChangesetIndex);
 GO
 
-/* The release gate's lookup: open findings for a version. */
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ValidationFinding_Open' AND object_id = OBJECT_ID('dbo.ValidationFinding'))
-    CREATE INDEX IX_ValidationFinding_Open
-        ON dbo.ValidationFinding (NamedVersionId)
-        WHERE State = N'Open';
+/* Membership is a range scan over this ordering, so it is the access path the
+   derived-contents view depends on. */
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Element_iModel_ChangesetIndex' AND object_id = OBJECT_ID('dbo.Element'))
+    CREATE INDEX IX_Element_iModel_ChangesetIndex
+        ON dbo.Element (iModelId, ChangesetIndex);
 GO
 
 /* ============================================================================
@@ -530,13 +528,7 @@ SELECT
     e.DisplayName,
     e.ParentECInstanceId,
     e.iModelId,
-    e.NamedVersionId,
-    nv.Name AS NamedVersionName,
-    nv.State AS NamedVersionState,
-    nv.ReleasedUtc,
-    /* Maturity is read from the version, never stored on the element. */
-    CAST(CASE WHEN nv.State = N'Released' THEN 1 ELSE 0 END AS BIT)
-        AS IsReleased,
+    e.ChangesetIndex,
     e.CreatedUtc,
     e.ModifiedUtc,
     e.RowVersion
@@ -544,10 +536,67 @@ FROM dbo.Element AS e
 INNER JOIN dbo.ECClass AS c
     ON c.ECClassId = e.ECClassId
 INNER JOIN dbo.ECSchema AS s
-    ON s.ECSchemaId = c.ECSchemaId
-/* INNER, not LEFT: every element has a version. */
-INNER JOIN dbo.NamedVersion AS nv
-    ON nv.NamedVersionId = e.NamedVersionId;
+    ON s.ECSchemaId = c.ECSchemaId;
+GO
+
+/* ============================================================================
+   Derived baseline membership
+
+   What a marker contains, computed rather than stored. A marker's elements are
+   those lying above the previous marker in the same iModel and at or below the
+   marker itself.
+
+   The previous marker is found by position, not by identity, so the answer does
+   not depend on markers having been created in any particular order or on any
+   bookkeeping done at the time. That is what makes a baseline recoverable long
+   after the fact -- and what makes the first marker in a database work at all:
+   with no predecessor the lower bound is 0, so it captures everything from
+   day 0.
+
+   Expressed as a view so the derivation has exactly one definition. A query
+   that recomputed these bounds by hand would eventually disagree with this one,
+   and a baseline that two callers describe differently is not a baseline.
+   ============================================================================ */
+CREATE OR ALTER VIEW dbo.vNamedVersionElement
+AS
+SELECT
+    nv.NamedVersionId,
+    nv.VersionGuid,
+    nv.iModelId,
+    nv.Name AS NamedVersionName,
+    nv.ChangesetId,
+    nv.ChangesetIndex AS NamedVersionChangesetIndex,
+    e.ECInstanceId,
+    e.FederationGuid,
+    e.CodeValue,
+    e.UserLabel,
+    e.DisplayName,
+    e.ParentECInstanceId,
+    e.ECClassId,
+    e.ChangesetIndex AS ElementChangesetIndex,
+    e.CreatedUtc,
+    e.ModifiedUtc
+FROM dbo.NamedVersion AS nv
+CROSS APPLY
+(
+    /* 0 when this is the first marker in the iModel, which makes the range
+       below open at the bottom and the marker a day-0 baseline. */
+    SELECT PreviousChangesetIndex =
+        ISNULL
+        (
+            (
+                SELECT MAX(prev.ChangesetIndex)
+                FROM dbo.NamedVersion AS prev
+                WHERE prev.iModelId = nv.iModelId
+                  AND prev.ChangesetIndex < nv.ChangesetIndex
+            ),
+            0
+        )
+) AS bounds
+INNER JOIN dbo.Element AS e
+    ON e.iModelId = nv.iModelId
+   AND e.ChangesetIndex > bounds.PreviousChangesetIndex
+   AND e.ChangesetIndex <= nv.ChangesetIndex;
 GO
 
 /* ============================================================================
@@ -641,102 +690,74 @@ BEGIN
 END;
 GO
 
-/* ============================================================================
-   Release gate
-
-   Enforced here rather than only in application code. A release is the point
-   at which this database's contents become someone else's input, so the rule
-   that guards it should hold regardless of which client is connected -- an
-   ad-hoc UPDATE from a management tool is exactly the case that would
-   otherwise slip through.
-
-   Set-based, not row-by-row: a single statement may release several versions.
-   ============================================================================ */
-CREATE OR ALTER TRIGGER dbo.TR_NamedVersion_ReleaseGate
+CREATE OR ALTER TRIGGER dbo.TR_NamedVersion_ModifiedUtc
 ON dbo.NamedVersion
 AFTER UPDATE
 AS
 BEGIN
     SET NOCOUNT ON;
+    IF TRIGGER_NESTLEVEL() > 1 RETURN;
 
-    /* Only interested in transitions into Released. */
-    IF NOT EXISTS
-    (
-        SELECT 1
-        FROM inserted AS i
-        INNER JOIN deleted AS d ON d.NamedVersionId = i.NamedVersionId
-        WHERE i.State = N'Released' AND d.State <> N'Released'
-    )
-        RETURN;
-
-    /* Any open finding blocks the release, whatever its severity. */
-    IF EXISTS
-    (
-        SELECT 1
-        FROM inserted AS i
-        INNER JOIN deleted AS d ON d.NamedVersionId = i.NamedVersionId
-        INNER JOIN dbo.ValidationFinding AS f
-            ON f.NamedVersionId = i.NamedVersionId
-        WHERE i.State = N'Released'
-          AND d.State <> N'Released'
-          AND f.State = N'Open'
-    )
-    BEGIN
-        THROW 50001, 'Cannot release a named version while validation findings remain open.', 1;
-    END
-
-    /* A version with nothing in it is not a release. */
-    IF EXISTS
-    (
-        SELECT 1
-        FROM inserted AS i
-        INNER JOIN deleted AS d ON d.NamedVersionId = i.NamedVersionId
-        WHERE i.State = N'Released'
-          AND d.State <> N'Released'
-          AND NOT EXISTS
-          (
-              SELECT 1 FROM dbo.Element AS e
-              WHERE e.NamedVersionId = i.NamedVersionId
-          )
-    )
-    BEGIN
-        THROW 50002, 'Cannot release a named version that contains no elements.', 1;
-    END
+    UPDATE nv
+       SET ModifiedUtc = SYSUTCDATETIME()
+    FROM dbo.NamedVersion AS nv
+    INNER JOIN inserted AS i ON i.NamedVersionId = nv.NamedVersionId;
 END;
 GO
 
 /* ============================================================================
-   Released-version immutability
+   Baseline immutability
 
-   A released version is a handover record. If elements could still be added to
-   it, or moved out of it, then what was handed over would not be what the
-   version now says was handed over. New work belongs in a new Draft version.
+   A marker is a statement about what the design said at a position, and that
+   statement has already been published. If an element at or below the highest
+   marker could still be altered, the contents derived for that marker would
+   change after the fact: a consumer holding the baseline would disagree with
+   this database about what it was sent, and the detector's content hash would
+   no longer match what it published.
+
+   So history is closed and the present is open. Elements above the highest
+   marker are ordinary work in progress and freely editable; elements at or
+   below it are frozen. A database with no markers yet freezes nothing.
+
+   Remediation is deliberately forward-only: a defect reported by REG-LOCATION
+   is fixed by authoring new work and cutting a new marker, never by editing
+   what an earlier marker already described.
+
+   Enforced here rather than only in application code, so the rule holds
+   regardless of which client is connected -- an ad-hoc UPDATE from a
+   management tool is exactly the case that would otherwise slip through.
+   Set-based, since one statement may touch many elements.
    ============================================================================ */
-CREATE OR ALTER TRIGGER dbo.TR_Element_ReleasedImmutable
+CREATE OR ALTER TRIGGER dbo.TR_Element_BaselineImmutable
 ON dbo.Element
-AFTER INSERT, UPDATE
+AFTER INSERT, UPDATE, DELETE
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    /* Blocks writing INTO a released version, and equally moving an element
-       OUT of one, since deleted rows are checked too. */
+    /* The highest marker per iModel is the frozen watermark. Computed per
+       iModel because markers are per iModel: work in one must not be frozen
+       by a baseline cut in another. */
     IF EXISTS
     (
         SELECT 1
-        FROM inserted AS i
-        INNER JOIN dbo.NamedVersion AS nv ON nv.NamedVersionId = i.NamedVersionId
-        WHERE nv.State = N'Released'
-    )
-    OR EXISTS
-    (
-        SELECT 1
-        FROM deleted AS d
-        INNER JOIN dbo.NamedVersion AS nv ON nv.NamedVersionId = d.NamedVersionId
-        WHERE nv.State = N'Released'
+        FROM
+        (
+            SELECT iModelId, ChangesetIndex FROM inserted
+            UNION ALL
+            SELECT iModelId, ChangesetIndex FROM deleted
+        ) AS touched
+        INNER JOIN
+        (
+            SELECT iModelId, MAX(ChangesetIndex) AS FrozenThrough
+            FROM dbo.NamedVersion
+            GROUP BY iModelId
+        ) AS marker
+            ON marker.iModelId = touched.iModelId
+        WHERE touched.ChangesetIndex <= marker.FrozenThrough
     )
     BEGIN
-        THROW 50003, 'Cannot add, modify or move elements of a released named version.', 1;
+        THROW 50003, 'Cannot modify elements at or below the most recent named version. Author new work and create a new named version instead.', 1;
     END
 END;
 GO

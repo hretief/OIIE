@@ -72,6 +72,13 @@ export interface NewTag {
   rangeMinimum?: number
   rangeMaximum?: number
   controlAction?: string
+  /**
+   * The identity this entity already has elsewhere -- a tag register, a handover
+   * sheet, an earlier project. Omit it and ENG mints one, which is correct for a
+   * segment first drawn here. Ignored when editing: the identity is fixed for the
+   * entity's lifetime.
+   */
+  federationId?: string
 }
 
 export interface CreatedTag {
@@ -223,6 +230,18 @@ export function createTag(iTwinId: string, tag: NewTag): Promise<CreatedTag> {
     method: 'POST',
     body: JSON.stringify({ ...tag, iTwinId }),
   })
+}
+
+/**
+ * A candidate federation id, for an operator with no register to copy one from.
+ *
+ * Asked of the server rather than generated here so a suggested identity is minted
+ * by the same service and scheme ENG uses for its own. Nothing is reserved: this
+ * answers "what would you have used", and the id is not real until a segment is
+ * submitted carrying it.
+ */
+export function suggestFederationId(signal?: AbortSignal): Promise<{ federationId: string }> {
+  return request<{ federationId: string }>('/admin/eng/federation-id/suggest', { signal })
 }
 
 /**

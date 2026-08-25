@@ -1,0 +1,138 @@
+using System.Xml.Linq;
+using Microsoft.Extensions.Options;
+using Oiie.Ccom.Bods;
+using Oiie.Ccom.Oagis;
+using Oiie.Ccom.Types;
+
+namespace EngEngine.Application;
+
+/// <summary>
+/// Turns the contents of an ENG marker into the BOD that carries it.
+///
+/// The vocabulary follows the SimHost ENG personality, which is the reference for
+/// how this sandbox says "here are some functional locations". What differs is the
+/// source: this builds from ENG elements read over HTTP rather than from a local
+/// tag table, so the mapping is thinner. ENG stores an element, not a datasheet --
+/// there is no service description, range or control action to carry, because ENG
+/// does not have them to give.
+///
+/// Nothing ENG-internal appears in the output. NamedVersionId, ChangesetId and
+/// ChangesetIndex all stop here. The marker travels as its name, which is what an
+/// engineer chose and what a person reading the message downstream can act on.
+///
+/// The one ENG-internal value that does travel is the element's own ECInstanceId,
+/// and it travels as IDInInfoSource against the element's FederationGuid. That
+/// pairing is the whole point of publishing: it tells a receiver "the thing you
+/// know as this federation id is the thing ENG knows as that row", which is what
+/// lets ENG be asked about it again later. It is a registration of ENG's identity
+/// under the federated one, not a key anybody downstream is expected to resolve
+/// on its own.
+/// </summary>
+public sealed class EngSegmentsBuilder(IOptions<EngEngineOptions> options)
+{
+    private readonly EngEngineOptions _options = options.Value;
+
+    /// <summary>
+    /// Builds the publication for one marker.
+    ///
+    /// Replace rather than Add: receivers upsert on the sender's identifier, so
+    /// Replace states the real contract and makes republication after a failed
+    /// drain idempotent instead of duplicating rows.
+    /// </summary>
+    public XElement Build(
+        EngNamedVersion marker,
+        IReadOnlyList<EngElement> elements,
+        string correlationId)
+    {
+        var bod = new SyncSegments(ActionCodes.Replace);
+
+        bod.ApplicationArea.BODID = correlationId;
+        bod.ApplicationArea.Sender = new Sender
+        {
+            LogicalID = _options.LogicalId,
+            ComponentID = "EngEngine",
+
+            // The marker name, so a receiver can answer "which handover produced
+            // this" in the same words the engineer used. Deliberately not the
+            // changeset: that identifies the same act in terms only ENG can read.
+            ReferenceID = marker.Name
+        };
+
+        var infoSource = new InfoSource
+        {
+            UUID = CcomUuid.ForInfoSource(_options.SourceId),
+            ShortName = _options.SourceId
+        };
+
+        foreach (var element in elements)
+        {
+            bod.With(BuildSegment(element, infoSource));
+        }
+
+        // The root element rather than the document: ISBM carries message content
+        // as an element, and handing over a document would mean the XML declaration
+        // travelled inside a payload that is about to be embedded in another one.
+        return bod.CreateDocument().Root
+            ?? throw new InvalidOperationException("SyncSegments serialised to an empty document.");
+    }
+
+    /// <summary>
+    /// Whether an element can be published at all.
+    ///
+    /// It cannot without a FederationGuid. ENG does not mint one -- federating is
+    /// a decision someone takes about an element, not a property it acquires by
+    /// being saved -- and an element that has never been federated has no identity
+    /// any other system has agreed to.
+    ///
+    /// An earlier version derived a UUID from the iModel and code when the guid
+    /// was absent. That was wrong in a way that would have been expensive to find:
+    /// the derived id is stable, so it looks correct for as long as nobody
+    /// federates the element -- and the day someone does, the same pump arrives
+    /// downstream under a second identity with no way to tell it was ever one
+    /// thing. Publishing nothing is recoverable; publishing a fabricated identity
+    /// is not.
+    /// </summary>
+    public static bool IsPublishable(EngElement element) =>
+        element.FederationGuid is not null;
+
+    private Segment BuildSegment(EngElement element, InfoSource infoSource)
+    {
+        var federationId = element.FederationGuid
+            ?? throw new InvalidOperationException(
+                $"Element {element.ECInstanceId} has no FederationGuid and cannot be published.");
+
+        var segment = new Segment
+        {
+            // The federated identity, unaltered. This is the value the receiver
+            // and ENG have in common; everything else in the segment is
+            // description hanging off it.
+            UUID = federationId,
+
+            // ENG's own identification of the element, registered against the
+            // federation id above. A receiver holding the pair can come back to
+            // ENG and ask about this element by the name ENG uses for it.
+            IDInInfoSource = element.ECInstanceId.ToString(),
+
+            InfoSource = infoSource,
+            ShortName = element.CodeValue,
+            FullName = element.UserLabel ?? element.DisplayName,
+            Description = element.DisplayName ?? element.UserLabel
+        };
+
+        if (element.FullyQualifiedECClassName is { Length: > 0 } className)
+        {
+            // The EC class is ENG's own vocabulary, not an RDL key, so it is sourced
+            // as ENG rather than MIMOSA-RDL. Claiming otherwise would tell a receiver
+            // it can look the class up in a library that has never heard of it.
+            segment.Type = new SegmentType
+            {
+                UUID = CcomUuid.ForReferenceData(_options.SourceId, className),
+                IDInInfoSource = className,
+                InfoSource = infoSource,
+                ShortName = className.Split(':').Last()
+            };
+        }
+
+        return segment;
+    }
+}

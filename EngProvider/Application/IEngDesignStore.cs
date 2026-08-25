@@ -26,9 +26,11 @@ public sealed class EngOptions
 /// separate type would be a second name for one thing and would eventually
 /// disagree with itself.
 ///
-/// Note what is absent on the write side: nothing here publishes. Releasing a
-/// named version stops at the database. Carrying a release onto a channel is
-/// the engine's work.
+/// Note what is absent. Nothing here publishes: creating a named version stops
+/// at the database, and carrying it onto a channel is the engine's work.
+/// Nothing here validates either — a named version is a marker, not a gate, so
+/// ENG states what the design says and REG-LOCATION judges whether it is fit to
+/// accept.
 /// </summary>
 public interface IEngDesignStore
 {
@@ -63,67 +65,81 @@ public interface IEngDesignStore
     /// </summary>
     Task<EngElement?> FindElementByCodeAsync(Guid iModelId, string codeValue, CancellationToken ct);
 
+    /// <summary>
+    /// Elements matching the given filters.
+    ///
+    /// <paramref name="modifiedSince"/> restricts the result to elements changed
+    /// at or after that instant, which is what an incremental reader outside ENG
+    /// needs in order to avoid re-reading the whole model on every pass. It is
+    /// inclusive, and callers are expected to overlap their window rather than
+    /// resume exactly where they stopped: a row committed during the previous
+    /// query but stamped just before it would otherwise never be seen.
+    /// </summary>
     Task<IReadOnlyList<EngElement>> GetElementsAsync(
         Guid? iModelId,
         long? namedVersionId,
-        bool? released,
+        DateTime? modifiedSince,
         CancellationToken ct);
 
     /// <summary>
-    /// Creates elements in, or updates elements of, an open draft version.
+    /// Creates or updates elements in an iModel.
     ///
-    /// Every element belongs to a named version from creation, so the target
-    /// version is required rather than inferred. Writing into a released version
-    /// is refused: a release is a handover record, and what was handed over
-    /// cannot be edited afterwards.
+    /// The target is the iModel, not a named version: elements accumulate as
+    /// work is done and are not authored into a baseline. Each call is stamped
+    /// with the next changeset position in that iModel, so a batch lands
+    /// together and later markers can derive whether it falls inside them.
+    ///
+    /// Elements at or below the most recent marker are refused: that content has
+    /// already been published, and editing it would change what a consumer was
+    /// told after the fact.
     /// </summary>
     Task<ElementUpsertResult> UpsertElementsAsync(
-        long namedVersionId,
+        Guid iModelId,
         IReadOnlyList<ElementUpsert> elements,
         CancellationToken ct);
 
     // ---- Named versions ---------------------------------------------------
 
-    Task<IReadOnlyList<EngNamedVersion>> GetNamedVersionsAsync(Guid? iModelId, CancellationToken ct);
+    /// <summary>
+    /// Named versions, optionally restricted to one iModel and to those changed
+    /// at or after <paramref name="modifiedSince"/>.
+    ///
+    /// Ordered by ModifiedUtc when reading incrementally, so a reader that stops
+    /// partway through resumes without a gap.
+    /// </summary>
+    Task<IReadOnlyList<EngNamedVersion>> GetNamedVersionsAsync(
+        Guid? iModelId,
+        DateTime? modifiedSince,
+        CancellationToken ct);
 
     Task<EngNamedVersion?> FindNamedVersionAsync(long namedVersionId, CancellationToken ct);
 
+    /// <summary>
+    /// Creates a named version, pinning it at the iModel's current position.
+    ///
+    /// This is the whole act. There is nothing to declare first and release
+    /// later: the marker is created already pinned, and whatever sits below it
+    /// is thereby baselined. Nothing is validated on the way through — ENG
+    /// states what the design says, and REG-LOCATION decides whether it is
+    /// acceptable.
+    ///
+    /// A marker may legitimately be the first in its iModel, in which case it
+    /// captures everything from day 0.
+    /// </summary>
     Task<EngNamedVersion> CreateNamedVersionAsync(NamedVersionDraft draft, CancellationToken ct);
 
     /// <summary>
-    /// Releases a named version, if the gate allows it.
+    /// The elements a marker contains, derived from changeset position rather
+    /// than read from stored membership.
     ///
-    /// Edits accrue without ceremony inside a draft; release is the deliberate
-    /// act. Any open finding blocks it, as does an empty version.
-    ///
-    /// The gate is enforced by the database, not re-implemented here. This method
-    /// reports the reasons a release was refused; it does not decide them, and so
-    /// cannot drift out of step with the rule actually in force.
+    /// This is the answer to "what was handed over at this baseline", and it is
+    /// computed the same way every time it is asked, however long after the
+    /// marker was cut.
     /// </summary>
-    Task<ReleaseResult> ReleaseNamedVersionAsync(long namedVersionId, CancellationToken ct);
-
-    // ---- Validation findings ----------------------------------------------
-
-    Task<IReadOnlyList<EngValidationFinding>> GetFindingsAsync(
+    Task<IReadOnlyList<EngElement>> GetNamedVersionElementsAsync(
         long namedVersionId,
-        bool openOnly,
         CancellationToken ct);
-
-    Task<EngValidationFinding> RaiseFindingAsync(FindingDraft draft, CancellationToken ct);
-
-    /// <summary>
-    /// Marks a finding resolved. Returns false when no such open finding exists.
-    ///
-    /// Resolution is explicit because an open finding is what holds the release
-    /// gate shut; clearing findings implicitly would quietly open it.
-    /// </summary>
-    Task<bool> ResolveFindingAsync(long findingId, string? resolvedBy, CancellationToken ct);
 }
-
-/// <summary>
-/// Release state of a named version, and so of every element in it.
-/// </summary>
-public enum NamedVersionState { Draft, Released }
 
 // ---- iTwins and iModels --------------------------------------------------
 
@@ -166,9 +182,11 @@ public sealed record EngClass(
 /// <summary>
 /// ENG's system of record — an element, which is what an engineer calls a tag.
 ///
-/// Maturity is not a field on the element. It is read from the version the
-/// element belongs to, exposed here as <see cref="IsReleased"/>. A stored
-/// per-element status could contradict the version, so there is not one.
+/// There is no maturity field. An element is not draft or released; it sits at
+/// a changeset position, and whether that position falls inside a published
+/// baseline is a question about markers rather than about the element. A stored
+/// per-element status would eventually contradict the markers, so there is not
+/// one.
 /// </summary>
 public sealed record EngElement(
     long ECInstanceId,
@@ -180,10 +198,7 @@ public sealed record EngElement(
     string? UserLabel,
     string? DisplayName,
     long? ParentECInstanceId,
-    long NamedVersionId,
-    string NamedVersionName,
-    NamedVersionState NamedVersionState,
-    bool IsReleased,
+    int ChangesetIndex,
     DateTime CreatedUtc,
     DateTime ModifiedUtc);
 
@@ -193,11 +208,17 @@ public sealed record EngElement(
 /// ECInstanceId is absent on create and supplied on update; the database
 /// allocates it, so a caller cannot choose one.
 ///
-/// NamedVersionId is absent: it is a parameter of the call, not a per-item
-/// field, so a batch cannot span versions and half-succeed.
+/// The iModel is a parameter of the call, not a per-item field, so a batch
+/// cannot span iModels and half-succeed. ChangesetIndex is absent for the same
+/// reason and because the store allocates it: a caller choosing its own
+/// position could place work inside an already-published baseline.
 ///
-/// FederationGuid is absent. ENG does not mint that identifier — it is assigned
-/// by whoever federates.
+/// FederationGuid is accepted but never invented. ENG does not mint it — the
+/// identifier is assigned by whoever federates — so it arrives from the caller
+/// that made that decision, and an element nobody has federated stays without
+/// one. Null on update leaves any existing value alone, since "I did not
+/// mention it" and "remove the identity other systems hold" are different
+/// requests and only the first is ever meant.
 /// </summary>
 public sealed record ElementUpsert(
     long? ECInstanceId,
@@ -205,7 +226,8 @@ public sealed record ElementUpsert(
     string? CodeValue,
     string? UserLabel,
     string? DisplayName,
-    long? ParentECInstanceId);
+    long? ParentECInstanceId,
+    Guid? FederationGuid = null);
 
 public sealed record ElementUpsertResult(
     IReadOnlyList<UpsertedElement> Elements,
@@ -220,66 +242,37 @@ public sealed record UpsertedElement(long ECInstanceId, string? CodeValue, bool 
 // ---- Named versions ------------------------------------------------------
 
 /// <summary>
-/// The release container, and what ENG actually hands over.
+/// A marker in an iModel's history, and what ENG hands over.
+///
+/// Carries two identifier sets. NamedVersionId is this database's own key, a
+/// BIGINT allocated locally. VersionGuid, ChangesetId and ChangesetIndex are
+/// what a real iModels would put in an event: a consumer outside ENG holds
+/// those and never sees the BIGINT.
+///
+/// The changeset pair is never null. A marker is pinned at creation, because an
+/// unpinned marker has no position and its contents could not be derived.
+///
+/// ElementCount is derived, not stored — it is the size of the range this
+/// marker covers, recomputed on read like the membership itself.
 /// </summary>
 public sealed record EngNamedVersion(
     long NamedVersionId,
+    Guid VersionGuid,
     Guid IModelId,
     string Name,
     string? Description,
-    NamedVersionState State,
+    string ChangesetId,
+    int ChangesetIndex,
     string CreatedBy,
     DateTime CreatedUtc,
-    DateTime? ReleasedUtc,
-    int ElementCount,
-    int OpenFindingCount);
+    DateTime ModifiedUtc,
+    int ElementCount);
 
 public sealed record NamedVersionDraft(
     Guid IModelId,
     string Name,
     string? Description,
     string? CreatedBy);
-
-/// <summary>
-/// Outcome of a release attempt.
-///
-/// Released is false when the gate refused, in which case Reason says why and
-/// Findings carries whatever was still open. The version is untouched.
-/// </summary>
-public sealed record ReleaseResult(
-    bool Released,
-    long NamedVersionId,
-    string Name,
-    NamedVersionState State,
-    int ElementCount,
-    string? Reason,
-    IReadOnlyList<EngValidationFinding> Findings);
-
-// ---- Validation findings -------------------------------------------------
-
-/// <summary>
-/// One reason a named version cannot be released.
-///
-/// The element is identified by CodeValue rather than by ECInstanceId, because a
-/// finding may concern a code that resolves to no element at all — which is
-/// itself one of the things worth objecting to.
-/// </summary>
-public sealed record EngValidationFinding(
-    long FindingId,
-    long NamedVersionId,
-    string? CodeValue,
-    string Severity,
-    string Message,
-    string State,
-    DateTime CreatedUtc,
-    DateTime? ResolvedUtc,
-    string? ResolvedBy);
-
-public sealed record FindingDraft(
-    long NamedVersionId,
-    string? CodeValue,
-    string Severity,
-    string Message);
 
 /// <summary>
 /// Something ENG declined to store, and why. Shared by every write path: the

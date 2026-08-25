@@ -1266,6 +1266,8 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, onSubmit, o
   const [serviceDescription, setServiceDescription] = useState('')
   const [unitNumber, setUnitNumber] = useState('')
   const [classKey, setClassKey] = useState('')
+  const [federationId, setFederationId] = useState('')
+  const [suggesting, setSuggesting] = useState(false)
 
   // Loading a row fills every field, including the ones that are already fine.
   //
@@ -1279,9 +1281,32 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, onSubmit, o
     setServiceDescription(editing?.serviceDescription ?? '')
     setUnitNumber(editing?.unitNumber ?? '')
     setClassKey(editing?.classKey ?? '')
+    setFederationId(editing?.federationId ?? '')
   }, [editing?.id])
 
-  const canSubmit = segmentNumber.trim().length > 0 && !busy
+  // Shown as invalid while typing, but only once the field is long enough to be a
+  // finished attempt -- flagging 'a' as a malformed UUID the moment someone starts
+  // pasting would be true and useless.
+  const trimmedFederationId = federationId.trim()
+  const federationIdMalformed =
+    trimmedFederationId.length >= 32 &&
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmedFederationId)
+
+  const canSubmit = segmentNumber.trim().length > 0 && !federationIdMalformed && !busy
+
+  async function suggest() {
+    setSuggesting(true)
+    try {
+      const { federationId: suggested } = await api.suggestFederationId()
+      setFederationId(suggested)
+    } catch {
+      // Deliberately quiet. Suggesting is a convenience, and an operator who can
+      // still paste or leave it empty is not blocked by its failing -- surfacing
+      // it in the form's error slot would suggest the segment could not be saved.
+    } finally {
+      setSuggesting(false)
+    }
+  }
 
   // Advisory only. The server decides, but naming the gap here means the user
   // learns it while the fields are in front of them rather than at publish time.
@@ -1300,6 +1325,9 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, onSubmit, o
       serviceDescription: serviceDescription.trim() || undefined,
       unitNumber: unitNumber.trim() || undefined,
       classKey: classKey.trim() || undefined,
+      // Omitted when editing. The server ignores it on an existing segment, and
+      // sending it anyway would imply the field is in play when it is not.
+      federationId: editing ? undefined : trimmedFederationId || undefined,
     })
 
     // Only when authoring. After an edit the fields stay as submitted, so the
@@ -1308,6 +1336,10 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, onSubmit, o
       // The number is cleared because it must be unique; the rest is kept, since
       // segments are usually authored in runs that share a unit and a class.
       setSegmentNumber('')
+      // Cleared for a stronger reason: an identity names exactly one entity, so
+      // leaving it populated would have the next segment authored in this run
+      // claim the identity of the one just saved.
+      setFederationId('')
     }
   }
 
@@ -1383,6 +1415,66 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, onSubmit, o
             ))}
           </select>
         </label>
+        {/* The federated identity. Offered as an input rather than assigned
+            silently, because the common real case is that the entity is already
+            identified somewhere else -- a tag register, a handover sheet -- and
+            adopting that id is what makes ENG and the other system able to say
+            they hold the same pump. Minting a fresh one instead would produce a
+            second identity for one thing, with nothing to relate them.
+
+            Read-only while editing: the identity is fixed for the entity's
+            lifetime, and changing it would orphan every downstream record
+            already keyed to the old value. */}
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 300 }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '8px', color: 'var(--text-muted)', letterSpacing: '0.1em' }}>
+            FEDERATION ID {editing ? '(FIXED)' : '(OPTIONAL)'}
+          </span>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <input
+              value={federationId}
+              placeholder={editing ? '' : 'paste from tag register, or suggest'}
+              readOnly={editing !== null}
+              onChange={e => setFederationId(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') submit() }}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                background: editing ? 'var(--bg-surface)' : 'var(--bg-panel)',
+                border: `1px solid ${federationIdMalformed ? 'rgba(248,113,113,0.6)' : 'var(--border-mid)'}`,
+                borderRadius: '3px',
+                color: editing ? 'var(--text-muted)' : 'var(--text-primary)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '11px',
+                padding: '5px 8px',
+                outline: 'none',
+              }}
+            />
+            {/* Only when authoring. There is nothing to suggest for a segment
+                that already has an identity. */}
+            {!editing && (
+              <button
+                onClick={() => void suggest()}
+                disabled={suggesting}
+                title="Mint a candidate identity. Use this only when the segment has no identity anywhere else — if it is in a tag register, paste that one instead."
+                style={{
+                  background: 'none',
+                  border: '1px solid var(--border-mid)',
+                  borderRadius: '3px',
+                  color: 'var(--text-secondary)',
+                  cursor: suggesting ? 'default' : 'pointer',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '9px',
+                  letterSpacing: '0.1em',
+                  padding: '0 10px',
+                  whiteSpace: 'nowrap',
+                  opacity: suggesting ? 0.5 : 1,
+                }}
+              >
+                {suggesting ? '…' : 'SUGGEST'}
+              </button>
+            )}
+          </div>
+        </label>
         <button
           onClick={submit}
           disabled={!canSubmit}
@@ -1403,10 +1495,12 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, onSubmit, o
           {busy ? 'SAVING…' : editing ? 'UPDATE SEGMENT' : 'CREATE SEGMENT'}
         </button>
         {/* The button is disabled until there is a segment number, which on an
-            empty form looks indistinguishable from a button that does nothing. */}
+            empty form looks indistinguishable from a button that does nothing.
+            Now that a malformed identity also disables it, the reason has to be
+            named -- otherwise a filled-in form with a bad paste reads as broken. */}
         {!canSubmit && !busy && (
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', paddingBottom: 6 }}>
-            enter a segment number
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: federationIdMalformed ? '#f87171' : 'var(--text-muted)', paddingBottom: 6 }}>
+            {federationIdMalformed ? 'federation id is not a valid UUID' : 'enter a segment number'}
           </span>
         )}
         {canSubmit && willBlock.length > 0 && (

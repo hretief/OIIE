@@ -99,7 +99,16 @@ public class ScenarioActionContext(
     /// it has no opinion about. A scenario that genuinely tests twin isolation names
     /// two, and then the argument is the whole point.
     /// </summary>
-    public Guid? GetTwin(string key = "iTwin")
+    public Guid? GetTwin(string key = "iTwin") => GetGuid(key);
+
+    /// <summary>
+    /// A UUID-valued argument, or null when the step does not give one.
+    ///
+    /// Malformed input throws rather than degrading to null, because a scenario that
+    /// meant to name something and misspelled it would otherwise run against a
+    /// default and report a pass for a case it never exercised.
+    /// </summary>
+    public Guid? GetGuid(string key)
     {
         var text = GetString(key);
 
@@ -189,6 +198,9 @@ public sealed class CreateTagAction(EngService eng) : IScenarioAction
             context.GetString("controlAction"),
             context.GetString("codePrefix"),
             context.GetTwin(),
+            // Scenarios may pin the identity so an assertion can name it. Left unset
+            // the tag is minted as usual, which is what most scenarios want.
+            context.GetGuid("federationId"),
             ct);
 
         return new ScenarioActionResult(
