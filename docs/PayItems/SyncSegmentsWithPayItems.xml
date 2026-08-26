@@ -1,0 +1,3023 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Example: DOT construction PayItems carried on a Segment in a CCOM 4.1 SyncSegments BOD.
+  Source: Bentley iModel ElementAspect DOT_PayItem1ElementAspect.
+  Model:  Segment -> MaterialItemOnSegment (occurrence) -> MaterialItem -> MaterialMasterItem
+          (SpecBook reference item).  Occurrence-specific quantity, cost, funding, time,
+          phase, plan-prep, tabulation and QA/QC data are carried as a CCOM PropertySet on
+          the MaterialItemOnSegment association.
+  Every element below is declared in CCOM.xsd 4.1.0 or OAGIS Platform 1.2.1 Meta.xsd.
+
+  ============================ PROVENANCE ANNOTATIONS ============================
+  Every value below carries an inline comment naming where it comes from.
+
+    [ASPECT]   column of the DOT_PayItem1ElementAspect ECSQL projection (alias given)
+    [ELEMENT]  bis.Element / GeometricElement3d : requires a JOIN the query lacks
+    [IMODEL]   iModel / iTwin metadata (FederationGuid, changeset, contract props)
+    [ECSCHEMA] ECSchema metadata : db.getSchemaProps("DOT"); KindOfQuantity units
+    [ECSTRUCT] structural echo of a source EC struct
+    [REFDATA]  MIMOSA "CCOM Reference Data" UUID : fixed, ships with the standard
+    [LOOKUP]   needs an MnDOT-published crosswalk table
+    [MINTED]   deterministic uuid5 computed by the extractor
+    [CONFIG]   deployment / participant configuration
+    [RUNTIME]  generated at send time
+    [SCOPE]    note on what the containing node asserts
+    [GAP]      NOT AVAILABLE from the query or any identified source : MUST RESOLVE
+
+  Search this file for "[GAP]" to find every unsourced value. There are 6.
+  Search for "ECSCHEMA CHECK" for the unit-conversion traps.
+  ===============================================================================
+-->
+<SyncSegments
+  xmlns="http://www.mimosa.org/ccom4"
+  xmlns:oa="http://www.openapplications.org/oagis/9"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.mimosa.org/ccom4 ../XSD/BOD/Messages/Configuration/SyncSegments.xsd"
+  releaseID="4.1.0" versionID="1.0" systemEnvironmentCode="Test" languageCode="en-US">
+   <oa:ApplicationArea>
+      <oa:Sender>
+         <oa:LogicalID>a52af3d3-4324-5bea-9062-b6e800d35f1d</oa:LogicalID>
+         <!-- [CONFIG] ENG participant ID | from the OpenO&M Service Directory -->
+         <oa:ComponentID>ENG Engine (iTwin/iModel)</oa:ComponentID>
+         <oa:ConfirmationCode>Always</oa:ConfirmationCode>
+      </oa:Sender>
+      <oa:Receiver>
+         <oa:LogicalID>6a959895-3fbf-5cc2-a3d4-a40ebae4ff60</oa:LogicalID>
+         <!-- [CONFIG] REG-LOCATION participant ID | from the OpenO&M Service Directory -->
+         <oa:ID>REG-LOCATION</oa:ID>
+      </oa:Receiver>
+      <oa:CreationDateTime>2026-08-25T14:32:07Z</oa:CreationDateTime>
+      <!-- [RUNTIME] UTC clock at publish -->
+      <oa:BODID>6f6be8f9-a013-54e3-be0a-27e7b3d68059</oa:BODID>
+      <!-- [RUNTIME] new UUID per message -->
+   </oa:ApplicationArea>
+   <DataArea>
+      <oa:Sync/>
+      <Segments>
+         <RegistrationSite>
+            <!-- [CONFIG] owning district / registration authority | not derivable from the iModel -->
+            <UUID>ca7c1641-b8f1-5781-9830-406b4085a027</UUID>
+            <ShortName>MnDOT-D1</ShortName>
+            <FullName>Minnesota Department of Transportation, District 1</FullName>
+         </RegistrationSite>
+         <Segment>
+            <UUID>44ad43b5-b1a0-5294-b10c-842509f714aa</UUID>
+            <!-- [ELEMENT] bis.Element.FederationGuid | THE CIRID. Requires JOIN bis.Element ON Element.Id = ElementId - NOT in the query -->
+            <IDInInfoSource>bc7a1f2e-3d44-4a91-9f0e-11d2c6a4b8e3::0x20000000c41::BR27043-DECK</IDInInfoSource>
+            <!-- [IMODEL+ASPECT] iModel FederationGuid :: ElementId :: CodeValue | ElementId IS in the query; the other two are not -->
+            <InfoSource>
+               <UUID>ed9ff1c3-b803-53c2-955a-01dc88c35293</UUID>
+               <ShortName>MnDOT iTwin iModel - SP 2758-92</ShortName>
+            </InfoSource>
+            <EffectiveStatusType>
+               <UUID>db4bf287-2374-4e9c-bd4b-fadaada24b99</UUID>
+               <ShortName>Active</ShortName>
+            </EffectiveStatusType>
+            <ShortName>BR27043-DECK</ShortName>
+            <!-- [ELEMENT] bis.Element.CodeValue | requires the JOIN -->
+            <FullName>Bridge 27043 - Superstructure Deck</FullName>
+            <!-- [ELEMENT] bis.Element.UserLabel | requires the JOIN -->
+            <Description>As-designed deck of Bridge 27043 carrying TH 61 over Silver Creek. Issued for Construction, SP 2758-92.</Description>
+            <Type>
+               <UUID>6c42560b-6057-4cab-91e8-27cde5434eb8</UUID>
+               <ShortName>Bridge</ShortName>
+               <!-- [LOOKUP] SegmentType : NO source column. Derive from the element ECClass or SpatialCategory via an MnDOT crosswalk. -->
+            </Type>
+            <RegistrationSite>
+               <UUID>ca7c1641-b8f1-5781-9830-406b4085a027</UUID>
+               <ShortName>MnDOT-D1</ShortName>
+            </RegistrationSite>
+            <MaterialItemOnSegment>
+               <!-- [SCOPE] 1:1 with ONE aspect instance | AspectId + AspectClass identify the source row -->
+               <UUID>8067b274-3286-5383-b987-62d8b4d0c854</UUID>
+               <!-- [MINTED] uuid5(FederationGuid :: PayItem_Item :: componentCode) | componentCode derived from AspectClass - UNRESOLVED, see 3.1.4 -->
+               <IDInInfoSource>bc7a1f2e-3d44-4a91-9f0e-11d2c6a4b8e3::0x30000000a17::DOT_PayItem1ElementAspect</IDInInfoSource>
+               <!-- [IMODEL+ASPECT] iModel FederationGuid :: AspectId :: AspectClass | traceability only - aspects have no FederationGuid and may be renumbered -->
+               <InfoSource>
+                  <UUID>ed9ff1c3-b803-53c2-955a-01dc88c35293</UUID>
+                  <ShortName>MnDOT iTwin iModel - SP 2758-92</ShortName>
+               </InfoSource>
+               <EffectiveStatusType>
+                  <UUID>db4bf287-2374-4e9c-bd4b-fadaada24b99</UUID>
+                  <ShortName>Active</ShortName>
+               </EffectiveStatusType>
+               <PropertySetForEntity>
+                  <UUID>cbbd6480-551d-529b-84e5-6a437450eaaf</UUID>
+                  <PropertySet>
+                     <UUID>ad1a15e6-4908-53ad-b736-54e26e6c8ed2</UUID>
+                     <ShortName>DOT Pay Item Assignment</ShortName>
+                     <Type>
+                        <UUID>cbe42dd6-06e0-5c7c-bd6c-e40ff4c0c498</UUID>
+                        <ShortName>DOT Pay Item</ShortName>
+                     </Type>
+                     <Definition>
+                        <UUID>8cb8ac6b-8dcf-5357-81ec-6ee5e285b2c9</UUID>
+                        <ShortName>DOT_PayItem1.Assignment</ShortName>
+                     </Definition>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.Quantity | one PropertyGroup per source EC struct -->
+                        <UUID>09b9e58e-adfc-5a9f-ae07-ccb9be0085e4</UUID>
+                        <ShortName>Quantity</ShortName>
+                        <Definition>
+                           <UUID>851acda9-a01a-5ee6-a68d-13347603bbd3</UUID>
+                           <ShortName>Quantity</ShortName>
+                        </Definition>
+                        <Order>1</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_Method -->
+                           <UUID>f274f213-0ea6-584c-b376-3d123a6ba81b</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Method</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>f33dd0d9-dfd6-5f28-85f9-1f6d437a81c4</UUID>
+                              <ShortName>Quantity.Method</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Neat line takeoff from deck solid</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_Description -->
+                           <UUID>fbf88533-78b5-5e7d-81c8-c3550274ee08</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Description</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>18ed81f1-3d0b-50db-8cd2-7c265f72766d</UUID>
+                              <ShortName>Quantity.Description</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Deck slab 42.0 ft x 236.5 ft x 9.5 in plus integral wearing course</Text>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_FactorItem -->
+                           <UUID>8e01f360-8d6b-5dd6-860c-58dae499c645</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>FactorItem</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>d79936de-8dc4-5166-a702-1c3ba501d279</UUID>
+                              <ShortName>Quantity.FactorItem</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>1.000</Number>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_FactorUser -->
+                           <UUID>7a80fcc4-a0fd-55c1-b1cf-a220709c34ee</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>FactorUser</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>f24287d9-e7e1-5834-8f6b-646c26b0eb3a</UUID>
+                              <ShortName>Quantity.FactorUser</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>1.020</Number>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_Factor | ALIAS REQUIRED, collides with Cost_Factor -->
+                           <UUID>790df0d8-3d86-51aa-887f-87a07edf59aa</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Factor</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>a943d84e-e537-50b4-aea3-91a80eba89e5</UUID>
+                              <ShortName>Quantity.Factor</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>1.020</Number>
+                           </ValueContent>
+                           <Order>5</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_Override | ALIAS REQUIRED, collides with Cost_Override -->
+                           <UUID>6985271d-c9cd-5ad0-8641-808bd36649db</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Override</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>1e1e3db1-f7ac-51fb-b879-a96a16856784</UUID>
+                              <ShortName>Quantity.Override</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>0.000</Number>
+                           </ValueContent>
+                           <Order>6</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_CompQuantity | raw geometric take-off, pre-rounding -->
+                           <UUID>8d7f0022-6829-5a60-bf77-a1b32edbdb71</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>CompQuantity</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>c8fbca07-6cf6-5439-96cd-35b760b870d4</UUID>
+                              <ShortName>Quantity.CompQuantity</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>404.41</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>e4108785-fa78-4838-900a-b602c38db4e7</UUID>
+                                    <ShortName>Cubic Yards</ShortName>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>7</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_RoundingConservative -->
+                           <UUID>24eeb164-4a53-5fc2-a7e6-08c2238b5a12</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>RoundingConservative</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>ca99c7b0-2c20-5b83-8a36-bbf646f7b97d</UUID>
+                              <ShortName>Quantity.RoundingConservative</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>true</Boolean>
+                           </ValueContent>
+                           <Order>8</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_RoundingIncrement -->
+                           <UUID>fccc1b70-1ad5-5cf2-a3da-af079bd9f18e</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>RoundingIncrement</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>60adcdab-56a9-560d-beac-3862702a9868</UUID>
+                              <ShortName>Quantity.RoundingIncrement</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>0.5</Number>
+                           </ValueContent>
+                           <Order>9</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_RoundingPrecision -->
+                           <UUID>b5af10b5-e7f8-5680-9aac-ea414d4e3482</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>RoundingPrecision</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>0df9d461-352d-570d-b37b-385455b8440d</UUID>
+                              <ShortName>Quantity.RoundingPrecision</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>1</Number>
+                           </ValueContent>
+                           <Order>10</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_ItemQuantity | THE take-off quantity - the one value ENG is authoritative for -->
+                           <UUID>bfaa7569-670e-5a10-a900-c20627ee9b37</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>ItemQuantity</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>092068c2-a083-5b14-843f-dd4659a661a0</UUID>
+                              <ShortName>Quantity.ItemQuantity</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>412.5</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>e4108785-fa78-4838-900a-b602c38db4e7</UUID>
+                                    <ShortName>Cubic Yards</ShortName>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>11</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.Cost | one PropertyGroup per source EC struct -->
+                        <UUID>43cdcfa0-58d6-5c0c-aed9-3939809b3fec</UUID>
+                        <ShortName>Cost</ShortName>
+                        <Definition>
+                           <UUID>2392720c-0b34-5195-bc6d-23ccad211121</UUID>
+                           <ShortName>Cost</ShortName>
+                        </Definition>
+                        <Order>2</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] Cost_EstimateType -->
+                           <UUID>83df691c-1fe0-5697-8b2a-ce2bc19da547</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>EstimateType</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>d4eecd12-6a7b-561b-88b4-adcc6ce8f889</UUID>
+                              <ShortName>Cost.EstimateType</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Engineer Estimate - Historical Bid Average</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Cost_EngEstPrice | AASHTOWare template price AS OF CLONE TIME - preserves template lineage -->
+                           <UUID>09ec2add-c66c-5a4c-83ae-ce43779da3ac</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>EngEstPrice</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>2ffd8511-a5d0-55a0-b2fe-393b467496d5</UUID>
+                              <ShortName>Cost.EngEstPrice</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>662.50</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>39c197f5-759f-41c7-805e-2a87b6f9e29d</UUID>
+                                    <ShortName>US Dollar</ShortName>
+                                    <UOMQuantity>
+                                       <UUID>dbc268de-6847-4729-926f-6f46a18af09d</UUID>
+                                       <ShortName>Currency</ShortName>
+                                    </UOMQuantity>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Cost_Override | user modification to the template -->
+                           <UUID>350c06ea-3216-5183-9e75-b6aea67a4a54</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Override</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>84b03e79-1ce9-5541-8f25-2c003c5b40c0</UUID>
+                              <ShortName>Cost.Override</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>0.00</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>39c197f5-759f-41c7-805e-2a87b6f9e29d</UUID>
+                                    <ShortName>US Dollar</ShortName>
+                                    <UOMQuantity>
+                                       <UUID>dbc268de-6847-4729-926f-6f46a18af09d</UUID>
+                                       <ShortName>Currency</ShortName>
+                                    </UOMQuantity>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Cost_Factor | user modification to the template -->
+                           <UUID>439d9d32-ca3b-5079-8093-22c82366cf0f</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Factor</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>fb02b2e0-2cd2-55b3-8206-7d669f83e863</UUID>
+                              <ShortName>Cost.Factor</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>1.034</Number>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Cost_UnitPrice | resolved price after override/factor -->
+                           <UUID>a787cff6-5137-5df7-9324-5c0c47986ded</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>UnitPrice</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>fd85fbc7-b369-5c4c-a8bd-d804c2a9db42</UUID>
+                              <ShortName>Cost.UnitPrice</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>685.00</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>39c197f5-759f-41c7-805e-2a87b6f9e29d</UUID>
+                                    <ShortName>US Dollar</ShortName>
+                                    <UOMQuantity>
+                                       <UUID>dbc268de-6847-4729-926f-6f46a18af09d</UUID>
+                                       <ShortName>Currency</ShortName>
+                                    </UOMQuantity>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>5</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Cost_ItemCost | derived: UnitPrice x ItemQuantity -->
+                           <UUID>80ee555c-0816-5b54-a350-bb2b89532b67</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>ItemCost</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>b0aa105a-e252-5c39-b42e-bbeebc12b8b0</UUID>
+                              <ShortName>Cost.ItemCost</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>282562.50</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>39c197f5-759f-41c7-805e-2a87b6f9e29d</UUID>
+                                    <ShortName>US Dollar</ShortName>
+                                    <UOMQuantity>
+                                       <UUID>dbc268de-6847-4729-926f-6f46a18af09d</UUID>
+                                       <ShortName>Currency</ShortName>
+                                    </UOMQuantity>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>6</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.Time | one PropertyGroup per source EC struct -->
+                        <UUID>d02aca3b-2da0-52e7-bc47-dbec783166bb</UUID>
+                        <ShortName>Time</ShortName>
+                        <Definition>
+                           <UUID>94fca911-38f0-56c2-a4fe-f704b405d9fe</UUID>
+                           <ShortName>Time</ShortName>
+                        </Definition>
+                        <Order>3</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] Time_EngEstUnitPerDay | template production rate at clone time -->
+                           <UUID>ba76c5be-40a9-50d0-bdf2-6543f76273b6</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>EngEstUnitPerDay</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>25dfd816-8aae-58d0-8652-b5846fbef3db</UUID>
+                              <ShortName>Time.EngEstUnitPerDay</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>60.0</Number>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Time_UnitOverride -->
+                           <UUID>ad71b7a3-dc04-5a5a-9360-3c5a0ba10541</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>UnitOverride</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>47417454-4804-51eb-9656-2e4576540ac3</UUID>
+                              <ShortName>Time.UnitOverride</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>0.0</Number>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Time_UnitFactor -->
+                           <UUID>c38cd27d-fad6-5de5-af11-e86277f65441</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>UnitFactor</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>425d6b16-fb9a-59fc-a96c-4a512fbc5253</UUID>
+                              <ShortName>Time.UnitFactor</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>1.000</Number>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Time_WorkforceFactor -->
+                           <UUID>538defe6-0a65-52e4-b72f-001be2d5f4cf</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>WorkforceFactor</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>6b80b555-42a4-5770-9ee4-bea606b45ae2</UUID>
+                              <ShortName>Time.WorkforceFactor</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>1.150</Number>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Time_UnitPerDay -->
+                           <UUID>9396f64b-32bf-587d-918f-8ba579bec544</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>UnitPerDay</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>0c68bad6-3cee-5ed7-9354-8d6945455e1a</UUID>
+                              <ShortName>Time.UnitPerDay</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>69.0</Number>
+                           </ValueContent>
+                           <Order>5</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Time_ItemTime | ECSCHEMA CHECK: bare Double or KindOfQuantity? persistence unit may be seconds, not days -->
+                           <UUID>a6a98c47-da73-5958-b079-5c6ed3c0836e</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>ItemTime</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>7ef140ce-acbf-5c99-b798-1a41d9560e90</UUID>
+                              <ShortName>Time.ItemTime</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>6.0</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>0904787c-69f1-416f-b3be-5cc4585ca5e2</UUID>
+                                    <ShortName>Days</ShortName>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>6</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.Funding | one PropertyGroup per source EC struct -->
+                        <UUID>b81d16f8-8a75-5974-9d0a-b230ee5fac26</UUID>
+                        <ShortName>Funding</ShortName>
+                        <Definition>
+                           <UUID>bd09cb75-7852-5a14-9d01-a030e6f55289</UUID>
+                           <ShortName>Funding</ShortName>
+                        </Definition>
+                        <Order>4</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] Funding_Code -->
+                           <UUID>949bd3dc-bf2e-5a2f-9a09-533555c794a3</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Code</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>1caab0c5-92e0-5dee-9d55-a2ad84832918</UUID>
+                              <ShortName>Funding.Code</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>NHPP</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Funding_Name -->
+                           <UUID>56e03f32-b20d-5cae-b17c-09a78fdc8755</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Name</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>cb58a272-4598-5452-959d-76cfeb67da35</UUID>
+                              <ShortName>Funding.Name</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>National Highway Performance Program</Text>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Funding_Payer -->
+                           <UUID>1b183b07-a033-593e-ab8f-6fad5571b1e1</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Payer</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>d5c54b88-a30f-5c02-8a6e-2909b60a9fc3</UUID>
+                              <ShortName>Funding.Payer</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>FHWA / MnDOT State Aid</Text>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Funding_Percentage -->
+                           <UUID>6b9ba333-b239-5648-b0ca-6b9fb6443f4b</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Percentage</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>e59708a7-6d56-537d-ba32-61ee552e2fef</UUID>
+                              <ShortName>Funding.Percentage</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Percentage>80.0</Percentage>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Funding_FederalParticipation | String, domain unknown - normalise to Boolean if it is a Y/N flag -->
+                           <UUID>95de0ac8-0fbf-5bd8-9cd8-4c9aa1e54152</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>FederalParticipation</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>9939f079-0846-5798-ba41-0ae47264ac9b</UUID>
+                              <ShortName>Funding.FederalParticipation</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Participating</Text>
+                           </ValueContent>
+                           <Order>5</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.ConstructionPhase | one PropertyGroup per source EC struct -->
+                        <UUID>eef9cbc4-db28-5062-abcd-2b9b69456e10</UUID>
+                        <ShortName>ConstructionPhase</ShortName>
+                        <Definition>
+                           <UUID>a0ecb0a9-57b1-57df-9f53-906e59a5c397</UUID>
+                           <ShortName>ConstructionPhase</ShortName>
+                        </Definition>
+                        <Order>5</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] ConstructionPhase_YR -->
+                           <UUID>e3b2e4b2-bfc5-5483-8b58-e31c8d092ba9</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>YR</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>24625668-3994-5099-9902-49e1d27053d0</UUID>
+                              <ShortName>ConstructionPhase.YR</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>2027</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] ConstructionPhase_Stage -->
+                           <UUID>be2cffdf-9e20-5555-8ba0-f44fda28c7be</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Stage</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>65299043-e198-5cf7-a1ea-78735ce3d7bd</UUID>
+                              <ShortName>ConstructionPhase.Stage</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Stage 2</Text>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] ConstructionPhase_Class | ALIAS REQUIRED, collides with PayItem_Class and Tabulation_Class -->
+                           <UUID>64c7289d-0b28-567d-8141-249fe36063c9</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Class</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>28c353df-c2fc-5055-bdec-846327f9b071</UUID>
+                              <ShortName>ConstructionPhase.Class</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Structures</Text>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] ConstructionPhase_Group | ALIAS + BRACKETS REQUIRED - [Group] is reserved -->
+                           <UUID>c9f963c5-fc94-5d60-ad3b-c8d2b809a3bb</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Group</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>1bd9660c-4ad0-59ab-81ca-25ab14e361b9</UUID>
+                              <ShortName>ConstructionPhase.Group</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Superstructure</Text>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] ConstructionPhase_Sequence -->
+                           <UUID>0347ca06-41e3-5c36-b81c-2a59ad6dcdb0</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Sequence</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>df87612e-e490-5ba8-ad7e-33b8234f1bb8</UUID>
+                              <ShortName>ConstructionPhase.Sequence</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>040</Text>
+                           </ValueContent>
+                           <Order>5</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] ConstructionPhase_ActivityName -->
+                           <UUID>aa3fb961-ac6f-58e2-a107-da82d9b457bf</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>ActivityName</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>05521304-ef29-5cef-8660-6f603dbe91fd</UUID>
+                              <ShortName>ConstructionPhase.ActivityName</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Place bridge deck concrete</Text>
+                           </ValueContent>
+                           <Order>6</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.PlanPrep | one PropertyGroup per source EC struct -->
+                        <UUID>fc8852ea-4118-5546-bfbe-79c46742200d</UUID>
+                        <ShortName>PlanPrep</ShortName>
+                        <Definition>
+                           <UUID>4d589e8c-d9cb-5998-91b9-e822afadd8fb</UUID>
+                           <ShortName>PlanPrep</ShortName>
+                        </Definition>
+                        <Order>6</Order>
+                        <SetProperty>
+                           <!-- [GAP] no source column | was invented in the first draft; the query exposes only Label1/Label2/LabelNote -->
+                           <UUID>bb5b6e26-4f2b-5c91-baa8-add4f6ed5783</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>LabelPlanP</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>6fed4e76-5392-5b5a-b5bf-169a5916137e</UUID>
+                              <ShortName>PlanPrep.LabelPlanP</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>STRUCTURAL CONCRETE (3Y33)</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] PlanPrep_LabelNote -->
+                           <UUID>2fa87241-5669-5511-be43-f6302ddbeb38</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>LabelNote</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>c2a1974c-f043-50c1-ad8f-19a4b0889fe4</UUID>
+                              <ShortName>PlanPrep.LabelNote</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Includes integral wearing course; see Sheet S-14</Text>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] PlanPrep_Label1 -->
+                           <UUID>f40c2cd1-8809-56fb-aa0b-40337664f8f1</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Label1</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>2cf06899-80f6-5cc2-a385-ac26b326cea8</UUID>
+                              <ShortName>PlanPrep.Label1</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>DECK</Text>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] PlanPrep_Label2 -->
+                           <UUID>4860f212-3b51-5181-ab01-959cdc2a4333</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Label2</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>81e96fbb-dabb-5af1-8292-5e37aa89f73a</UUID>
+                              <ShortName>PlanPrep.Label2</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>3Y33</Text>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.Tabulation | one PropertyGroup per source EC struct -->
+                        <UUID>9ae42a7c-7bb9-5a19-83ee-ac17f0be3aa9</UUID>
+                        <ShortName>Tabulation</ShortName>
+                        <Definition>
+                           <UUID>7df20df1-c74a-51a4-b2ec-42b4cfe1fd12</UUID>
+                           <ShortName>Tabulation</ShortName>
+                        </Definition>
+                        <Order>7</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] Tabulation_Class | ALIAS REQUIRED - name collision -->
+                           <UUID>505a4c3d-c3b2-5375-9d1d-681f9dc73c98</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Class</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>a96cc9e2-3f4d-5878-bcce-bdc2bad2673a</UUID>
+                              <ShortName>Tabulation.Class</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Bridge</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Tabulation_Category -->
+                           <UUID>b8b10128-4ea0-5049-b871-2e3165f896cc</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Category</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>a4e48355-853b-5b8a-b40e-a68628a7bac1</UUID>
+                              <ShortName>Tabulation.Category</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Concrete</Text>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Tabulation_Group | ALIAS + BRACKETS REQUIRED -->
+                           <UUID>09e8044b-4640-50b2-9ee3-83a4bc82e3b8</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Group</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>279533fe-e0dc-58ac-bd97-b176d188b93f</UUID>
+                              <ShortName>Tabulation.Group</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Superstructure Quantities</Text>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Tabulation_Code -->
+                           <UUID>ddb96b0f-db4b-514a-a7ff-b951f6553ba9</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Code</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>d5057564-73b7-561c-9550-bd3099e155ca</UUID>
+                              <ShortName>Tabulation.Code</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>TAB-BR-CONC</Text>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Tabulation_Title -->
+                           <UUID>e9d38802-91c6-5b7b-86bb-bbda92332c15</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Title</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>85594587-d535-514e-af5b-7b2cf34ee4af</UUID>
+                              <ShortName>Tabulation.Title</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Tabulation of Bridge Concrete Quantities</Text>
+                           </ValueContent>
+                           <Order>5</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Tabulation_SheetNum -->
+                           <UUID>55e2254b-8a80-54fc-ab49-c1bcca84bf48</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>SheetNum</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>6bea151c-a187-5657-9d73-14efccbcc72c</UUID>
+                              <ShortName>Tabulation.SheetNum</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>S-04</Text>
+                           </ValueContent>
+                           <Order>6</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Tabulation_DOT_DigitalAssetMetadata_ID_ -->
+                           <UUID>151585aa-c1e4-55e5-9386-7d8a19baa1e0</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>DOT_DigitalAssetMetadata_ID_</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>7570f4fa-c8c7-5d16-a9df-79b4f4bb5aa3</UUID>
+                              <ShortName>Tabulation.DOT_DigitalAssetMetadata_ID_</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>DAM-2758-92-000417</Text>
+                           </ValueContent>
+                           <Order>7</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.Asset | one PropertyGroup per source EC struct -->
+                        <UUID>fe0b1c4a-a0d5-53f7-9ed0-04c27d9c9061</UUID>
+                        <ShortName>Asset</ShortName>
+                        <Definition>
+                           <UUID>33ccfe26-653a-5dbb-af31-8c7aa272e390</UUID>
+                           <ShortName>Asset</ShortName>
+                        </Definition>
+                        <Order>8</Order>
+                        <SetProperty>
+                           <!-- [GAP] no source column | CRITICAL: the contract/SP number keys MaterialItem and IDInInfoSource - find its real home -->
+                           <UUID>6d12f4de-5126-509d-81cd-966e3c25ab61</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Project_ID</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>fe647796-c2a7-59b4-9f00-21d284815d02</UUID>
+                              <ShortName>Asset.Project_ID</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>2758-92</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [GAP] no source column | contract name - not exposed by this aspect -->
+                           <UUID>76ca5393-4117-5b30-b946-2f3f39aa9c64</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Project</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>bdcc2b1a-d794-5031-8a85-c2cfd8a2e6ed</UUID>
+                              <ShortName>Asset.Project</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>TH 61 over Silver Creek - Bridge 27043 Replacement</Text>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Asset_Index | BRACKETS REQUIRED - [Index] is reserved -->
+                           <UUID>e40fd684-8816-5a3d-9358-61f951949e61</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Index</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>2ec635a8-79c6-57d8-9265-5fb599a2ad39</UUID>
+                              <ShortName>Asset.Index</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>0042</Text>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [GAP] no source column | lifecycle status drives the IFC release gate - likely ELEMENT or named-version metadata -->
+                           <UUID>9d24984a-e7d4-5b5b-b2ad-261666375d82</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Status</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>4edae8ca-b9d6-5b78-815c-0d7a8470938a</UUID>
+                              <ShortName>Asset.Status</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Issued for Construction</Text>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Asset_Instance -->
+                           <UUID>16eaa01b-3922-5643-a9d6-46ce71e0ee87</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Instance</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>f1f77713-60ac-5dac-ac7a-5ff3e67f3a7a</UUID>
+                              <ShortName>Asset.Instance</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>1</Text>
+                           </ValueContent>
+                           <Order>5</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [GAP] no source column -->
+                           <UUID>d1a1bef5-2f50-520b-8494-f6104295a127</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>PlanID</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>4ec9a19c-cfca-591d-9559-d3a0857210bd</UUID>
+                              <ShortName>Asset.PlanID</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>SP2758-92-S04</Text>
+                           </ValueContent>
+                           <Order>6</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Asset_PlanDecoder -->
+                           <UUID>34c5852c-d99a-5fb2-a9bb-84fb31265e83</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>PlanDecoder</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>c69ee8bb-7807-5bb8-b3f9-dcc10d9b4c16</UUID>
+                              <ShortName>Asset.PlanDecoder</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>SP-SHEET-REV</Text>
+                           </ValueContent>
+                           <Order>7</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Asset_IsTracked | candidate discriminator for whether this occurrence warrants a functional location -->
+                           <UUID>64a2d321-7fca-5f6a-ad83-bd98cbc45411</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>IsTracked</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>f2afe732-782a-5061-b54b-cce1cd553186</UUID>
+                              <ShortName>Asset.IsTracked</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>true</Boolean>
+                           </ValueContent>
+                           <Order>8</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Asset_AssetID | NOT an identity - see 3.4; ElementId hex, may be renumbered by a connector resync -->
+                           <UUID>8446c613-9970-5ea6-8d1f-a9776060ba98</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>AssetID</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>bcde8b81-3117-5dc5-9c46-d45cc9bbdcf5</UUID>
+                              <ShortName>Asset.AssetID</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>0x20000000c41</Text>
+                           </ValueContent>
+                           <Order>9</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.QAQC | one PropertyGroup per source EC struct -->
+                        <UUID>1edfb098-689a-5e03-8e62-c4097fb2ff67</UUID>
+                        <ShortName>QAQC</ShortName>
+                        <Definition>
+                           <UUID>1c72075b-51b9-5b5e-a427-e565a6090258</UUID>
+                           <ShortName>QAQC</ShortName>
+                        </Definition>
+                        <Order>9</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_MajorCostValue -->
+                           <UUID>87a44495-02e3-578f-8955-69907d6b7d5d</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>MajorCostValue</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>7910ac9d-cfb8-5aca-9d7b-266311a589f8</UUID>
+                              <ShortName>QAQC.MajorCostValue</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>250000.00</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>39c197f5-759f-41c7-805e-2a87b6f9e29d</UUID>
+                                    <ShortName>US Dollar</ShortName>
+                                    <UOMQuantity>
+                                       <UUID>dbc268de-6847-4729-926f-6f46a18af09d</UUID>
+                                       <ShortName>Currency</ShortName>
+                                    </UOMQuantity>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_MajorTimeValue | ECSCHEMA CHECK: KindOfQuantity-typed; persistence unit likely SECONDS not days -->
+                           <UUID>70489fbc-a22e-53b9-b7ac-336a7062648c</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>MajorTimeValue</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>561da0b8-9532-5d43-90a7-b2ded20f67bb</UUID>
+                              <ShortName>QAQC.MajorTimeValue</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>5.0</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>0904787c-69f1-416f-b3be-5cc4585ca5e2</UUID>
+                                    <ShortName>Days</ShortName>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_IsMajorItemLookup -->
+                           <UUID>2132892f-f938-54b7-950c-6af491ffebec</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>IsMajorItemLookup</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>91b01ab2-507f-5fb2-8c7f-1c919e871a02</UUID>
+                              <ShortName>QAQC.IsMajorItemLookup</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>true</Boolean>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_IsMajorCost -->
+                           <UUID>32c80a90-54ca-533d-97e4-8cdaf006ad5e</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>IsMajorCost</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>871e32ae-dbcc-5fd9-9fc0-cc9d54538dd6</UUID>
+                              <ShortName>QAQC.IsMajorCost</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>true</Boolean>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_IsMajorTime -->
+                           <UUID>79d46b20-75c4-5bac-a8cc-3836fa3e8600</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>IsMajorTime</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>4a6ed3fc-ce56-557c-9781-faa5f7ae3223</UUID>
+                              <ShortName>QAQC.IsMajorTime</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>true</Boolean>
+                           </ValueContent>
+                           <Order>5</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_IsCheckQty -->
+                           <UUID>e41770c5-6a05-53cb-bfe5-fa38bc39d18f</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>IsCheckQty</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>29f80561-4e8f-5b8c-a9c6-fbcd8c2a44b9</UUID>
+                              <ShortName>QAQC.IsCheckQty</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>true</Boolean>
+                           </ValueContent>
+                           <Order>6</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_IsCheckCost -->
+                           <UUID>790e59b1-24d0-5cdb-beab-f2b5e27343da</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>IsCheckCost</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>f5c4f11f-f241-50a2-a131-59fc4c9c72da</UUID>
+                              <ShortName>QAQC.IsCheckCost</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>false</Boolean>
+                           </ValueContent>
+                           <Order>7</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_IsSiblingRequired | relevant to the component-slot question - siblings are the other numbered aspect classes -->
+                           <UUID>fed9300c-a846-5706-9073-1d40be19482d</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>IsSiblingRequired</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>9083e591-432d-587f-90cc-04f2582b5d63</UUID>
+                              <ShortName>QAQC.IsSiblingRequired</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>true</Boolean>
+                           </ValueContent>
+                           <Order>8</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_PastContractCount -->
+                           <UUID>3f23c316-707f-5867-ab2f-518ca4ab6eb4</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>PastContractCount</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>af200781-3270-571d-b984-e2db10f585b7</UUID>
+                              <ShortName>QAQC.PastContractCount</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>37</Number>
+                           </ValueContent>
+                           <Order>9</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_IsCommonItem -->
+                           <UUID>e740a8a2-a9a7-5944-84f7-f1a25f4f6248</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>IsCommonItem</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>d9376412-6fdb-55ed-bdbd-96001d9e2a91</UUID>
+                              <ShortName>QAQC.IsCommonItem</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>true</Boolean>
+                           </ValueContent>
+                           <Order>10</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_ElementDescription -->
+                           <UUID>2f054f67-1e82-54e3-9bfc-d8f0a113bc96</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>ElementDescription</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>4cb94990-92e7-5953-b2f5-6181e728dc2a</UUID>
+                              <ShortName>QAQC.ElementDescription</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Bridge deck slab, integral wearing course</Text>
+                           </ValueContent>
+                           <Order>11</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.Remarks | one PropertyGroup per source EC struct -->
+                        <UUID>382a2b0f-a046-59cc-abfd-484753f19238</UUID>
+                        <ShortName>Remarks</ShortName>
+                        <Definition>
+                           <UUID>6d4208c9-5327-55d7-ac02-ba0d7a88d2ac</UUID>
+                           <ShortName>Remarks</ShortName>
+                        </Definition>
+                        <Order>10</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] Remarks_Remarks -->
+                           <UUID>87032baa-642f-57ff-bd8c-0396ef24744c</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Remark</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>6b8104f1-820d-5298-9367-a0f5efee8d30</UUID>
+                              <ShortName>Remarks.Remark</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Quantity confirmed against deck solid revision C dated 2026-07-14.</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.SourceAuthoring | one PropertyGroup per source EC struct -->
+                        <UUID>3563f0ed-3de5-535c-a521-1a472b77b837</UUID>
+                        <ShortName>SourceAuthoring</ShortName>
+                        <Definition>
+                           <UUID>631f7674-3fce-5101-99c1-9626285df355</UUID>
+                           <ShortName>SourceAuthoring</ShortName>
+                        </Definition>
+                        <Order>11</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] SpecbookFilter | top-level aspect column, not inside a struct -->
+                           <UUID>cf3c605a-176c-5ea4-b673-d4315ea20545</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>SPECBOOK_FILTER</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>fd127bbb-cef3-514d-b7d0-0daf69fc27ec</UUID>
+                              <ShortName>SourceAuthoring.SPECBOOK_FILTER</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>MnDOT2020</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] RefitemSearch | top-level aspect column, not inside a struct -->
+                           <UUID>a9a87dc7-741b-5b10-abf2-8e3e98f7f1f4</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>REFITEM_SEARCH</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>ca39cd06-fbdc-59fa-9232-f1a95324a7ed</UUID>
+                              <ShortName>SourceAuthoring.REFITEM_SEARCH</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>2461*</Text>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                     </Group>
+                  </PropertySet>
+               </PropertySetForEntity>
+               <MaterialItem>
+                  <!-- [SCOPE] the spec book item as used on THIS contract | grain = item x contract -->
+                  <UUID>7a66c8a7-c8f9-504c-a9a9-8cfd9454c242</UUID>
+                  <!-- [MINTED] uuid5(contractId :: PayItem_Item) | contractId is a GAP - see Asset.Project_ID -->
+                  <IDInInfoSource>SP2758-92|2461.504</IDInInfoSource>
+                  <!-- [GAP] contract number + PayItem_Item | contract number has NO source column in the query -->
+                  <InfoSource>
+                     <UUID>ed9ff1c3-b803-53c2-955a-01dc88c35293</UUID>
+                     <ShortName>MnDOT iTwin iModel - SP 2758-92</ShortName>
+                  </InfoSource>
+                  <EffectiveStatusType>
+                     <UUID>db4bf287-2374-4e9c-bd4b-fadaada24b99</UUID>
+                     <ShortName>Active</ShortName>
+                  </EffectiveStatusType>
+                  <ShortName>2461.504 (SP 2758-92)</ShortName>
+                  <FullName>STRUCTURAL CONCRETE (3Y33) - contract item, SP 2758-92</FullName>
+                  <Type>
+                     <UUID>67782185-ac49-44f7-8b8c-cafba7fa9608</UUID>
+                     <ShortName>Material</ShortName>
+                     <!-- [LOOKUP] LogisticResourceType : NO source column. Derive from PayItem_Class / spec division, or publish a crosswalk. Material vs Labour vs Tool vs Utility vs Document. -->
+                  </Type>
+                  <MaterialMasterItem>
+                     <!-- [SCOPE] AASHTOWare spec book item | IDENTITY STUB ONLY - AASHTOWare is authoritative; see decision doc 3.2.1 -->
+                     <UUID>0feb477f-9216-5624-8e1e-4775b5fba011</UUID>
+                     <!-- [MINTED] uuid5(specBookId :: PayItem_Item) | specBookId is CONFIG; PayItem_SpecBook string is not a stable key -->
+                     <IDInInfoSource>2461.504</IDInInfoSource>
+                     <!-- [ASPECT] PayItem_Item -->
+                     <InfoSource>
+                        <UUID>b6575113-75c9-55ae-b6cd-5130ba26b1c0</UUID>
+                        <ShortName>MnDOT Standard Specifications for Construction, 2020 Edition</ShortName>
+                     </InfoSource>
+                     <EffectiveStatusType>
+                        <UUID>db4bf287-2374-4e9c-bd4b-fadaada24b99</UUID>
+                        <ShortName>Active</ShortName>
+                     </EffectiveStatusType>
+                     <PropertySetForEntity>
+                        <UUID>12d2ed11-2f1b-50f1-b587-7011f218367e</UUID>
+                        <PropertySet>
+                           <UUID>2116a4d6-4ca6-5235-a33b-20eb5aa15320</UUID>
+                           <ShortName>SpecBook Reference Item</ShortName>
+                           <Type>
+                              <UUID>cbe42dd6-06e0-5c7c-bd6c-e40ff4c0c498</UUID>
+                              <ShortName>DOT Pay Item</ShortName>
+                           </Type>
+                           <Definition>
+                              <UUID>d630059b-46c5-560d-a389-f9fabf81ae75</UUID>
+                              <ShortName>DOT_PayItem1.ReferenceItem</ShortName>
+                           </Definition>
+                           <SetProperty>
+                              <!-- [ASPECT] PayItem_SpecBook | reference-level value denormalised onto every aspect row -->
+                              <UUID>7edce558-7914-5d72-a0c3-b4ddfa3463ab</UUID>
+                              <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                              <ShortName>SpecBook</ShortName>
+                              <Definition>
+                                 <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                 <UUID>b2c2ceec-daf4-5a43-b348-413b925bbb2f</UUID>
+                                 <ShortName>SpecBook Reference Item.SpecBook</ShortName>
+                              </Definition>
+                              <ValueContent>
+                                 <Text>MnDOT 2020 Standard Specifications for Construction</Text>
+                              </ValueContent>
+                              <Order>1</Order>
+                           </SetProperty>
+                           <SetProperty>
+                              <!-- [ASPECT] PayItem_Class -->
+                              <UUID>a21fb21d-f8b7-5f6f-8b11-22d014e37a39</UUID>
+                              <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                              <ShortName>Class</ShortName>
+                              <Definition>
+                                 <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                 <UUID>1c5fbccb-eb6c-51c7-9d93-a01f5ad6c9e3</UUID>
+                                 <ShortName>SpecBook Reference Item.Class</ShortName>
+                              </Definition>
+                              <ValueContent>
+                                 <Text>2461</Text>
+                              </ValueContent>
+                              <Order>2</Order>
+                           </SetProperty>
+                           <SetProperty>
+                              <!-- [ASPECT] PayItem_Type -->
+                              <UUID>b0c5c425-022e-5d6d-bc6a-6a04526e3cd4</UUID>
+                              <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                              <ShortName>Type</ShortName>
+                              <Definition>
+                                 <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                 <UUID>426129b9-d6ca-5856-9445-e3986e4519b0</UUID>
+                                 <ShortName>SpecBook Reference Item.Type</ShortName>
+                              </Definition>
+                              <ValueContent>
+                                 <Text>504</Text>
+                              </ValueContent>
+                              <Order>3</Order>
+                           </SetProperty>
+                           <SetProperty>
+                              <!-- [ASPECT] PayItem_Item | de-duplication key for the master -->
+                              <UUID>40756bbb-6cca-5ebf-8f67-1a48d1785ba6</UUID>
+                              <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                              <ShortName>Item</ShortName>
+                              <Definition>
+                                 <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                 <UUID>69fc8d0e-f4db-5884-8773-0fc069f42d66</UUID>
+                                 <ShortName>SpecBook Reference Item.Item</ShortName>
+                              </Definition>
+                              <ValueContent>
+                                 <Text>2461.504</Text>
+                              </ValueContent>
+                              <Order>4</Order>
+                           </SetProperty>
+                           <SetProperty>
+                              <!-- [ASPECT] PayItem_RefitemNm -->
+                              <UUID>bc5e5de0-3209-54cf-a657-aebe05e5978e</UUID>
+                              <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                              <ShortName>REFITEM_NM</ShortName>
+                              <Definition>
+                                 <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                 <UUID>e0f4e78e-2eb9-572a-8d58-5dd4d74e8cf8</UUID>
+                                 <ShortName>SpecBook Reference Item.REFITEM_NM</ShortName>
+                              </Definition>
+                              <ValueContent>
+                                 <Text>STRUCTURAL CONCRETE (3Y33)</Text>
+                              </ValueContent>
+                              <Order>5</Order>
+                           </SetProperty>
+                           <SetProperty>
+                              <!-- [ASPECT] PayItem_Unit | also drives the UnitOfMeasure LOOKUP -->
+                              <UUID>8657c5cf-c42b-542c-ba9d-5b9750c1ae9c</UUID>
+                              <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                              <ShortName>Unit</ShortName>
+                              <Definition>
+                                 <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                 <UUID>68b4c6ab-e28c-5289-8eed-e8f39a1c677f</UUID>
+                                 <ShortName>SpecBook Reference Item.Unit</ShortName>
+                              </Definition>
+                              <ValueContent>
+                                 <Text>CY</Text>
+                              </ValueContent>
+                              <Order>6</Order>
+                           </SetProperty>
+                           <SetProperty>
+                              <!-- [ASPECT] PayItem_UnitPlan -->
+                              <UUID>ae9d83ce-4457-5da4-acf6-01a7147f880e</UUID>
+                              <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                              <ShortName>UnitPlan</ShortName>
+                              <Definition>
+                                 <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                 <UUID>ffcfa877-31c1-5ac2-bc3f-2aa377daa555</UUID>
+                                 <ShortName>SpecBook Reference Item.UnitPlan</ShortName>
+                              </Definition>
+                              <ValueContent>
+                                 <Text>CU YD</Text>
+                              </ValueContent>
+                              <Order>7</Order>
+                           </SetProperty>
+                           <SetProperty>
+                              <!-- [ASPECT] PayItem_IsPlanQty -->
+                              <UUID>f1aab89e-df10-5e63-983d-caedfe9b6a82</UUID>
+                              <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                              <ShortName>IsPlanQty</ShortName>
+                              <Definition>
+                                 <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                 <UUID>91532c0f-056b-52ba-9885-feb9fb2de44f</UUID>
+                                 <ShortName>SpecBook Reference Item.IsPlanQty</ShortName>
+                              </Definition>
+                              <ValueContent>
+                                 <Boolean>true</Boolean>
+                              </ValueContent>
+                              <Order>8</Order>
+                           </SetProperty>
+                           <Group>
+                              <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.Help | one PropertyGroup per source EC struct -->
+                              <UUID>acbd9888-d3d9-55f5-b792-fca0acf9932e</UUID>
+                              <ShortName>Help</ShortName>
+                              <Definition>
+                                 <UUID>572e714e-a276-5709-abfa-d47df1878cab</UUID>
+                                 <ShortName>Help</ShortName>
+                              </Definition>
+                              <Order>1</Order>
+                              <SetProperty>
+                                 <!-- [ASPECT] Help_Tip | reference-level; denormalised in source -->
+                                 <UUID>1441bf7a-837c-542e-b997-cd6b7a19eed0</UUID>
+                                 <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                                 <ShortName>Tip</ShortName>
+                                 <Definition>
+                                    <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                    <UUID>31685f4d-995d-5107-ab8a-e18d68f1c8f6</UUID>
+                                    <ShortName>Help.Tip</ShortName>
+                                 </Definition>
+                                 <ValueContent>
+                                    <Text>Use 3Y33 for bridge decks with an integral wearing course; see Spec 2461.3.C for mix approval.</Text>
+                                 </ValueContent>
+                                 <Order>1</Order>
+                              </SetProperty>
+                              <SetProperty>
+                                 <!-- [ASPECT] Help_Link | reference-level; denormalised in source -->
+                                 <UUID>551b36c9-2b22-5949-9c74-90a28c542df8</UUID>
+                                 <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                                 <ShortName>Link</ShortName>
+                                 <Definition>
+                                    <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                    <UUID>f350ba43-4940-5ead-adf3-729c22bac17a</UUID>
+                                    <ShortName>Help.Link</ShortName>
+                                 </Definition>
+                                 <ValueContent>
+                                    <URI>https://www.dot.state.mn.us/pre-letting/spec/2020/2461.pdf</URI>
+                                 </ValueContent>
+                                 <Order>2</Order>
+                              </SetProperty>
+                           </Group>
+                        </PropertySet>
+                     </PropertySetForEntity>
+                     <ShortName>2461.504</ShortName>
+                     <!-- [ASPECT] PayItem_Item -->
+                     <FullName>STRUCTURAL CONCRETE (3Y33)</FullName>
+                     <!-- [ASPECT] PayItem_RefitemNm -->
+                     <Description>Structural concrete, mix designation 3Y33, placed in bridge deck and integral wearing course, measured by volume in place.</Description>
+                     <!-- [ASPECT] PayItem_Description -->
+                     <Type>
+                        <UUID>67782185-ac49-44f7-8b8c-cafba7fa9608</UUID>
+                        <ShortName>Material</ShortName>
+                     </Type>
+                  </MaterialMasterItem>
+               </MaterialItem>
+            </MaterialItemOnSegment>
+            <MaterialItemOnSegment>
+               <!-- [SCOPE] 1:1 with ONE aspect instance | AspectId + AspectClass identify the source row -->
+               <UUID>9aad9705-12d1-5234-be54-89ec57841ab8</UUID>
+               <!-- [MINTED] uuid5(FederationGuid :: PayItem_Item :: componentCode) | componentCode derived from AspectClass - UNRESOLVED, see 3.1.4 -->
+               <IDInInfoSource>bc7a1f2e-3d44-4a91-9f0e-11d2c6a4b8e3::0x30000000a17::DOT_PayItem1ElementAspect</IDInInfoSource>
+               <!-- [IMODEL+ASPECT] iModel FederationGuid :: AspectId :: AspectClass | traceability only - aspects have no FederationGuid and may be renumbered -->
+               <InfoSource>
+                  <UUID>ed9ff1c3-b803-53c2-955a-01dc88c35293</UUID>
+                  <ShortName>MnDOT iTwin iModel - SP 2758-92</ShortName>
+               </InfoSource>
+               <EffectiveStatusType>
+                  <UUID>db4bf287-2374-4e9c-bd4b-fadaada24b99</UUID>
+                  <ShortName>Active</ShortName>
+               </EffectiveStatusType>
+               <PropertySetForEntity>
+                  <UUID>b9e3bebc-2a87-562f-97e9-84bf1565f4e9</UUID>
+                  <PropertySet>
+                     <UUID>86ab8a32-d06b-5057-a591-f8fab4f4e6c2</UUID>
+                     <ShortName>DOT Pay Item Assignment</ShortName>
+                     <Type>
+                        <UUID>cbe42dd6-06e0-5c7c-bd6c-e40ff4c0c498</UUID>
+                        <ShortName>DOT Pay Item</ShortName>
+                     </Type>
+                     <Definition>
+                        <UUID>8cb8ac6b-8dcf-5357-81ec-6ee5e285b2c9</UUID>
+                        <ShortName>DOT_PayItem1.Assignment</ShortName>
+                     </Definition>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.Quantity | one PropertyGroup per source EC struct -->
+                        <UUID>582887ce-22d8-5710-8f1a-f45dc8517eb4</UUID>
+                        <ShortName>Quantity</ShortName>
+                        <Definition>
+                           <UUID>851acda9-a01a-5ee6-a68d-13347603bbd3</UUID>
+                           <ShortName>Quantity</ShortName>
+                        </Definition>
+                        <Order>1</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_Method -->
+                           <UUID>5d348cfa-5926-56c1-882f-70b93faf4186</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Method</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>f33dd0d9-dfd6-5f28-85f9-1f6d437a81c4</UUID>
+                              <ShortName>Quantity.Method</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Lump sum - no takeoff</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_Description -->
+                           <UUID>4d71f887-d5dd-53eb-aa6c-01777bd38d49</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Description</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>18ed81f1-3d0b-50db-8cd2-7c265f72766d</UUID>
+                              <ShortName>Quantity.Description</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Single lump sum covering all staging for the bridge work</Text>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_FactorItem -->
+                           <UUID>8533f7c2-2d9c-53c4-b148-89af518a604e</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>FactorItem</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>d79936de-8dc4-5166-a702-1c3ba501d279</UUID>
+                              <ShortName>Quantity.FactorItem</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>1.000</Number>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_FactorUser -->
+                           <UUID>754e1f4f-3d2a-597b-ac7c-ae927c1d9f6b</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>FactorUser</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>f24287d9-e7e1-5834-8f6b-646c26b0eb3a</UUID>
+                              <ShortName>Quantity.FactorUser</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>1.000</Number>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_Factor | ALIAS REQUIRED, collides with Cost_Factor -->
+                           <UUID>9db42f3f-d586-5af1-85b6-a11d175e35a5</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Factor</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>a943d84e-e537-50b4-aea3-91a80eba89e5</UUID>
+                              <ShortName>Quantity.Factor</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>1.000</Number>
+                           </ValueContent>
+                           <Order>5</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_Override | ALIAS REQUIRED, collides with Cost_Override -->
+                           <UUID>44baa21e-47ab-52ad-a17a-163edcf7b349</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Override</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>1e1e3db1-f7ac-51fb-b879-a96a16856784</UUID>
+                              <ShortName>Quantity.Override</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>0.000</Number>
+                           </ValueContent>
+                           <Order>6</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_CompQuantity | raw geometric take-off, pre-rounding -->
+                           <UUID>497a1e69-9943-5fe8-b866-f404a358b009</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>CompQuantity</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>c8fbca07-6cf6-5439-96cd-35b760b870d4</UUID>
+                              <ShortName>Quantity.CompQuantity</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>1</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>bf8d123c-9010-5f5f-aa8f-3ad068840a9c</UUID>
+                                    <ShortName>Lump Sum</ShortName>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>7</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_RoundingConservative -->
+                           <UUID>5de4651d-44b3-5d27-8b65-e47e009b7a62</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>RoundingConservative</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>ca99c7b0-2c20-5b83-8a36-bbf646f7b97d</UUID>
+                              <ShortName>Quantity.RoundingConservative</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>false</Boolean>
+                           </ValueContent>
+                           <Order>8</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_RoundingIncrement -->
+                           <UUID>6d04bbed-f307-5991-9bf4-3f1619d9bb0e</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>RoundingIncrement</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>60adcdab-56a9-560d-beac-3862702a9868</UUID>
+                              <ShortName>Quantity.RoundingIncrement</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>1</Number>
+                           </ValueContent>
+                           <Order>9</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_RoundingPrecision -->
+                           <UUID>499cdbbc-66b9-5bab-a806-a7f13c4a01f4</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>RoundingPrecision</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>0df9d461-352d-570d-b37b-385455b8440d</UUID>
+                              <ShortName>Quantity.RoundingPrecision</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>0</Number>
+                           </ValueContent>
+                           <Order>10</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Quantity_ItemQuantity | THE take-off quantity - the one value ENG is authoritative for -->
+                           <UUID>1c41a188-6a00-5c00-88f8-34e396bf5744</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>ItemQuantity</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>092068c2-a083-5b14-843f-dd4659a661a0</UUID>
+                              <ShortName>Quantity.ItemQuantity</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>1</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>bf8d123c-9010-5f5f-aa8f-3ad068840a9c</UUID>
+                                    <ShortName>Lump Sum</ShortName>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>11</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.Cost | one PropertyGroup per source EC struct -->
+                        <UUID>92aa99d7-88c8-5d08-a6c7-ed7a832c7c8a</UUID>
+                        <ShortName>Cost</ShortName>
+                        <Definition>
+                           <UUID>2392720c-0b34-5195-bc6d-23ccad211121</UUID>
+                           <ShortName>Cost</ShortName>
+                        </Definition>
+                        <Order>2</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] Cost_EstimateType -->
+                           <UUID>28cb4547-35bb-5168-bece-37ced1020f07</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>EstimateType</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>d4eecd12-6a7b-561b-88b4-adcc6ce8f889</UUID>
+                              <ShortName>Cost.EstimateType</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Engineer Estimate - Percentage of Contract</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Cost_EngEstPrice | AASHTOWare template price AS OF CLONE TIME - preserves template lineage -->
+                           <UUID>7c5fb78e-b762-5580-bfff-3db169e2dcbf</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>EngEstPrice</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>2ffd8511-a5d0-55a0-b2fe-393b467496d5</UUID>
+                              <ShortName>Cost.EngEstPrice</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>138000.00</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>39c197f5-759f-41c7-805e-2a87b6f9e29d</UUID>
+                                    <ShortName>US Dollar</ShortName>
+                                    <UOMQuantity>
+                                       <UUID>dbc268de-6847-4729-926f-6f46a18af09d</UUID>
+                                       <ShortName>Currency</ShortName>
+                                    </UOMQuantity>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Cost_Override | user modification to the template -->
+                           <UUID>df70034b-6392-5113-8fa7-e9429668366f</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Override</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>84b03e79-1ce9-5541-8f25-2c003c5b40c0</UUID>
+                              <ShortName>Cost.Override</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>145000.00</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>39c197f5-759f-41c7-805e-2a87b6f9e29d</UUID>
+                                    <ShortName>US Dollar</ShortName>
+                                    <UOMQuantity>
+                                       <UUID>dbc268de-6847-4729-926f-6f46a18af09d</UUID>
+                                       <ShortName>Currency</ShortName>
+                                    </UOMQuantity>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Cost_Factor | user modification to the template -->
+                           <UUID>c053fa9d-9596-579c-85dc-e5e5a74392a3</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Factor</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>fb02b2e0-2cd2-55b3-8206-7d669f83e863</UUID>
+                              <ShortName>Cost.Factor</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>1.000</Number>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Cost_UnitPrice | resolved price after override/factor -->
+                           <UUID>08be1f4e-703b-5e0f-8f38-54aa7e61b9aa</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>UnitPrice</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>fd85fbc7-b369-5c4c-a8bd-d804c2a9db42</UUID>
+                              <ShortName>Cost.UnitPrice</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>145000.00</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>39c197f5-759f-41c7-805e-2a87b6f9e29d</UUID>
+                                    <ShortName>US Dollar</ShortName>
+                                    <UOMQuantity>
+                                       <UUID>dbc268de-6847-4729-926f-6f46a18af09d</UUID>
+                                       <ShortName>Currency</ShortName>
+                                    </UOMQuantity>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>5</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Cost_ItemCost | derived: UnitPrice x ItemQuantity -->
+                           <UUID>8dfb3088-8cf6-574e-b3d3-a22a4c62426e</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>ItemCost</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>b0aa105a-e252-5c39-b42e-bbeebc12b8b0</UUID>
+                              <ShortName>Cost.ItemCost</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>145000.00</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>39c197f5-759f-41c7-805e-2a87b6f9e29d</UUID>
+                                    <ShortName>US Dollar</ShortName>
+                                    <UOMQuantity>
+                                       <UUID>dbc268de-6847-4729-926f-6f46a18af09d</UUID>
+                                       <ShortName>Currency</ShortName>
+                                    </UOMQuantity>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>6</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.Time | one PropertyGroup per source EC struct -->
+                        <UUID>54d9aa72-0f5f-5d7f-997f-50938a13e587</UUID>
+                        <ShortName>Time</ShortName>
+                        <Definition>
+                           <UUID>94fca911-38f0-56c2-a4fe-f704b405d9fe</UUID>
+                           <ShortName>Time</ShortName>
+                        </Definition>
+                        <Order>3</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] Time_EngEstUnitPerDay | template production rate at clone time -->
+                           <UUID>57a65fd6-2121-5b3f-b8a6-af272405638e</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>EngEstUnitPerDay</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>25dfd816-8aae-58d0-8652-b5846fbef3db</UUID>
+                              <ShortName>Time.EngEstUnitPerDay</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>0.0</Number>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Time_UnitOverride -->
+                           <UUID>5a4bc36a-0dcc-59a5-814d-b82832e53006</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>UnitOverride</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>47417454-4804-51eb-9656-2e4576540ac3</UUID>
+                              <ShortName>Time.UnitOverride</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>0.0</Number>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Time_UnitFactor -->
+                           <UUID>f56c3bff-5aca-5cbb-a589-11f36b148bc4</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>UnitFactor</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>425d6b16-fb9a-59fc-a96c-4a512fbc5253</UUID>
+                              <ShortName>Time.UnitFactor</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>1.000</Number>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Time_WorkforceFactor -->
+                           <UUID>f4d5edc2-95ef-59b2-b0eb-c99f1f264456</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>WorkforceFactor</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>6b80b555-42a4-5770-9ee4-bea606b45ae2</UUID>
+                              <ShortName>Time.WorkforceFactor</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>1.000</Number>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Time_UnitPerDay -->
+                           <UUID>d6747173-1697-5dd7-8a67-51fdf038692d</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>UnitPerDay</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>0c68bad6-3cee-5ed7-9354-8d6945455e1a</UUID>
+                              <ShortName>Time.UnitPerDay</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>0.0</Number>
+                           </ValueContent>
+                           <Order>5</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Time_ItemTime | ECSCHEMA CHECK: bare Double or KindOfQuantity? persistence unit may be seconds, not days -->
+                           <UUID>7d52132d-7107-554b-bbdd-9d830e563c29</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>ItemTime</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>7ef140ce-acbf-5c99-b798-1a41d9560e90</UUID>
+                              <ShortName>Time.ItemTime</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>0.0</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>0904787c-69f1-416f-b3be-5cc4585ca5e2</UUID>
+                                    <ShortName>Days</ShortName>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>6</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.Funding | one PropertyGroup per source EC struct -->
+                        <UUID>6d130657-d55c-5928-9f52-311de5858359</UUID>
+                        <ShortName>Funding</ShortName>
+                        <Definition>
+                           <UUID>bd09cb75-7852-5a14-9d01-a030e6f55289</UUID>
+                           <ShortName>Funding</ShortName>
+                        </Definition>
+                        <Order>4</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] Funding_Code -->
+                           <UUID>071aadae-6cce-5a62-b174-40ac530492de</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Code</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>1caab0c5-92e0-5dee-9d55-a2ad84832918</UUID>
+                              <ShortName>Funding.Code</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>STBG</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Funding_Name -->
+                           <UUID>1f98d02b-86e6-568c-b389-c49186f0de0a</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Name</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>cb58a272-4598-5452-959d-76cfeb67da35</UUID>
+                              <ShortName>Funding.Name</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Surface Transportation Block Grant</Text>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Funding_Payer -->
+                           <UUID>171fa368-5015-5acb-ac9e-5d63dfc64343</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Payer</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>d5c54b88-a30f-5c02-8a6e-2909b60a9fc3</UUID>
+                              <ShortName>Funding.Payer</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>FHWA / MnDOT State Aid</Text>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Funding_Percentage -->
+                           <UUID>7bf75652-c9e0-57ca-9df7-b5e411e1873a</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Percentage</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>e59708a7-6d56-537d-ba32-61ee552e2fef</UUID>
+                              <ShortName>Funding.Percentage</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Percentage>50.0</Percentage>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Funding_FederalParticipation | String, domain unknown - normalise to Boolean if it is a Y/N flag -->
+                           <UUID>d6a87b30-11a8-5c0a-b1f6-547e1e42d484</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>FederalParticipation</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>9939f079-0846-5798-ba41-0ae47264ac9b</UUID>
+                              <ShortName>Funding.FederalParticipation</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Participating</Text>
+                           </ValueContent>
+                           <Order>5</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.ConstructionPhase | one PropertyGroup per source EC struct -->
+                        <UUID>902febd9-2011-5603-bd3b-35f831a31679</UUID>
+                        <ShortName>ConstructionPhase</ShortName>
+                        <Definition>
+                           <UUID>a0ecb0a9-57b1-57df-9f53-906e59a5c397</UUID>
+                           <ShortName>ConstructionPhase</ShortName>
+                        </Definition>
+                        <Order>5</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] ConstructionPhase_YR -->
+                           <UUID>87548ead-bb10-5afc-81e4-917d05b132d3</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>YR</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>24625668-3994-5099-9902-49e1d27053d0</UUID>
+                              <ShortName>ConstructionPhase.YR</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>2027</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] ConstructionPhase_Stage -->
+                           <UUID>d09f9fb5-42b7-5b94-bdfe-4030d5cd035d</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Stage</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>65299043-e198-5cf7-a1ea-78735ce3d7bd</UUID>
+                              <ShortName>ConstructionPhase.Stage</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>All Stages</Text>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] ConstructionPhase_Class | ALIAS REQUIRED, collides with PayItem_Class and Tabulation_Class -->
+                           <UUID>e404861c-a70f-5df2-9d8f-8f844f256ee2</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Class</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>28c353df-c2fc-5055-bdec-846327f9b071</UUID>
+                              <ShortName>ConstructionPhase.Class</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Traffic</Text>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] ConstructionPhase_Group | ALIAS + BRACKETS REQUIRED - [Group] is reserved -->
+                           <UUID>9d6320e5-dd12-5503-856f-535c2887db09</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Group</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>1bd9660c-4ad0-59ab-81ca-25ab14e361b9</UUID>
+                              <ShortName>ConstructionPhase.Group</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Temporary Works</Text>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] ConstructionPhase_Sequence -->
+                           <UUID>0ea57415-33d5-570c-b40b-8690cae6dbd2</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Sequence</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>df87612e-e490-5ba8-ad7e-33b8234f1bb8</UUID>
+                              <ShortName>ConstructionPhase.Sequence</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>005</Text>
+                           </ValueContent>
+                           <Order>5</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] ConstructionPhase_ActivityName -->
+                           <UUID>97aeae2d-64e7-5129-b76d-d5ca7a9ae6d3</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>ActivityName</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>05521304-ef29-5cef-8660-6f603dbe91fd</UUID>
+                              <ShortName>ConstructionPhase.ActivityName</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Maintain traffic control through staged construction</Text>
+                           </ValueContent>
+                           <Order>6</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.PlanPrep | one PropertyGroup per source EC struct -->
+                        <UUID>393f2ad9-f026-5fb2-aadd-391ccb024b45</UUID>
+                        <ShortName>PlanPrep</ShortName>
+                        <Definition>
+                           <UUID>4d589e8c-d9cb-5998-91b9-e822afadd8fb</UUID>
+                           <ShortName>PlanPrep</ShortName>
+                        </Definition>
+                        <Order>6</Order>
+                        <SetProperty>
+                           <!-- [GAP] no source column | was invented in the first draft; the query exposes only Label1/Label2/LabelNote -->
+                           <UUID>f541205d-c953-5aaa-9639-7bc78da50971</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>LabelPlanP</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>6fed4e76-5392-5b5a-b5bf-169a5916137e</UUID>
+                              <ShortName>PlanPrep.LabelPlanP</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>TRAFFIC CONTROL</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] PlanPrep_LabelNote -->
+                           <UUID>d7d561b5-d93b-56dc-b95a-f84ae636eaf4</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>LabelNote</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>c2a1974c-f043-50c1-ad8f-19a4b0889fe4</UUID>
+                              <ShortName>PlanPrep.LabelNote</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>See Traffic Control Plan sheets T-01 through T-06</Text>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] PlanPrep_Label1 -->
+                           <UUID>59373acc-de9f-527c-b658-a9cfbbbc755c</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Label1</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>2cf06899-80f6-5cc2-a385-ac26b326cea8</UUID>
+                              <ShortName>PlanPrep.Label1</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>TC</Text>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] PlanPrep_Label2 -->
+                           <UUID>82e61536-872f-596e-a900-38bec44e60a4</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Label2</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>81e96fbb-dabb-5af1-8292-5e37aa89f73a</UUID>
+                              <ShortName>PlanPrep.Label2</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>LS</Text>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.Tabulation | one PropertyGroup per source EC struct -->
+                        <UUID>7b9d17d2-a0f4-570b-b712-1dc8f3b4dd09</UUID>
+                        <ShortName>Tabulation</ShortName>
+                        <Definition>
+                           <UUID>7df20df1-c74a-51a4-b2ec-42b4cfe1fd12</UUID>
+                           <ShortName>Tabulation</ShortName>
+                        </Definition>
+                        <Order>7</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] Tabulation_Class | ALIAS REQUIRED - name collision -->
+                           <UUID>154a21f8-f705-5f71-9d9e-9d18a19724cc</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Class</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>a96cc9e2-3f4d-5878-bcce-bdc2bad2673a</UUID>
+                              <ShortName>Tabulation.Class</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Traffic</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Tabulation_Category -->
+                           <UUID>0910c52b-0e8f-5249-bdb5-81ed4a4cef61</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Category</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>a4e48355-853b-5b8a-b40e-a68628a7bac1</UUID>
+                              <ShortName>Tabulation.Category</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Traffic Control</Text>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Tabulation_Group | ALIAS + BRACKETS REQUIRED -->
+                           <UUID>2d069b56-cec9-5bbb-b2ff-987d35f1470c</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Group</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>279533fe-e0dc-58ac-bd97-b176d188b93f</UUID>
+                              <ShortName>Tabulation.Group</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Lump Sum Items</Text>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Tabulation_Code -->
+                           <UUID>0b426cda-2b7c-5818-af27-020d82b71205</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Code</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>d5057564-73b7-561c-9550-bd3099e155ca</UUID>
+                              <ShortName>Tabulation.Code</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>TAB-TC-LS</Text>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Tabulation_Title -->
+                           <UUID>31548f49-32bf-53f0-aa95-df47b0785619</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Title</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>85594587-d535-514e-af5b-7b2cf34ee4af</UUID>
+                              <ShortName>Tabulation.Title</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Tabulation of Lump Sum Traffic Items</Text>
+                           </ValueContent>
+                           <Order>5</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Tabulation_SheetNum -->
+                           <UUID>8756104c-682a-5cb4-82ed-065abdb668f5</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>SheetNum</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>6bea151c-a187-5657-9d73-14efccbcc72c</UUID>
+                              <ShortName>Tabulation.SheetNum</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>T-01</Text>
+                           </ValueContent>
+                           <Order>6</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Tabulation_DOT_DigitalAssetMetadata_ID_ -->
+                           <UUID>c0c86d87-6696-50ae-b8ba-a50aa934c90d</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>DOT_DigitalAssetMetadata_ID_</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>7570f4fa-c8c7-5d16-a9df-79b4f4bb5aa3</UUID>
+                              <ShortName>Tabulation.DOT_DigitalAssetMetadata_ID_</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>DAM-2758-92-000521</Text>
+                           </ValueContent>
+                           <Order>7</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.Asset | one PropertyGroup per source EC struct -->
+                        <UUID>c3a8e20f-f641-55e0-be2f-de20f8666ced</UUID>
+                        <ShortName>Asset</ShortName>
+                        <Definition>
+                           <UUID>33ccfe26-653a-5dbb-af31-8c7aa272e390</UUID>
+                           <ShortName>Asset</ShortName>
+                        </Definition>
+                        <Order>8</Order>
+                        <SetProperty>
+                           <!-- [GAP] no source column | CRITICAL: the contract/SP number keys MaterialItem and IDInInfoSource - find its real home -->
+                           <UUID>11777450-ec17-572e-a0f8-6d518be8a124</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Project_ID</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>fe647796-c2a7-59b4-9f00-21d284815d02</UUID>
+                              <ShortName>Asset.Project_ID</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>2758-92</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [GAP] no source column | contract name - not exposed by this aspect -->
+                           <UUID>385265c9-f197-5a46-a348-0b4aa7f0bb85</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Project</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>bdcc2b1a-d794-5031-8a85-c2cfd8a2e6ed</UUID>
+                              <ShortName>Asset.Project</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>TH 61 over Silver Creek - Bridge 27043 Replacement</Text>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Asset_Index | BRACKETS REQUIRED - [Index] is reserved -->
+                           <UUID>fb257947-604c-55b6-91b5-9c581ea4895f</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Index</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>2ec635a8-79c6-57d8-9265-5fb599a2ad39</UUID>
+                              <ShortName>Asset.Index</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>0107</Text>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [GAP] no source column | lifecycle status drives the IFC release gate - likely ELEMENT or named-version metadata -->
+                           <UUID>588b4f6f-efc4-55ea-9a9e-ec6afd90334b</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Status</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>4edae8ca-b9d6-5b78-815c-0d7a8470938a</UUID>
+                              <ShortName>Asset.Status</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Issued for Construction</Text>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Asset_Instance -->
+                           <UUID>ca1d7669-f1e0-52f0-894f-91f8bd03d611</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Instance</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>f1f77713-60ac-5dac-ac7a-5ff3e67f3a7a</UUID>
+                              <ShortName>Asset.Instance</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>1</Text>
+                           </ValueContent>
+                           <Order>5</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [GAP] no source column -->
+                           <UUID>b7ed9ffc-d80e-5839-8bbf-7e79bb86be3d</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>PlanID</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>4ec9a19c-cfca-591d-9559-d3a0857210bd</UUID>
+                              <ShortName>Asset.PlanID</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>SP2758-92-T01</Text>
+                           </ValueContent>
+                           <Order>6</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Asset_PlanDecoder -->
+                           <UUID>c367053a-529a-5ce1-9866-a43fff8adf03</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>PlanDecoder</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>c69ee8bb-7807-5bb8-b3f9-dcc10d9b4c16</UUID>
+                              <ShortName>Asset.PlanDecoder</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>SP-SHEET-REV</Text>
+                           </ValueContent>
+                           <Order>7</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Asset_IsTracked | candidate discriminator for whether this occurrence warrants a functional location -->
+                           <UUID>099326c5-a8f4-5cdd-99c2-5f584d331d5b</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>IsTracked</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>f2afe732-782a-5061-b54b-cce1cd553186</UUID>
+                              <ShortName>Asset.IsTracked</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>true</Boolean>
+                           </ValueContent>
+                           <Order>8</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] Asset_AssetID | NOT an identity - see 3.4; ElementId hex, may be renumbered by a connector resync -->
+                           <UUID>9a482bfc-7c6f-524b-bcfd-5c71b7f3b122</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>AssetID</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>bcde8b81-3117-5dc5-9c46-d45cc9bbdcf5</UUID>
+                              <ShortName>Asset.AssetID</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>0x20000000c41</Text>
+                           </ValueContent>
+                           <Order>9</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.QAQC | one PropertyGroup per source EC struct -->
+                        <UUID>60283ec7-5337-5776-bba7-6223e499c13c</UUID>
+                        <ShortName>QAQC</ShortName>
+                        <Definition>
+                           <UUID>1c72075b-51b9-5b5e-a427-e565a6090258</UUID>
+                           <ShortName>QAQC</ShortName>
+                        </Definition>
+                        <Order>9</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_MajorCostValue -->
+                           <UUID>2cc2ae1d-aa55-511f-901d-53a99383486a</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>MajorCostValue</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>7910ac9d-cfb8-5aca-9d7b-266311a589f8</UUID>
+                              <ShortName>QAQC.MajorCostValue</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>250000.00</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>39c197f5-759f-41c7-805e-2a87b6f9e29d</UUID>
+                                    <ShortName>US Dollar</ShortName>
+                                    <UOMQuantity>
+                                       <UUID>dbc268de-6847-4729-926f-6f46a18af09d</UUID>
+                                       <ShortName>Currency</ShortName>
+                                    </UOMQuantity>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_MajorTimeValue | ECSCHEMA CHECK: KindOfQuantity-typed; persistence unit likely SECONDS not days -->
+                           <UUID>0d0d8ec3-9674-572a-82e6-58bce9ad76fa</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>MajorTimeValue</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>561da0b8-9532-5d43-90a7-b2ded20f67bb</UUID>
+                              <ShortName>QAQC.MajorTimeValue</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Measure>
+                                 <Value>5.0</Value>
+                                 <UnitOfMeasure>
+                                    <!-- [LOOKUP] unit code -> MIMOSA UnitOfMeasure UUID | crosswalk keyed on PayItem_Unit; MnDOT must publish and register in the CIR -->
+                                    <UUID>0904787c-69f1-416f-b3be-5cc4585ca5e2</UUID>
+                                    <ShortName>Days</ShortName>
+                                 </UnitOfMeasure>
+                              </Measure>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_IsMajorItemLookup -->
+                           <UUID>1b3c7fed-ba28-5955-bf07-c1281bf4dc0f</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>IsMajorItemLookup</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>91b01ab2-507f-5fb2-8c7f-1c919e871a02</UUID>
+                              <ShortName>QAQC.IsMajorItemLookup</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>true</Boolean>
+                           </ValueContent>
+                           <Order>3</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_IsMajorCost -->
+                           <UUID>5c2d5df9-c8cf-5e7c-89f1-c2f793c1fd1c</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>IsMajorCost</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>871e32ae-dbcc-5fd9-9fc0-cc9d54538dd6</UUID>
+                              <ShortName>QAQC.IsMajorCost</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>false</Boolean>
+                           </ValueContent>
+                           <Order>4</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_IsMajorTime -->
+                           <UUID>0650ad33-09be-5601-bee4-9856ccda74f3</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>IsMajorTime</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>4a6ed3fc-ce56-557c-9781-faa5f7ae3223</UUID>
+                              <ShortName>QAQC.IsMajorTime</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>false</Boolean>
+                           </ValueContent>
+                           <Order>5</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_IsCheckQty -->
+                           <UUID>8cefebcf-83de-5d4f-8125-74e697c6de30</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>IsCheckQty</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>29f80561-4e8f-5b8c-a9c6-fbcd8c2a44b9</UUID>
+                              <ShortName>QAQC.IsCheckQty</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>false</Boolean>
+                           </ValueContent>
+                           <Order>6</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_IsCheckCost -->
+                           <UUID>afd93aa4-2f69-59c6-b9ba-4f88a01b4e7a</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>IsCheckCost</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>f5c4f11f-f241-50a2-a131-59fc4c9c72da</UUID>
+                              <ShortName>QAQC.IsCheckCost</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>true</Boolean>
+                           </ValueContent>
+                           <Order>7</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_IsSiblingRequired | relevant to the component-slot question - siblings are the other numbered aspect classes -->
+                           <UUID>72178d1c-a465-5862-98ec-ce5fba92cad1</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>IsSiblingRequired</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>9083e591-432d-587f-90cc-04f2582b5d63</UUID>
+                              <ShortName>QAQC.IsSiblingRequired</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>false</Boolean>
+                           </ValueContent>
+                           <Order>8</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_PastContractCount -->
+                           <UUID>6f84fe13-10c8-5704-82d2-df2700f129a2</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>PastContractCount</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>af200781-3270-571d-b984-e2db10f585b7</UUID>
+                              <ShortName>QAQC.PastContractCount</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Number>212</Number>
+                           </ValueContent>
+                           <Order>9</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_IsCommonItem -->
+                           <UUID>6347dd8e-e244-5d5a-96e3-54bbd7aeaef8</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>IsCommonItem</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>d9376412-6fdb-55ed-bdbd-96001d9e2a91</UUID>
+                              <ShortName>QAQC.IsCommonItem</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Boolean>true</Boolean>
+                           </ValueContent>
+                           <Order>10</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] QAQC_ElementDescription -->
+                           <UUID>c396f03e-827d-5940-a935-0226267bb236</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>ElementDescription</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>4cb94990-92e7-5953-b2f5-6181e728dc2a</UUID>
+                              <ShortName>QAQC.ElementDescription</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Project-wide temporary traffic control</Text>
+                           </ValueContent>
+                           <Order>11</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.Remarks | one PropertyGroup per source EC struct -->
+                        <UUID>558b645b-b21a-5b11-a012-77c2764082c1</UUID>
+                        <ShortName>Remarks</ShortName>
+                        <Definition>
+                           <UUID>6d4208c9-5327-55d7-ac02-ba0d7a88d2ac</UUID>
+                           <ShortName>Remarks</ShortName>
+                        </Definition>
+                        <Order>10</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] Remarks_Remarks -->
+                           <UUID>14e5ebbf-8638-5566-9017-8ea4c17669fb</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>Remark</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>6b8104f1-820d-5298-9367-a0f5efee8d30</UUID>
+                              <ShortName>Remarks.Remark</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>Override price applied after district review of 2025 lettings.</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                     </Group>
+                     <Group>
+                        <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.SourceAuthoring | one PropertyGroup per source EC struct -->
+                        <UUID>f4bbeca5-de2e-57ce-91ad-fa395082ecd7</UUID>
+                        <ShortName>SourceAuthoring</ShortName>
+                        <Definition>
+                           <UUID>631f7674-3fce-5101-99c1-9626285df355</UUID>
+                           <ShortName>SourceAuthoring</ShortName>
+                        </Definition>
+                        <Order>11</Order>
+                        <SetProperty>
+                           <!-- [ASPECT] SpecbookFilter | top-level aspect column, not inside a struct -->
+                           <UUID>dd4b5539-55cf-57be-adac-0871d4999b58</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>SPECBOOK_FILTER</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>fd127bbb-cef3-514d-b7d0-0daf69fc27ec</UUID>
+                              <ShortName>SourceAuthoring.SPECBOOK_FILTER</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>MnDOT2020</Text>
+                           </ValueContent>
+                           <Order>1</Order>
+                        </SetProperty>
+                        <SetProperty>
+                           <!-- [ASPECT] RefitemSearch | top-level aspect column, not inside a struct -->
+                           <UUID>93188282-decc-5a53-aea8-b085330a22ca</UUID>
+                           <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                           <ShortName>REFITEM_SEARCH</ShortName>
+                           <Definition>
+                              <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                              <UUID>ca39cd06-fbdc-59fa-9232-f1a95324a7ed</UUID>
+                              <ShortName>SourceAuthoring.REFITEM_SEARCH</ShortName>
+                           </Definition>
+                           <ValueContent>
+                              <Text>2563*</Text>
+                           </ValueContent>
+                           <Order>2</Order>
+                        </SetProperty>
+                     </Group>
+                  </PropertySet>
+               </PropertySetForEntity>
+               <MaterialItem>
+                  <!-- [SCOPE] the spec book item as used on THIS contract | grain = item x contract -->
+                  <UUID>aa57308a-dbf4-5c4a-a644-e7551f45fc93</UUID>
+                  <!-- [MINTED] uuid5(contractId :: PayItem_Item) | contractId is a GAP - see Asset.Project_ID -->
+                  <IDInInfoSource>SP2758-92|2563.601</IDInInfoSource>
+                  <!-- [GAP] contract number + PayItem_Item | contract number has NO source column in the query -->
+                  <InfoSource>
+                     <UUID>ed9ff1c3-b803-53c2-955a-01dc88c35293</UUID>
+                     <ShortName>MnDOT iTwin iModel - SP 2758-92</ShortName>
+                  </InfoSource>
+                  <EffectiveStatusType>
+                     <UUID>db4bf287-2374-4e9c-bd4b-fadaada24b99</UUID>
+                     <ShortName>Active</ShortName>
+                  </EffectiveStatusType>
+                  <ShortName>2563.601 (SP 2758-92)</ShortName>
+                  <FullName>TRAFFIC CONTROL - contract item, SP 2758-92</FullName>
+                  <Type>
+                     <UUID>bed9a6de-f54e-47bd-8ae5-01fa3c68a84e</UUID>
+                     <ShortName>Labour</ShortName>
+                     <!-- [LOOKUP] LogisticResourceType : NO source column. Derive from PayItem_Class / spec division, or publish a crosswalk. Material vs Labour vs Tool vs Utility vs Document. -->
+                  </Type>
+                  <MaterialMasterItem>
+                     <!-- [SCOPE] AASHTOWare spec book item | IDENTITY STUB ONLY - AASHTOWare is authoritative; see decision doc 3.2.1 -->
+                     <UUID>d86b503c-786a-56c8-a73d-fc3ae4500d3c</UUID>
+                     <!-- [MINTED] uuid5(specBookId :: PayItem_Item) | specBookId is CONFIG; PayItem_SpecBook string is not a stable key -->
+                     <IDInInfoSource>2563.601</IDInInfoSource>
+                     <!-- [ASPECT] PayItem_Item -->
+                     <InfoSource>
+                        <UUID>b6575113-75c9-55ae-b6cd-5130ba26b1c0</UUID>
+                        <ShortName>MnDOT Standard Specifications for Construction, 2020 Edition</ShortName>
+                     </InfoSource>
+                     <EffectiveStatusType>
+                        <UUID>db4bf287-2374-4e9c-bd4b-fadaada24b99</UUID>
+                        <ShortName>Active</ShortName>
+                     </EffectiveStatusType>
+                     <PropertySetForEntity>
+                        <UUID>17361a0f-c8b5-5641-b5bc-02ba860d2fe1</UUID>
+                        <PropertySet>
+                           <UUID>5f9687cc-99e0-5f42-9c73-19bdb4977f84</UUID>
+                           <ShortName>SpecBook Reference Item</ShortName>
+                           <Type>
+                              <UUID>cbe42dd6-06e0-5c7c-bd6c-e40ff4c0c498</UUID>
+                              <ShortName>DOT Pay Item</ShortName>
+                           </Type>
+                           <Definition>
+                              <UUID>d630059b-46c5-560d-a389-f9fabf81ae75</UUID>
+                              <ShortName>DOT_PayItem1.ReferenceItem</ShortName>
+                           </Definition>
+                           <SetProperty>
+                              <!-- [ASPECT] PayItem_SpecBook | reference-level value denormalised onto every aspect row -->
+                              <UUID>34fc93a4-6cc5-556c-b12e-7cd36043756f</UUID>
+                              <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                              <ShortName>SpecBook</ShortName>
+                              <Definition>
+                                 <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                 <UUID>b2c2ceec-daf4-5a43-b348-413b925bbb2f</UUID>
+                                 <ShortName>SpecBook Reference Item.SpecBook</ShortName>
+                              </Definition>
+                              <ValueContent>
+                                 <Text>MnDOT 2020 Standard Specifications for Construction</Text>
+                              </ValueContent>
+                              <Order>1</Order>
+                           </SetProperty>
+                           <SetProperty>
+                              <!-- [ASPECT] PayItem_Class -->
+                              <UUID>c7e7530f-2750-50ae-9d12-21e41d2d4418</UUID>
+                              <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                              <ShortName>Class</ShortName>
+                              <Definition>
+                                 <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                 <UUID>1c5fbccb-eb6c-51c7-9d93-a01f5ad6c9e3</UUID>
+                                 <ShortName>SpecBook Reference Item.Class</ShortName>
+                              </Definition>
+                              <ValueContent>
+                                 <Text>2563</Text>
+                              </ValueContent>
+                              <Order>2</Order>
+                           </SetProperty>
+                           <SetProperty>
+                              <!-- [ASPECT] PayItem_Type -->
+                              <UUID>6fb92abf-b154-5a7c-b271-fb8a48d62895</UUID>
+                              <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                              <ShortName>Type</ShortName>
+                              <Definition>
+                                 <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                 <UUID>426129b9-d6ca-5856-9445-e3986e4519b0</UUID>
+                                 <ShortName>SpecBook Reference Item.Type</ShortName>
+                              </Definition>
+                              <ValueContent>
+                                 <Text>601</Text>
+                              </ValueContent>
+                              <Order>3</Order>
+                           </SetProperty>
+                           <SetProperty>
+                              <!-- [ASPECT] PayItem_Item | de-duplication key for the master -->
+                              <UUID>0f6386b1-6fd7-5719-9cae-6306b8a3c1a5</UUID>
+                              <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                              <ShortName>Item</ShortName>
+                              <Definition>
+                                 <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                 <UUID>69fc8d0e-f4db-5884-8773-0fc069f42d66</UUID>
+                                 <ShortName>SpecBook Reference Item.Item</ShortName>
+                              </Definition>
+                              <ValueContent>
+                                 <Text>2563.601</Text>
+                              </ValueContent>
+                              <Order>4</Order>
+                           </SetProperty>
+                           <SetProperty>
+                              <!-- [ASPECT] PayItem_RefitemNm -->
+                              <UUID>ed226118-f682-597e-9442-8be93be480ea</UUID>
+                              <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                              <ShortName>REFITEM_NM</ShortName>
+                              <Definition>
+                                 <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                 <UUID>e0f4e78e-2eb9-572a-8d58-5dd4d74e8cf8</UUID>
+                                 <ShortName>SpecBook Reference Item.REFITEM_NM</ShortName>
+                              </Definition>
+                              <ValueContent>
+                                 <Text>TRAFFIC CONTROL</Text>
+                              </ValueContent>
+                              <Order>5</Order>
+                           </SetProperty>
+                           <SetProperty>
+                              <!-- [ASPECT] PayItem_Unit | also drives the UnitOfMeasure LOOKUP -->
+                              <UUID>731296ca-a468-56f1-be9e-da967233b8de</UUID>
+                              <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                              <ShortName>Unit</ShortName>
+                              <Definition>
+                                 <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                 <UUID>68b4c6ab-e28c-5289-8eed-e8f39a1c677f</UUID>
+                                 <ShortName>SpecBook Reference Item.Unit</ShortName>
+                              </Definition>
+                              <ValueContent>
+                                 <Text>LS</Text>
+                              </ValueContent>
+                              <Order>6</Order>
+                           </SetProperty>
+                           <SetProperty>
+                              <!-- [ASPECT] PayItem_UnitPlan -->
+                              <UUID>273b9c89-0c77-5033-a9c2-efb996df09f9</UUID>
+                              <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                              <ShortName>UnitPlan</ShortName>
+                              <Definition>
+                                 <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                 <UUID>ffcfa877-31c1-5ac2-bc3f-2aa377daa555</UUID>
+                                 <ShortName>SpecBook Reference Item.UnitPlan</ShortName>
+                              </Definition>
+                              <ValueContent>
+                                 <Text>LUMP SUM</Text>
+                              </ValueContent>
+                              <Order>7</Order>
+                           </SetProperty>
+                           <SetProperty>
+                              <!-- [ASPECT] PayItem_IsPlanQty -->
+                              <UUID>f77f3ce8-8a70-5be3-9220-88a23202b0eb</UUID>
+                              <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                              <ShortName>IsPlanQty</ShortName>
+                              <Definition>
+                                 <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                 <UUID>91532c0f-056b-52ba-9885-feb9fb2de44f</UUID>
+                                 <ShortName>SpecBook Reference Item.IsPlanQty</ShortName>
+                              </Definition>
+                              <ValueContent>
+                                 <Boolean>false</Boolean>
+                              </ValueContent>
+                              <Order>8</Order>
+                           </SetProperty>
+                           <Group>
+                              <!-- [ECSTRUCT] DOT_PayItem1ElementAspect.Help | one PropertyGroup per source EC struct -->
+                              <UUID>cddbc4ec-deda-502d-b615-3a7b54ab5b43</UUID>
+                              <ShortName>Help</ShortName>
+                              <Definition>
+                                 <UUID>572e714e-a276-5709-abfa-d47df1878cab</UUID>
+                                 <ShortName>Help</ShortName>
+                              </Definition>
+                              <Order>1</Order>
+                              <SetProperty>
+                                 <!-- [ASPECT] Help_Tip | reference-level; denormalised in source -->
+                                 <UUID>3878b66e-cf00-530c-a5bc-45b068514f79</UUID>
+                                 <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                                 <ShortName>Tip</ShortName>
+                                 <Definition>
+                                    <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                    <UUID>31685f4d-995d-5107-ab8a-e18d68f1c8f6</UUID>
+                                    <ShortName>Help.Tip</ShortName>
+                                 </Definition>
+                                 <ValueContent>
+                                    <Text>Lump sum item; do not tabulate device counts as pay quantities.</Text>
+                                 </ValueContent>
+                                 <Order>1</Order>
+                              </SetProperty>
+                              <SetProperty>
+                                 <!-- [ASPECT] Help_Link | reference-level; denormalised in source -->
+                                 <UUID>803e7b5b-82c1-588d-9462-8e5dfab5ee09</UUID>
+                                 <!-- [MINTED] uuid5(occurrence-key + property path) -->
+                                 <ShortName>Link</ShortName>
+                                 <Definition>
+                                    <!-- [MINTED] PropertyDefinition UUID | MnDOT must publish via SyncAttributeSetDefinitions BEFORE this BOD -->
+                                    <UUID>f350ba43-4940-5ead-adf3-729c22bac17a</UUID>
+                                    <ShortName>Help.Link</ShortName>
+                                 </Definition>
+                                 <ValueContent>
+                                    <URI>https://www.dot.state.mn.us/pre-letting/spec/2020/2563.pdf</URI>
+                                 </ValueContent>
+                                 <Order>2</Order>
+                              </SetProperty>
+                           </Group>
+                        </PropertySet>
+                     </PropertySetForEntity>
+                     <ShortName>2563.601</ShortName>
+                     <!-- [ASPECT] PayItem_Item -->
+                     <FullName>TRAFFIC CONTROL</FullName>
+                     <!-- [ASPECT] PayItem_RefitemNm -->
+                     <Description>Furnishing, installing, maintaining and removing all traffic control devices, flagging and temporary signing required to stage construction. Non-material contract activity paid as a lump sum.</Description>
+                     <!-- [ASPECT] PayItem_Description -->
+                     <Type>
+                        <UUID>bed9a6de-f54e-47bd-8ae5-01fa3c68a84e</UUID>
+                        <ShortName>Labour</ShortName>
+                     </Type>
+                  </MaterialMasterItem>
+               </MaterialItem>
+            </MaterialItemOnSegment>
+         </Segment>
+      </Segments>
+   </DataArea>
+</SyncSegments>
