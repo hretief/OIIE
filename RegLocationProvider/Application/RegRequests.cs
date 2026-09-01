@@ -17,7 +17,20 @@ public sealed record CreateTagRequest(
     int Revision,
     string Name,
     int ScopeId,
-    Guid? Guid = null);
+    Guid? Guid = null,
+    string? State = null);
+
+/// <summary>
+/// A steward's decision on a proposed tag.
+///
+/// Carries who decided and why. A registry that recorded only the outcome could
+/// not answer the question stewardship exists to answer -- who admitted this to
+/// the registry, and on what grounds -- and that question is usually asked long
+/// after the person has moved on.
+/// </summary>
+public sealed record ApproveTagRequest(
+    string DecidedBy,
+    string? Note = null);
 
 /// <summary>
 /// What a caller may change on an existing tag.

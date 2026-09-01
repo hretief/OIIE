@@ -626,3 +626,55 @@ BEGIN
                       WHERE s.scope_id = d.scope_id);
 END;
 GO
+
+/********************************************************************
+ TAG RELEASE STATE
+
+ A tag arriving from engineering is a proposal about a plant that may
+ not be built as drawn. It is not part of the registry proper until a
+ steward says so, and that approval -- not the sender's publish -- is
+ what admits it to operations.
+
+ The state lives here rather than in whatever carried the tag in,
+ because approving is an act of this registry: a steward using the
+ customer's own system decides it, and the decision has to survive
+ that system being the only thing running.
+
+ Note what this column does NOT do: it does not publish, and it names
+ no channel, BOD or subscriber. A row changing to 'Approved' is a fact
+ about the registry. Carrying that fact anywhere else is the engine's
+ work and lives outside this project.
+
+ DEFAULT is 'Approved', which looks backwards until you consider what
+ already exists. Every row the bootstrap seeds is established registry
+ content, not a pending proposal, and every INSERT written before this
+ column existed omits it. Defaulting to 'Proposed' would silently
+ reclassify all of that as awaiting a steward who never sees it, and
+ the bootstrap's own tags would drop out of the registry. Callers that
+ mean 'proposal' say so explicitly.
+********************************************************************/
+
+IF COL_LENGTH('dbo.tags','state') IS NULL
+    ALTER TABLE dbo.tags
+        ADD state NVARCHAR(20) NOT NULL
+            CONSTRAINT DF_tags_state DEFAULT (N'Approved');
+GO
+
+-- Guarded separately from the column: an interrupted run can leave the
+-- column present and the check missing, and only a per-object test
+-- repairs that on the next pass. Same reasoning as the object_type
+-- additions above.
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_tags_state')
+    ALTER TABLE dbo.tags
+        ADD CONSTRAINT CK_tags_state
+            CHECK (state IN (N'Proposed', N'Approved', N'Rejected'));
+GO
+
+-- Stewards work a queue, so the filtered index matches the question
+-- actually asked: 'what is waiting for me'. Filtered because the
+-- approved rows are the overwhelming majority and are never the answer.
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_tags_state_proposed')
+    CREATE INDEX IX_tags_state_proposed
+        ON dbo.tags(state)
+        WHERE state = N'Proposed';
+GO

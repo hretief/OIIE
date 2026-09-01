@@ -75,7 +75,28 @@ public sealed record RegTag(
     int ClassId,
     string Code,
     int Revision,
-    string Name);
+    string Name,
+    string State);
+
+/// <summary>
+/// Where a tag stands with the steward who owns this registry.
+///
+/// A tag that arrived from engineering is a proposal about a plant that may not
+/// be built as drawn. Approval is what admits it to the registry proper, and it
+/// is an act of this system rather than of whatever sent the tag.
+///
+/// These are the strings the database stores, not an enum's ordinal, so a value
+/// read back compares equal to what a query on the table would find.
+/// </summary>
+public static class RegTagState
+{
+    public const string Proposed = "Proposed";
+    public const string Approved = "Approved";
+    public const string Rejected = "Rejected";
+
+    public static bool IsValid(string? state) =>
+        state is Proposed or Approved or Rejected;
+}
 
 /// <summary>
 /// A tag together with the registry row that carries its federation GUID and

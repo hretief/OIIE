@@ -82,6 +82,33 @@ public interface IRegLocationStore
 
     Task<RegTagDetail?> UpdateTagAsync(int tagId, UpdateTagRequest request, CancellationToken ct);
 
+    /// <summary>
+    /// Finds tags awaiting a steward's decision.
+    ///
+    /// This is the queue a steward works, so it is a first-class query rather
+    /// than a filter the caller applies after fetching everything: the proposed
+    /// rows are a small minority, and reading the whole registry to find them
+    /// gets slower exactly as the registry succeeds.
+    /// </summary>
+    Task<IReadOnlyList<RegTagDetail>> FindTagsByStateAsync(string state, CancellationToken ct);
+
+    /// <summary>
+    /// Records a steward's approval, admitting a proposed tag to the registry.
+    ///
+    /// Returns null when there is no such tag, and throws
+    /// <see cref="RegistryConflictException"/> when the tag is not in a state an
+    /// approval can act on. The two are different answers: the first says the
+    /// caller is talking about nothing, the second says it is talking about
+    /// something whose decision has already been made. Collapsing them would let
+    /// a double approval look like a missing tag.
+    ///
+    /// Approving is deliberately not <see cref="UpdateTagAsync"/> with a state
+    /// field. An edit and a decision have different authority behind them, and a
+    /// route that could do either would let anything able to rename a tag also
+    /// release it to operations.
+    /// </summary>
+    Task<RegTagDetail?> ApproveTagAsync(int tagId, ApproveTagRequest request, CancellationToken ct);
+
     Task<bool> DeleteTagAsync(int tagId, CancellationToken ct);
 
     // ---- Health -----------------------------------------------------------

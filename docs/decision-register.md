@@ -1191,3 +1191,62 @@ ENG-IMODEL because it holds the full key from the BOD.
   going forward. Whether the sandbox path is retired or explicitly marked a simulator is
   undecided, and the ambiguity has already caused one misreading.
 
+---
+
+## DR-020 — The stewardship gate lives in REG-LOCATION; the engine reacts to it
+
+**Status:** Decided
+**Date:** 2026-09-01
+**Context:** SC01 requires that segments reach operations only once a steward has accepted the
+proposed tags. The question was where that gate sits, and an early reading put it in the
+integration layer — the engine would hold approved work and release it.
+
+**Decision.** Approval is a state transition on `dbo.tags.state` inside `RegLocationProvider`,
+performed by `POST tags/{tagId}/approve`. `RegLocationEngine` has no gate of its own: it learns
+that a decision was taken and carries the result onward.
+
+### Why
+
+- **An engine-side gate would mean approvals only counted while the integration was running.**
+  A steward's decision is a fact about the registry and has to survive the engine being stopped,
+  redeployed or removed entirely. Holding it in engine state would make the customer's own
+  governance a property of somebody else's middleware.
+- **Approval is not an edit.** It has its own route rather than a `state` field on
+  `PUT tags/{tagId}`, because releasing a tag to operations and correcting its spelling carry
+  different authority. One route doing both would mean anything permitted to rename a tag was
+  also permitted to release it.
+- **The transition is conditional in SQL.** `ApproveTagAsync` updates only where
+  `state = 'Proposed'` and distinguishes a missing row (404) from an already-decided one (409),
+  so two stewards racing cannot both be told they decided.
+
+### The notification is thin, and delivery is best-effort
+
+`IApprovalNotifier` posts identity and provenance only — tag id, code, revision, GUID, scope,
+who decided and when. The engine reads the tag back before publishing.
+
+- **A fat notification would become a second, worse copy of the registry.** It is a claim about
+  a past moment; the registry is the only thing that knows the present one. A tag whose approval
+  was reversed between send and receipt must not still reach the channel.
+- **Delivery never fails the steward's request.** The approval is committed before the notify
+  call, and `HttpApprovalNotifier` swallows transport failures. Making the registry's
+  availability depend on an integration it does not own would be the wrong trade, and it is
+  exactly the coupling the provider/engine split exists to prevent.
+- **Because delivery can be lost, `SweepAsync` exists.** A missed event is missed forever; a
+  sweep that is behind merely catches up. The two paths are not redundant — the notification
+  makes the engine prompt, the sweep makes it correct.
+
+### Consequences
+
+- REG-LOCATION acquires exactly one outward-facing seam, configured by
+  `RegLocation__ApprovalNotificationUrl` and defaulting to `NullApprovalNotifier`. It still
+  knows no topic, no BOD and no channel.
+- Publication is idempotent by construction: the BOD is a `Replace`, and engine state keys the
+  published set by federation GUID *plus revision*, so a repeat is a no-op while a genuine
+  revision still travels.
+- The engine publishes under `domain = operations` rather than `engineering`. The same
+  `SyncSegments` on the same iTwin means a different thing once a steward has accepted it, and
+  a subscriber that wants only accepted locations could not otherwise tell them apart.
+- `RegLocationEngine` holds no `ProjectReference` to `RegLocationProvider`, mirroring
+  `EngEngine`/`EngProvider`. The shared record shapes are duplicated deliberately, so a breaking
+  change to the provider's API surfaces here as a decision rather than a silent recompile.
+

@@ -1,0 +1,21 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+
+    "RegLocationEngine__Enabled": "false",
+    "RegLocationEngine__RegLocationBaseUrl": "http://localhost:7073/api",
+    "RegLocationEngine__RegLocationApiKey": "",
+    "RegLocationEngine__Enterprise": "acme",
+    "RegLocationEngine__Domain": "operations",
+    "RegLocationEngine__Topics__0": "oiie:sc01/ccom:SyncSegments",
+    "RegLocationEngine__SourceId": "REG-LOCATION",
+    "RegLocationEngine__LogicalId": "REG-LOCATION",
+
+    "Isbm__BaseUrl": "https://isbm-func-44p2f3n6dv7p4.azurewebsites.net/api",
+    "Isbm__ApiKey": "",
+
+    "RegLocationEngineSweepSchedule": "0 */5 * * * *"
+  }
+}

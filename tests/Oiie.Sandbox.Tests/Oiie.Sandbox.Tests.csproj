@@ -18,6 +18,7 @@
     <ProjectReference Include="..\..\Oiie.Sandbox.Core\Oiie.Sandbox.Core.csproj" />
     <ProjectReference Include="..\..\Oiie.Ccom\Oiie.Ccom.csproj" />
     <ProjectReference Include="..\..\EngEngine\EngEngine.csproj" />
+    <ProjectReference Include="..\..\RegLocationEngine\RegLocationEngine.csproj" />
   </ItemGroup>
 
 </Project>

@@ -23,4 +23,19 @@ public sealed class RegLocationOptions
     /// applied and the demo seed kept out.
     /// </summary>
     public bool AutoBootstrap { get; set; } = true;
+
+    /// <summary>
+    /// Where to announce a stewardship decision.
+    ///
+    /// Empty by default, and empty means silence rather than an error: a
+    /// registry with nobody integrated to it has nowhere to send this, and that
+    /// is a normal way to run, not a misconfiguration.
+    /// </summary>
+    public string ApprovalNotificationUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional key sent as x-functions-key with the notification, for when the
+    /// listener is a Function app with its own authorization.
+    /// </summary>
+    public string ApprovalNotificationKey { get; set; } = string.Empty;
 }

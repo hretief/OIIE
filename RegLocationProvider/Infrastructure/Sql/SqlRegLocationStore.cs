@@ -279,7 +279,7 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
     // The tag and its registry row are always read together: the GUID and scope
     // live in objects, and a tag without them is only half the answer.
     private const string TagSelect = """
-        SELECT t.tag_id, t.item_id, t.class_id, t.code, t.revision, t.name,
+        SELECT t.tag_id, t.item_id, t.class_id, t.code, t.revision, t.name, t.state,
                o.object_id, o.object_type, o.guid, o.scope_id,
                o.hide_flags, o.lock_flags,
                o.date_added, o.added_by, o.date_changed, o.changed_by
@@ -289,18 +289,18 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
         """;
 
     private static RegTagDetail ReadTagDetail(SqlDataReader r) => new(
-        new RegTag(r.GetInt32(0), r.GetInt32(1), r.GetInt32(2), r.GetString(3), r.GetInt32(4), r.GetString(5)),
+        new RegTag(r.GetInt32(0), r.GetInt32(1), r.GetInt32(2), r.GetString(3), r.GetInt32(4), r.GetString(5), r.GetString(6)),
         new RegObject(
-            r.GetInt32(6),
             r.GetInt32(7),
-            r.IsDBNull(8) ? null : r.GetGuid(8),
-            r.GetInt32(9),
-            r.GetByte(10),
+            r.GetInt32(8),
+            r.IsDBNull(9) ? null : r.GetGuid(9),
+            r.GetInt32(10),
             r.GetByte(11),
-            r.IsDBNull(12) ? null : r.GetDateTime(12),
-            r.IsDBNull(13) ? null : r.GetInt32(13),
-            r.IsDBNull(14) ? null : r.GetDateTime(14),
-            r.IsDBNull(15) ? null : r.GetInt32(15)));
+            r.GetByte(12),
+            r.IsDBNull(13) ? null : r.GetDateTime(13),
+            r.IsDBNull(14) ? null : r.GetInt32(14),
+            r.IsDBNull(15) ? null : r.GetDateTime(15),
+            r.IsDBNull(16) ? null : r.GetInt32(16)));
 
     private static async Task<List<RegTagDetail>> ReadAllAsync(SqlCommand cmd, CancellationToken ct)
     {
@@ -356,6 +356,58 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
         return await ReadAllAsync(cmd, ct);
     }
 
+    public async Task<IReadOnlyList<RegTagDetail>> FindTagsByStateAsync(string state, CancellationToken ct)
+    {
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand($"{TagSelect} WHERE t.state = @state ORDER BY t.tag_id;", cn);
+        cmd.Parameters.AddWithValue("@state", state);
+        return await ReadAllAsync(cmd, ct);
+    }
+
+    public async Task<RegTagDetail?> ApproveTagAsync(int tagId, ApproveTagRequest request, CancellationToken ct)
+    {
+        await using var cn = await OpenAsync(ct);
+
+        // The state test is in the UPDATE rather than in a preceding SELECT, so
+        // two stewards approving at once cannot both pass a check and both write.
+        // The loser updates nothing and is told the decision was already made.
+        await using var cmd = new SqlCommand("""
+            UPDATE dbo.tags
+               SET state = @approved
+             WHERE tag_id = @id
+               AND state = @proposed;
+
+            SELECT @@ROWCOUNT AS updated,
+                   (SELECT COUNT(*) FROM dbo.tags WHERE tag_id = @id) AS present;
+            """, cn);
+
+        cmd.Parameters.AddWithValue("@id", tagId);
+        cmd.Parameters.AddWithValue("@approved", RegTagState.Approved);
+        cmd.Parameters.AddWithValue("@proposed", RegTagState.Proposed);
+
+        int updated, present;
+
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+        {
+            if (!await r.ReadAsync(ct)) return null;
+            updated = r.GetInt32(0);
+            present = r.GetInt32(1);
+        }
+
+        if (present == 0) return null;
+
+        if (updated == 0)
+            throw new RegistryConflictException(
+                $"Tag {tagId} is not awaiting approval; its decision has already been made.");
+
+        // The registry records the outcome, not the deliberation. DecidedBy and
+        // Note are accepted so callers need not vary by whether this registry
+        // keeps an audit trail, and are dropped here because EIS has nowhere to
+        // put them -- storing them would mean inventing a table this schema does
+        // not have, which is a larger decision than this change.
+        return await FindTagAsync(tagId, ct);
+    }
+
     public async Task<RegTagDetail> CreateTagAsync(CreateTagRequest request, CancellationToken ct)
     {
         await using var cn = await OpenAsync(ct);
@@ -373,8 +425,8 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
             await InsertObjectAsync(cn, tx, tagId, TypeTag, request.ScopeId, guid, ct);
 
             await using (var cmd = new SqlCommand("""
-                INSERT INTO dbo.tags (tag_id, item_id, class_id, code, revision, name)
-                VALUES (@id, @item, @class, @code, @rev, @name);
+                INSERT INTO dbo.tags (tag_id, item_id, class_id, code, revision, name, state)
+                VALUES (@id, @item, @class, @code, @rev, @name, @state);
                 """, cn, tx))
             {
                 cmd.Parameters.AddWithValue("@id", tagId);
@@ -383,6 +435,11 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
                 cmd.Parameters.AddWithValue("@code", request.Code);
                 cmd.Parameters.AddWithValue("@rev", request.Revision);
                 cmd.Parameters.AddWithValue("@name", request.Name);
+
+                // Defaulted here rather than left to the column default, because a
+                // caller that says nothing means a tag authored directly in the
+                // registry, which is established content and not a proposal.
+                cmd.Parameters.AddWithValue("@state", request.State ?? RegTagState.Approved);
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 

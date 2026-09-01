@@ -482,3 +482,37 @@ time:
 
 `db_ddladmin` is only needed while `<Sys>__AutoCreateSchema` is true; it should
 come back off once each schema is settled.
+
+## Finish wiring RegLocationEngine into a running SC01
+
+**Status:** new 2026-09-01. The engine exists, builds and is unit-tested; nothing
+has been run end to end yet.
+
+`RegLocationEngine` was added as the outbound leg of SC01: a steward approves a
+tag in `RegLocationProvider`, the provider notifies the engine, the engine reads
+the tag back, publishes `SyncSegments` to ISBM and registers the entry in CIR.
+See DR-020 for why the gate sits in the provider rather than the engine.
+
+What remains:
+
+- **Nothing has been deployed or run.** No Function app exists for the engine,
+  and the deploy scripts have not been extended. The whole path is unexercised
+  outside unit tests.
+- **The inbound leg is still missing.** Nothing consumes ENG's `SyncSegments` and
+  creates `Proposed` tags in REG-LOCATION, so today there is nothing for a
+  steward to approve except tags created by hand. Until that exists, SC01 is only
+  half wired: `sc01-design-release.yaml` describes the inbound half and the
+  sandbox implements it, but `RegLocationProvider` does not.
+- **`GetApprovedTagsAsync` filters client-side.** It reads `tags` and keeps the
+  approved ones in memory. Fine at demo scale and wrong at registry scale; a
+  by-state route on the provider would fix it, but "approved" is nearly every row
+  so the route needs paging before it is worth adding.
+- **The CIR category is invented.** The engine writes entries under registry
+  `{enterprise}` / category `FunctionalLocation`. Whether that matches what ENG
+  registers on the ECSchema path is unverified, and if the two disagree the
+  CIRIDs will not converge — which is the one thing the FederationGuid guideline
+  exists to guarantee. Related to rules 4 and 8 above.
+- **No integration test crosses the boundary.** The unit tests pin the BOD shape
+  and the publish gate, but nothing exercises provider approval → notification →
+  read-back → publish. That test needs a live provider and broker, so it belongs
+  with the E2E suite rather than in `Oiie.Sandbox.Tests`.

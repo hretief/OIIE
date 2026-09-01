@@ -19,7 +19,10 @@ namespace RegLocationProvider.Functions;
 /// Nor is there a /publish route. A tag created or retired stops at the
 /// database; carrying that change onto a channel is the integrator's work.
 /// </summary>
-public sealed class RegLocationFunctions(IRegLocationStore store, ILogger<RegLocationFunctions> logger)
+public sealed class RegLocationFunctions(
+    IRegLocationStore store,
+    IApprovalNotifier notifier,
+    ILogger<RegLocationFunctions> logger)
 {
     // Enums are written as names, not ordinals. A name survives a schema
     // reorder; an ordinal does not, and a caller reading it cannot notice.
@@ -261,6 +264,70 @@ public sealed class RegLocationFunctions(IRegLocationStore store, ILogger<RegLoc
             await store.DeleteTagAsync(tagId, ct)
                 ? req.CreateResponse(HttpStatusCode.NoContent)
                 : await ProblemAsync(req, HttpStatusCode.NotFound, $"No tag '{tagId}'.", ct), ct);
+
+    // ---- Stewardship ------------------------------------------------------
+
+    /// <summary>
+    /// The queue a steward works: tags proposed by someone else and not yet
+    /// admitted to the registry.
+    /// </summary>
+    [Function("GetProposedTags")]
+    public async Task<HttpResponseData> GetProposedTags(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "tags/proposed")] HttpRequestData req,
+        CancellationToken ct)
+        => await OkAsync(req, await store.FindTagsByStateAsync(RegTagState.Proposed, ct), ct);
+
+    /// <summary>
+    /// A steward admits a proposed tag to the registry.
+    ///
+    /// Its own route rather than a state field on PUT /tags/{id}: releasing a
+    /// tag to operations and correcting its spelling are different acts with
+    /// different authority behind them, and one route doing both would mean
+    /// anything permitted to rename a tag were also permitted to release it.
+    ///
+    /// This is where SC01's gate actually sits. Nothing here publishes -- the
+    /// approval is a fact about this registry, and carrying it onto a channel
+    /// belongs to the engine.
+    /// </summary>
+    [Function("ApproveTag")]
+    public async Task<HttpResponseData> ApproveTag(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "tags/{tagId:int}/approve")] HttpRequestData req,
+        int tagId,
+        CancellationToken ct)
+        => await WriteGuardedAsync(req, async () =>
+        {
+            var body = await ReadBodyAsync<ApproveTagRequest>(req, ct);
+
+            // Who decided is required. An approval nobody is accountable for is
+            // not a stewardship decision, and the question is always asked later.
+            if (body is null || string.IsNullOrWhiteSpace(body.DecidedBy))
+                return await ProblemAsync(req, HttpStatusCode.BadRequest, "An approval requires decidedBy.", ct);
+
+            var approved = await store.ApproveTagAsync(tagId, body, ct);
+
+            if (approved is null)
+                return await ProblemAsync(req, HttpStatusCode.NotFound, $"No tag '{tagId}'.", ct);
+
+            logger.LogInformation(
+                "Tag {TagId} ({Code}) approved by {DecidedBy}.",
+                tagId, approved.Tag.Code, body.DecidedBy);
+
+            // Announced only after the store has committed, and never allowed to
+            // fail the response: the decision is already recorded, and a steward
+            // should not see an error because a listener was down.
+            await notifier.NotifyTagApprovedAsync(
+                new TagApprovedNotification(
+                    approved.Tag.TagId,
+                    approved.Tag.Code,
+                    approved.Tag.Revision,
+                    approved.Object.Guid,
+                    approved.Object.ScopeId,
+                    body.DecidedBy,
+                    DateTimeOffset.UtcNow),
+                ct);
+
+            return await OkAsync(req, approved, ct);
+        }, ct);
 
     // ---- Health -----------------------------------------------------------
 
