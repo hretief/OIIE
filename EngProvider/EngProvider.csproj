@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <AzureFunctionsVersion>v4</AzureFunctionsVersion>
@@ -69,7 +69,11 @@
       safe. LogicalName is pinned because SchemaInitializer resolves this
       resource by name.
     -->
-    <EmbeddedResource Include="Infrastructure\Sql\schema.sql"
-                      LogicalName="EngProvider.Infrastructure.Sql.schema.sql" />
+    <EmbeddedResource Include="Infrastructure\Sql\schema.sql" LogicalName="EngProvider.Infrastructure.Sql.schema.sql" />
+
+    <!--
+      The companion to schema.sql, applied only by an explicit reset. Kept as a
+      separate resource so that nothing which runs at startup can reach it.
+    -->
   </ItemGroup>
 </Project>

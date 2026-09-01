@@ -29,6 +29,19 @@ public sealed class SqlCmsAssetStore(
         return cn;
     }
 
+    public async Task ResetAsync(CancellationToken ct)
+    {
+        await SqlScriptRunner.ExecuteAsync(
+            _options.SqlConnectionString, "CmsProvider.Infrastructure.Sql.drop.sql", ct);
+
+        // Recreated immediately rather than left to the next cold start: a reset
+        // that returned success against a database with no tables would leave
+        // every later call failing on a missing object, which reads as a broken
+        // system rather than an empty one.
+        await SqlScriptRunner.ExecuteAsync(
+            _options.SqlConnectionString, "CmsProvider.Infrastructure.Sql.schema.sql", ct);
+    }
+
     public async Task<IReadOnlyList<CmsSite>> GetSitesAsync(CancellationToken ct)
     {
         await using var cn = await OpenAsync(ct);

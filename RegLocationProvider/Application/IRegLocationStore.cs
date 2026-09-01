@@ -23,6 +23,23 @@ public sealed class RegistryConflictException(string message) : Exception(messag
 /// </summary>
 public interface IRegLocationStore
 {
+    /// <summary>
+    /// Day zero: drops every object, recreates the schema, and re-applies the
+    /// bootstrap.
+    ///
+    /// The bootstrap is deliberately part of a reset, unlike in the other
+    /// providers. What it seeds is not demo data: it is the Global namespace,
+    /// the class groups a location registry cannot classify without, the
+    /// mandatory transaction row, and the object-type rows the schema's own
+    /// CHECK constraints are written against. A registry left without them is
+    /// not empty, it is unusable -- the first SyncSites would fail on a missing
+    /// namespace rather than land.
+    ///
+    /// So this leaves the registry holding no locations and no sites, which is
+    /// what greenfield means here.
+    /// </summary>
+    Task ResetAsync(CancellationToken ct);
+
     // ---- Scopes -----------------------------------------------------------
 
     Task<IReadOnlyList<RegScope>> GetScopesAsync(CancellationToken ct);

@@ -76,6 +76,8 @@
                       LogicalName="RegLocationProvider.Infrastructure.Sql.schema.sql" />
     <EmbeddedResource Include="Infrastructure\Sql\bootstrap.sql"
                       LogicalName="RegLocationProvider.Infrastructure.Sql.bootstrap.sql" />
+    <EmbeddedResource Include="Infrastructure\Sql\drop.sql"
+                      LogicalName="RegLocationProvider.Infrastructure.Sql.drop.sql" />
   </ItemGroup>
 </Project>
 

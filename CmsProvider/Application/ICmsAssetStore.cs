@@ -27,6 +27,16 @@ public sealed class CmsOptions
 /// </summary>
 public interface ICmsAssetStore
 {
+    /// <summary>
+    /// Day zero: drops every table and recreates the schema, leaving CMS empty.
+    ///
+    /// Destructive and unconditional. Present on the store rather than beside
+    /// the schema initialiser because a caller resetting CMS is asking the
+    /// store to forget, not asking for DDL to be applied -- the recreate is an
+    /// implementation detail of leaving the system usable afterwards.
+    /// </summary>
+    Task ResetAsync(CancellationToken ct);
+
     Task<IReadOnlyList<CmsSite>> GetSitesAsync(CancellationToken ct);
 
     Task<CmsSite?> FindSiteByCodeAsync(string siteCode, CancellationToken ct);

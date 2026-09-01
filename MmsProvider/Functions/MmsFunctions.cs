@@ -18,6 +18,34 @@ public sealed class MmsFunctions(IMmsAssetStore store, ILogger<MmsFunctions> log
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
+    /// <summary>
+    /// Day zero: empties MMS entirely.
+    ///
+    /// Routed under "mms/" rather than "admin/" because the Functions host
+    /// reserves the admin prefix for its own endpoints. A function declared
+    /// there fails indexing and is silently disabled -- it does not appear in
+    /// the started route list and calling it returns 404, which looks like a
+    /// deployment problem rather than a naming one.
+    /// </summary>
+    [Function("ResetMmsData")]
+    public async Task<HttpResponseData> ResetMmsData(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "mms/reset")] HttpRequestData req,
+        CancellationToken ct)
+    {
+        try
+        {
+            await store.ResetAsync(ct);
+            logger.LogWarning("MMS data was reset; every table was dropped and recreated.");
+            return await OkAsync(req, new { reset = true }, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "MMS reset failed.");
+            return await ProblemAsync(req, HttpStatusCode.InternalServerError,
+                $"Reset failed: {ex.Message}", ct);
+        }
+    }
+
     [Function("GetSites")]
     public async Task<HttpResponseData> GetSites(
         [HttpTrigger(AuthorizationLevel.Function, "get", Route = "sites")] HttpRequestData req,

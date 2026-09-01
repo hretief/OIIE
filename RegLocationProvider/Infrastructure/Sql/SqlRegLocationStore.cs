@@ -39,6 +39,21 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
         return cn;
     }
 
+    public async Task ResetAsync(CancellationToken ct)
+    {
+        await SqlScriptRunner.ExecuteAsync(
+            _options.SqlConnectionString, "RegLocationProvider.Infrastructure.Sql.drop.sql", ct);
+
+        // Order is not negotiable, and matches SchemaInitializer: the bootstrap
+        // seeds rows into tables the schema creates, so applying it first fails
+        // on a database that was just emptied.
+        await SqlScriptRunner.ExecuteAsync(
+            _options.SqlConnectionString, "RegLocationProvider.Infrastructure.Sql.schema.sql", ct);
+
+        await SqlScriptRunner.ExecuteAsync(
+            _options.SqlConnectionString, "RegLocationProvider.Infrastructure.Sql.bootstrap.sql", ct);
+    }
+
     // ---- Scopes -----------------------------------------------------------
 
     private const string ScopeColumns = """

@@ -38,6 +38,23 @@ public sealed class SqlEngDesignStore(
         return cn;
     }
 
+    // ---- Lifecycle --------------------------------------------------------
+
+    public async Task ResetAsync(CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_options.SqlConnectionString))
+        {
+            throw new InvalidOperationException(
+                "Eng__SqlConnectionString is not configured; there is nothing to reset.");
+        }
+
+        await SqlScriptRunner.ExecuteAsync(
+            _options.SqlConnectionString, "EngProvider.Infrastructure.Sql.drop.sql", ct);
+
+        await SqlScriptRunner.ExecuteAsync(
+            _options.SqlConnectionString, "EngProvider.Infrastructure.Sql.schema.sql", ct);
+    }
+
     // ---- iTwins and iModels ----------------------------------------------
 
     private const string ITwinColumns = """

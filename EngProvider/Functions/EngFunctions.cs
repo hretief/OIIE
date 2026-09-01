@@ -382,6 +382,44 @@ public sealed class EngFunctions(IEngDesignStore store, ILogger<EngFunctions> lo
 
         return await OkAsync(req, await store.GetNamedVersionElementsAsync(id, ct), ct);
     }
+    // ---- Lifecycle -------------------------------------------------------
+
+    /// <summary>
+    /// Drops ENG's tables and recreates them empty.
+    ///
+    /// Called by the Sandbox's day zero, which needs ENG cleared along with
+    /// everything else: ENG is the authoritative source, so twins left behind
+    /// here reappear in the UI after a reset that claimed to remove them.
+    ///
+    /// Destructive and unguarded by anything but the function key. That is the
+    /// same protection every other route here carries, and this host is a
+    /// sandbox emulation of a customer system rather than one holding real
+    /// engineering data.
+    ///
+    /// Not routed under admin/: the Functions host reserves that prefix for its
+    /// own endpoints, and a function that claims it fails indexing and is
+    /// silently disabled rather than rejected at build time.
+    /// </summary>
+    [Function("ResetEngData")]
+    public async Task<HttpResponseData> ResetEngData(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "eng/reset")] HttpRequestData req,
+        CancellationToken ct)
+    {
+        try
+        {
+            await store.ResetAsync(ct);
+            logger.LogWarning("ENG data reset: all tables dropped and recreated.");
+
+            return await OkAsync(req, new { reset = true }, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "ENG data reset failed.");
+            return await ProblemAsync(req, HttpStatusCode.InternalServerError,
+                $"Reset failed: {ex.Message}", ct);
+        }
+    }
+
     // ---- Health ----------------------------------------------------------
 
     [Function("Health")]

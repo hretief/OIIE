@@ -27,6 +27,16 @@ public sealed class MmsOptions
 /// </summary>
 public interface IMmsAssetStore
 {
+    /// <summary>
+    /// Day zero: drops every table and recreates the schema, leaving MMS empty.
+    ///
+    /// Destructive and unconditional. Present on the store rather than beside
+    /// the schema initialiser because a caller resetting MMS is asking the
+    /// store to forget, not asking for DDL to be applied -- the recreate is an
+    /// implementation detail of leaving the system usable afterwards.
+    /// </summary>
+    Task ResetAsync(CancellationToken ct);
+
     Task<IReadOnlyList<MmsSite>> GetSitesAsync(CancellationToken ct);
 
     Task<MmsSite?> FindSiteByCodeAsync(string siteCode, CancellationToken ct);

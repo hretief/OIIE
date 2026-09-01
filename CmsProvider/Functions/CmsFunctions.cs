@@ -18,6 +18,34 @@ public sealed class CmsFunctions(ICmsAssetStore store, ILogger<CmsFunctions> log
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
+    /// <summary>
+    /// Day zero: empties CMS entirely.
+    ///
+    /// Routed under "cms/" rather than "admin/" because the Functions host
+    /// reserves the admin prefix for its own endpoints. A function declared
+    /// there fails indexing and is silently disabled -- it does not appear in
+    /// the started route list and calling it returns 404, which looks like a
+    /// deployment problem rather than a naming one.
+    /// </summary>
+    [Function("ResetCmsData")]
+    public async Task<HttpResponseData> ResetCmsData(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "cms/reset")] HttpRequestData req,
+        CancellationToken ct)
+    {
+        try
+        {
+            await store.ResetAsync(ct);
+            logger.LogWarning("CMS data was reset; every table was dropped and recreated.");
+            return await OkAsync(req, new { reset = true }, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "CMS reset failed.");
+            return await ProblemAsync(req, HttpStatusCode.InternalServerError,
+                $"Reset failed: {ex.Message}", ct);
+        }
+    }
+
     [Function("GetSites")]
     public async Task<HttpResponseData> GetSites(
         [HttpTrigger(AuthorizationLevel.Function, "get", Route = "sites")] HttpRequestData req,

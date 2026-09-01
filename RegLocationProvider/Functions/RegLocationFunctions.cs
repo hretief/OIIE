@@ -34,6 +34,36 @@ public sealed class RegLocationFunctions(
     // ---- Scopes -----------------------------------------------------------
 
     /// <summary>
+    /// Day zero: empties the registry, keeping only the reference data it
+    /// cannot operate without.
+    ///
+    /// Routed under "reglocation/" rather than "admin/" because the Functions
+    /// host reserves the admin prefix for its own endpoints. A function
+    /// declared there fails indexing and is silently disabled -- it does not
+    /// appear in the started route list and calling it returns 404, which looks
+    /// like a deployment problem rather than a naming one.
+    /// </summary>
+    [Function("ResetRegLocationData")]
+    public async Task<HttpResponseData> ResetRegLocationData(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "reglocation/reset")] HttpRequestData req,
+        CancellationToken ct)
+    {
+        try
+        {
+            await store.ResetAsync(ct);
+            logger.LogWarning(
+                "REG-LOCATION data was reset; every object was dropped, then schema and bootstrap re-applied.");
+            return await OkAsync(req, new { reset = true }, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "REG-LOCATION reset failed.");
+            return await ProblemAsync(req, HttpStatusCode.InternalServerError,
+                $"Reset failed: {ex.Message}", ct);
+        }
+    }
+
+    /// <summary>
     /// Lists scopes, or finds the one carrying a federation GUID.
     ///
     /// Single-valued by GUID, unlike the tag equivalent: a scope has no

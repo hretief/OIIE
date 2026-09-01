@@ -34,6 +34,23 @@ public sealed class EngOptions
 /// </summary>
 public interface IEngDesignStore
 {
+    // ---- Lifecycle --------------------------------------------------------
+
+    /// <summary>
+    /// Drops every table and recreates them empty.
+    ///
+    /// For day zero only. ENG is the authoritative source, so this discards the
+    /// record rather than resetting a cache: every iTwin, element and named
+    /// version goes, including twins added through the UI. It exists because a
+    /// demo database accumulates twins from previous runs, and a reset that left
+    /// them behind would not be a reset.
+    ///
+    /// Recreating is part of the same call rather than left to the next restart,
+    /// since a host that is already running will not re-run its initializer and
+    /// would answer every query with an invalid-object error until bounced.
+    /// </summary>
+    Task ResetAsync(CancellationToken ct);
+
     // ---- iTwins and iModels ----------------------------------------------
 
     Task<IReadOnlyList<EngITwin>> GetITwinsAsync(CancellationToken ct);
