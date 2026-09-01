@@ -1,7 +1,18 @@
+
 SELECT
-  ECInstanceId AS AspectId,
-  ec_classname(ECClassId, 's:c') AS AspectClass,
-  Element.Id AS ElementId,
+  a.ECInstanceId AS AspectId,
+  ec_classname(a.ECClassId, 's:c') AS AspectClass,
+  a.Element.Id AS ElementId,              -- Corrected to use the alias 'a' for clarity
+  replace(
+    replace(
+      replace(
+        ec_classname(b.ECClassId, 'c'), 
+        '__x005C__', '\'
+      ), 
+      '__x0020__', ' '
+    ), 
+    '__x002D__', '-'
+  ) AS ElementClassPath,  
 
   SPECBOOK_FILTER AS SpecbookFilter,
   REFITEM_SEARCH AS RefitemSearch,
@@ -90,5 +101,7 @@ SELECT
   Quantity.RoundingIncrement     AS Quantity_RoundingIncrement,
   Quantity.RoundingPrecision     AS Quantity_RoundingPrecision
 
-FROM DgnCustomItemTypes_DOT_DigitalAssetMetadata.DOT_PayItem1ElementAspect
-WHERE ElementId = 0x700000000ef;
+-- 👇 Corrected JOIN syntax below:
+FROM DgnCustomItemTypes_DOT_DigitalAssetMetadata.DOT_PayItem1ElementAspect a 
+JOIN bis.Element b ON a.Element.Id = b.ECInstanceId
+WHERE a.Element.Id = 0x70000000373
