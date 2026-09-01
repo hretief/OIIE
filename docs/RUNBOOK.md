@@ -19,6 +19,28 @@ registered against that exact origin, so authentication fails on any other. Poin
 API elsewhere with `SANDBOX_API`. The two UIs serve different audiences: SimHost
 drives end-to-end automated scenario runs, this one is for interactive use.
 
+### Integration engines
+
+The four engine apps are deployed to dev and responding on `engine/status`:
+
+```
+ENG          : https://acme-engn-eng-dev.azurewebsites.net
+REG-LOCATION : https://acme-engn-reglocation-dev.azurewebsites.net
+CMS          : https://acme-engn-cms-dev.azurewebsites.net
+MMS          : https://acme-engn-mms-dev.azurewebsites.net
+```
+
+Every route needs a function key. Engines have no database — each holds an ISBM
+session, reads BODs, and calls its provider over that provider's published API.
+
+`EngEngine__Enabled` and the `RegLocationEngine` ingest flags ship **false**:
+both derive their channel from `IModelId` and would otherwise fail on a timer
+before an iTwin exists. The `SitesIngest` legs are enabled, because the sites
+channel is enterprise-level rather than iTwin-derived.
+
+Provisioning and deployment are in
+[deploy/engines/README.md](../deploy/engines/README.md).
+
 ### Deployed demo environment
 
 The `demo` environment is deployed and verified healthy:
@@ -153,8 +175,9 @@ prod : not yet deployed
 
 It is currently an exact replica of `CmsProvider` apart from the participant
 name — the two are expected to diverge, and nothing should be factored into a
-shared component on the strength of that resemblance. Unlike CMS it deploys as
-a single Function App with no engine, which is deliberate; see
+shared component on the strength of that resemblance. Like CMS it is fronted by
+a separate engine app, `MmsEngine` (`acme-engn-mms-dev`), which holds the ISBM
+session and reaches this API over HTTP; see
 [participant-abstraction-spec.md §5.2](participant-abstraction-spec.md).
 
 `/api/health` is anonymous and reports the site count; every other route needs

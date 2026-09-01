@@ -323,19 +323,26 @@ parenthesis is the §4.3 rule in action, and it is the step most likely to be go
 | ENG | — | `/oiie/engineering-updates` | — |
 | REG-LOCATION | `/oiie/engineering-updates` | `/oiie/asset-config` | consumer on `/oiie/cir/request` |
 | CIR | — | — | **provider** on `/oiie/cir/request` |
-| MMS | `/oiie/asset-config` | `/oiie/maintenance-events` | — |
-| CmsEngine | `/oiie/asset-config` | — | — |
+| MmsEngine | `/oiie/asset-config`, `/oiie/enterprise/sites` | `/oiie/maintenance-events` | — |
+| CmsEngine | `/oiie/asset-config`, `/oiie/enterprise/sites` | — | — |
 
-`CmsProvider` is absent from this table on purpose: it is a customer system, not a participant. It
-holds no session, subscribes to nothing, and is unaware ISBM exists. See §5.2.
+`CmsProvider` and `MmsProvider` are absent from this table on purpose: they are customer systems, not
+participants. They hold no session, subscribe to nothing, and are unaware ISBM exists. See §5.2.
 
 CMS and MMS both subscribe to `/oiie/asset-config` and neither knows about the other. Adding CMS
 requires no change to REG. That is the claim this architecture makes, and §8 is how it gets tested.
 
-### 5.2 Reference packaging — CMS is split, MMS is not
+### 5.2 Reference packaging — the engine/provider split
 
-CMS is deployed as **two** Function Apps. MMS is deployed as **one**. The asymmetry is deliberate and
-is itself part of the demonstration.
+CMS is deployed as **two** Function Apps: `CmsEngine` and `CmsProvider`. MMS follows the same shape,
+as `MmsEngine` and `MmsProvider`.
+
+This section previously said MMS deployed as **one** app, and that the asymmetry with CMS was
+deliberate. That held while MMS was reached by direct publication and held no session of its own.
+Once MMS became a real `SyncSites` subscriber it needed somewhere to hold that session, and putting
+it inside `MmsProvider` would have meant the customer-system emulator knowing about ISBM — exactly
+what the split exists to prevent. The split is now uniform, and the demonstration rests on the
+boundary rule below rather than on a contrast between the two systems.
 
 ```
 CmsEngine/     THE PARTICIPANT — what a vendor writes
@@ -373,15 +380,17 @@ Verifiable by inspection. If `CmsEngine` acquires access that Meridium would not
 integrator, the demonstration has silently failed and the boundary is in-process wearing a network
 costume.
 
-#### Why MMS is not split
-
-Two participants built two different ways, both joining `/oiie/asset-config`, neither requiring any
-change to REG or to each other, is a stronger demonstration than two identical ones. It shows the
-ecosystem does not care how a vendor packages their side.
+#### Splitting is still a choice
 
 Splitting is a **demonstration choice, not an architectural recommendation.** A real vendor would
 likely co-locate engine and system. If asked "would you deploy it this way?", the answer is "not
 necessarily — the split exists to prove the participant has no privileged access."
+
+MMS was originally left unsplit to show the ecosystem does not care how a vendor packages their
+side. That argument was sound, but it stopped describing the code once MMS became a subscriber in
+its own right: the session had to live somewhere, and the only alternative was to teach
+`MmsProvider` about ISBM. The point about packaging freedom still holds — it is simply no longer
+evidenced by MMS.
 
 #### What the split costs
 

@@ -169,9 +169,16 @@ separately keyed, and individually restartable. Splitting them bought nothing
 and cost roughly five times what it needed to.
 
 The tradeoff is real and worth stating. Everything on the plan shares its CPU
-and memory, so one app under load affects the others, and B1 has no autoscale.
-That is acceptable for a demo environment and would not be for production —
-the answer there is a larger SKU, not a plan per system.
+and memory, so one app under load affects the others, and the Basic tier has no
+autoscale. That is acceptable for a demo environment and would not be for
+production — the answer there is a larger SKU, not a plan per system.
+
+`acme-plan-dev` runs **B3**. It began at B1, which was adequate for six
+providers but not for ten AlwaysOn sites once the four `engn` apps joined:
+`func azure functionapp publish` began failing with "Timed out waiting for SCM
+to update the Environment Settings", which reads like a broken SCM policy and
+is actually CPU starvation on the shared worker. If that error reappears after
+adding apps, check the plan before debugging the deployment.
 
 A user-assigned identity is preferred over a system-assigned one wherever the
 app authenticates to SQL: the database user is keyed on the principal, so a
@@ -270,16 +277,24 @@ which emulates the Meridium product itself.
 | Role | Dev | Prod |
 |---|---|---|
 | LOB API | `acme-api-mms-dev` | `acme-api-mms-prod` |
+| Integration engine | `acme-engn-mms-dev` | `acme-engn-mms-prod` |
 | SQL database | `acme-db-mms-dev` | `acme-db-mms-prod` |
 | Plan *(shared)* | `acme-plan-dev` | `acme-plan-prod` |
 | Identity | `acme-id-mms-dev` | `acme-id-mms-prod` |
 | Storage account *(shared)* | `acmestoragedev01` | `acmestorageprod01` |
 
-**There is no `acme-engn-mms-*`.** MMS deploys as a single Function App where
-CMS is split into engine and provider. The asymmetry is intentional and is not
-a gap to be filled in later; see
-[participant-abstraction-spec.md §5.2](participant-abstraction-spec.md). Dev is
-deployed; prod is not.
+**This previously read "there is no `acme-engn-mms-*`".** That was accurate when
+MMS held no ISBM session and was reached only by direct publication. MMS now
+subscribes to `SyncSites` in its own right, and the code that does it —
+`MmsEngine` — holds a session, parses BODs, and calls `MmsProvider` over its
+published REST API. That is a participant by the §5.2 definition, so it gets an
+`engn` resource like any other.
+
+The asymmetry described in
+[participant-abstraction-spec.md §5.2](participant-abstraction-spec.md) is still
+real for `CmsProvider` versus `CmsEngine` — a customer system versus the vendor
+artefact that fronts it. What changed is that MMS is no longer the counter-example
+to it. Dev is deployed; prod is not.
 
 ## Example: CIR and ISBM deployment
 
@@ -299,6 +314,7 @@ deployed; prod is not.
 | Role | Dev | Prod |
 |---|---|---|
 | LOB API | `acme-api-reglocation-dev` | `acme-api-reglocation-prod` |
+| Integration engine | `acme-engn-reglocation-dev` | `acme-engn-reglocation-prod` |
 | SQL database | `acme-db-reglocation-dev` | `acme-db-reglocation-prod` |
 | Plan *(shared)* | `acme-plan-dev` | `acme-plan-prod` |
 | Identity | `acme-id-reglocation-dev` | `acme-id-reglocation-prod` |
@@ -306,6 +322,12 @@ deployed; prod is not.
 
 Only dev exists today. The prod names are reserved by the convention rather
 than provisioned.
+
+No `acme-engn-*` app is provisioned yet for any system; the four engine
+projects (`EngEngine`, `RegLocationEngine`, `CmsEngine`, `MmsEngine`) exist in
+source but have no cloud host. `deploy/engines/deploy-engine.ps1` creates them.
+Engines get no database and no SQL identity — an engine that needs either has
+broken the §5.2 boundary it exists to demonstrate.
 
 These were deployed alongside the original `cir-func-44p2f3n6` and
 `isbm-func-44p2f3n6dv7p4` apps, which predate this convention and are
