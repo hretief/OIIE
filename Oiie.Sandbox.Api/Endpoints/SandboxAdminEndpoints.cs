@@ -2485,6 +2485,51 @@ app.MapPost("/admin/eng/twins", async (
     return Results.Ok(twin);
 });
 
+// Brings an iTwin that already exists on the platform into the sandbox.
+//
+// This is the UI's "add an existing iTwin" action, and it is the entry point to
+// the SyncSites workflow: the twin is recorded in ENG, then announced, and the
+// REG-LOCATION engine turns that announcement into the Scope, Item and Serial
+// that every later SyncSegments needs somewhere to land.
+//
+// Two stores are written because the sandbox has two ENG representations -- the
+// SimHost personality the screens read from, and the ENG provider the Functions
+// engines read from. Registering in only the first would show the twin in the
+// carousel while leaving the workflow unable to publish it.
+//
+// A failed announcement is reported, not thrown. The twin is genuinely
+// registered by then, and answering with an error would invite a retry that
+// looks like a duplicate rather than telling the operator the Functions host is
+// not running.
+app.MapPost("/admin/eng/itwins/add", async (
+    EngService eng, EngEngineClient engine, AddITwinRequest request, CancellationToken ct) =>
+{
+    if (request.ITwinId == Guid.Empty)
+    {
+        return Results.BadRequest(new { error = "iTwinId is required and cannot be empty." });
+    }
+
+    // Both names are optional on the platform, so neither can be relied on for a
+    // code. Falling back to the id keeps the twin nameable rather than rejecting
+    // a legitimate one over a field it never carried.
+    var code = Blank(request.Number) ?? Blank(request.DisplayName) ?? request.ITwinId.ToString();
+    var name = Blank(request.DisplayName) ?? Blank(request.Number) ?? code;
+
+    var twin = await eng.EnsureTwinAsync(
+        request.ITwinId, code, name, request.Description, ct);
+
+    var detail = await engine.BootstrapAsync(request, ct);
+
+    return Results.Ok(new AddITwinResult(
+        twin.Id, twin.Code, twin.Name,
+        Registered: true,
+        Announced: detail is null,
+        Detail: detail));
+});
+
+static string? Blank(string? value) =>
+    string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
 // The twin a request works in.
 //
 // Body first, then header, then ENG's default. The header exists so a client can set

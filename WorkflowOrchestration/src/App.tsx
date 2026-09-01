@@ -37,39 +37,16 @@ function initialsOf(name: string): string {
 // ─── iTwin registry ───────────────────────────────────────────────────────────
 
 /**
- * The asset iTwins the banner shows, by their platform Number.
+ * The twins the context bar shows are the ones the sandbox holds, which is what
+ * ENG's own list reports. There is no allow-list: a twin is in the bar because
+ * somebody added it, and adding one is what establishes the Site that gives it
+ * something to show.
  *
- * Restricting to the districts this sandbox models keeps the context bar
- * readable and stops a twin that has no participant behind it from being
- * selectable at all.
- *
- * 7200 is here because it owns 9 of the 13 seeded inventory rows. Without it the
- * banner cannot reach most of the sample data, which reads as an empty demo
- * rather than as a filtered one.
- */
-const BANNER_TWIN_NUMBERS = new Set([
-  '7000', '7200', '8300', '9100', '9200', '9300', '9400', '9600', '9700', '9800',
-])
-
-/**
  * The platform names the fields differently to these screens -- number is the
  * short code and displayName the friendly name, against { uuid, shortName,
  * fullName } here, which SC11/SC04 still match on -- so the shape is mapped
  * once rather than renamed throughout.
  */
-
-/**
- * Whether a twin belongs in the context bar.
- *
- * Only the number is checked: the twins are already fetched with subClass=Asset,
- * so everything reaching here is an asset twin and re-checking the
- * classification client-side would only risk disagreeing with the platform over
- * a field it already filtered on.
- */
-function isBannerTwin(twin: itwin.ITwinSummary): boolean {
-  const number = twin.number?.trim()
-  return !!number && BANNER_TWIN_NUMBERS.has(number)
-}
 
 function summaryToITwin(twin: itwin.ITwinSummary): ITwin {
   return {
@@ -78,6 +55,15 @@ function summaryToITwin(twin: itwin.ITwinSummary): ITwin {
     // twin selectable rather than rendering a blank button.
     shortName: twin.number || twin.displayName || twin.id.slice(0, 8),
     fullName: twin.displayName || twin.number || twin.id,
+  }
+}
+
+/** The same shape, from what ENG holds rather than from the platform. */
+function engToITwin(twin: api.ITwin): ITwin {
+  return {
+    uuid: twin.id,
+    shortName: twin.code || twin.name || twin.id.slice(0, 8),
+    fullName: twin.name || twin.code || twin.id,
   }
 }
 
@@ -1812,6 +1798,122 @@ function TwinCarousel({ twins, activeUuid, onSelect }: {
 }
 
 /**
+ * Chooses a platform iTwin to bring into the sandbox.
+ *
+ * Offers only twins not already registered, because adding one twice is not a
+ * meaningful act -- the flow is idempotent server-side, but presenting it as
+ * available would suggest otherwise.
+ *
+ * The site type is shown rather than hidden: it is the field REG-LOCATION
+ * classifies the site by, and a twin carrying none cannot be published. Saying
+ * so at the point of choosing is better than letting the add appear to succeed
+ * and the publication quietly not happen.
+ */
+function AddTwinPicker({ candidates, registered, busy, onAdd, onClose }: {
+  candidates: itwin.ITwinSummary[] | null
+  registered: ITwin[]
+  busy: boolean
+  onAdd: (twin: itwin.ITwinSummary) => void
+  onClose: () => void
+}) {
+  const panel = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      if (!panel.current?.contains(e.target as Node)) onClose()
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [onClose])
+
+  const known = new Set(registered.map(t => t.uuid))
+  const available = (candidates ?? []).filter(t => !known.has(t.id))
+
+  return (
+    <div
+      ref={panel}
+      style={{
+        position: 'absolute', top: 40, left: 32, zIndex: 40,
+        width: 420, maxHeight: 380, overflowY: 'auto',
+        background: 'var(--bg-panel)',
+        border: '1px solid var(--border-subtle)',
+        boxShadow: '0 12px 32px rgba(0,0,0,0.45)',
+      }}
+    >
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border-subtle)' }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-primary)', letterSpacing: '0.1em', fontWeight: 600 }}>
+          ADD AN EXISTING iTWIN
+        </div>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.04em', marginTop: 3, lineHeight: 1.5 }}>
+          Registers the twin with ENG and publishes SyncSites, establishing its
+          Site in REG-LOCATION.
+        </div>
+      </div>
+
+      {candidates === null && (
+        <div style={{ padding: '14px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#f87171' }}>
+          Could not reach the iTwin Platform, so there is nothing to choose from.
+        </div>
+      )}
+
+      {candidates !== null && available.length === 0 && (
+        <div style={{ padding: '14px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
+          {candidates.length === 0
+            ? 'No asset iTwins are visible to the signed-in account.'
+            : 'Every visible asset iTwin is already in the sandbox.'}
+        </div>
+      )}
+
+      {available.map(twin => {
+        // SubClass is the platform's nearest thing to a site type, and it is
+        // what the server falls back to. Shown as the type for that reason.
+        const type = twin.subClass?.trim()
+
+        return (
+          <button
+            key={twin.id}
+            onClick={() => onAdd(twin)}
+            disabled={busy}
+            title={busy ? 'Adding an iTwin…' : `Add ${twin.displayName ?? twin.id} to the sandbox`}
+            style={{
+              display: 'block', width: '100%', textAlign: 'left',
+              padding: '9px 14px',
+              background: 'transparent',
+              border: 'none',
+              borderBottom: '1px solid var(--border-subtle)',
+              cursor: busy ? 'default' : 'pointer',
+              opacity: busy ? 0.5 : 1,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                {twin.number || twin.displayName || twin.id.slice(0, 8)}
+              </span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {twin.displayName ?? ''}
+              </span>
+            </div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '8px', color: 'var(--text-muted)', letterSpacing: '0.04em', marginTop: 2 }}>
+              {twin.id}
+              {type
+                ? ` · ${type}`
+                : ' · no type — cannot be published'}
+            </div>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
  * Decides whether anything is rendered at all.
  *
  * The app has no offline presence: an unauthenticated visitor is sent straight to
@@ -1878,8 +1980,14 @@ function Workspace({ user }: { user: CurrentUser }) {
   const [persistedTwinId, setPersistedTwinId] = usePersistedState<string | null>(
     'twinId', null, v => v === null || typeof v === 'string')
   const [twinsError, setTwinsError] = useState<string | null>(null)
-  // The unfiltered count, kept only to tell "no asset twins at all" apart from
-  // "none carrying a district number" in the empty state.
+  // The platform twins the picker can offer, or null when Bentley could not be
+  // reached. Null and empty differ: one means "nothing to add", the other means
+  // "we do not know what there is to add", and the picker says so.
+  const [candidates, setCandidates] = useState<itwin.ITwinSummary[] | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [adding, setAdding] = useState(false)
+  // The unfiltered platform count, kept to tell "no asset twins at all" apart
+  // from "none that are not already in the sandbox" in the empty state.
   const [assetTwinCount, setAssetTwinCount] = useState(0)
   const [twinsLoading, setTwinsLoading] = useState(true)
   const [workflow, setWorkflow] = usePersistedState<WorkflowId>(
@@ -1994,38 +2102,114 @@ function Workspace({ user }: { user: CurrentUser }) {
 
   // ── Loading the twins ────────────────────────────────────────────────────
 
-  useEffect(() => {
-    const abort = new AbortController()
+  /**
+   * The twins in the sandbox, and the platform twins that could join them.
+   *
+   * Two sources, and they answer different questions. ENG says what the sandbox
+   * holds, which is what the carousel shows: a twin nothing has registered has
+   * no segments, no scope and nothing to display. Bentley says what exists,
+   * which is what the picker offers. Fetched together so the picker can show
+   * the difference rather than re-listing twins already added.
+   *
+   * The platform half is allowed to fail on its own. Being unable to reach
+   * Bentley means no new twins can be added; it does not mean the twins already
+   * in the sandbox stop working, and blanking the carousel over it would be a
+   * far larger failure than the one that occurred.
+   */
+  const loadTwins = useCallback(async (signal?: AbortSignal) => {
+    setTwinsLoading(true)
 
-    // Asset twins from the platform, narrowed to the districts this sandbox
-    // models. Sourced from the tenant rather than from favorites so the banner
-    // reflects what exists rather than what the signed-in user has starred.
-    itwin.listITwins('Asset', abort.signal)
-      .then(found => {
-        const mapped = found.filter(isBannerTwin).map(summaryToITwin)
-        setAssetTwinCount(found.length)
-        setTwins(mapped)
-        // The previously selected twin wins if it is still in the list; otherwise
-        // the first, so the app is usable immediately. Left unselected, every
-        // panel below would render empty and look broken.
-        setActiveTwin(current =>
-          current ?? mapped.find(t => t.uuid === persistedTwinId) ?? mapped[0] ?? null)
-        setTwinsError(null)
-      })
-      .catch(err => {
-        if (abort.signal.aborted) return
-        setTwinsError(err instanceof Error ? err.message : String(err))
-      })
-      .finally(() => {
-        if (!abort.signal.aborted) setTwinsLoading(false)
+    try {
+      const [registered, platform] = await Promise.all([
+        api.listTwins(signal),
+        itwin.listITwins('Asset', signal).catch(() => null),
+      ])
+
+      if (signal?.aborted) return
+
+      const mapped = registered.map(engToITwin)
+
+      setTwins(mapped)
+      setCandidates(platform)
+      setAssetTwinCount(platform?.length ?? 0)
+
+      // The previously selected twin wins if it is still in the list; otherwise
+      // the first, so the app is usable immediately. Left unselected, every
+      // panel below would render empty and look broken.
+      setActiveTwin(current => {
+        const stillPresent = current ? mapped.find(t => t.uuid === current.uuid) : undefined
+        return stillPresent ?? mapped.find(t => t.uuid === persistedTwinId) ?? mapped[0] ?? null
       })
 
-    return () => abort.abort()
-    // Deliberately mount-only. persistedTwinId is read for its initial value to
-    // restore the prior selection; re-running when it changes would fight the
-    // user's own clicks.
+      setTwinsError(null)
+    } catch (err) {
+      if (signal?.aborted) return
+      setTwinsError(err instanceof Error ? err.message : String(err))
+    } finally {
+      if (!signal?.aborted) setTwinsLoading(false)
+    }
+    // persistedTwinId is read to restore the prior selection on the first load.
+    // Excluded deliberately: re-running when it changes would fight the user's
+    // own clicks, since selecting a twin is what writes it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    const abort = new AbortController()
+    void loadTwins(abort.signal)
+    return () => abort.abort()
+  }, [loadTwins])
+
+  /**
+   * Bring a platform iTwin into the sandbox.
+   *
+   * The added twin becomes the active one. Adding a twin is a deliberate act
+   * with an obvious next step -- look at what is now there -- and leaving the
+   * selection where it was would make a successful add appear to do nothing.
+   *
+   * Registration and announcement are reported separately because they fail
+   * separately. The twin is in the sandbox either way, so a failed publication
+   * is said plainly rather than raised as an error that would suggest the add
+   * itself did not happen.
+   */
+  async function addTwin(candidate: itwin.ITwinSummary) {
+    setPickerOpen(false)
+    setAdding(true)
+
+    try {
+      const result = await api.addITwin({
+        iTwinId: candidate.id,
+        displayName: candidate.displayName,
+        number: candidate.number,
+        twinClass: candidate.class,
+        subClass: candidate.subClass,
+        // SubClass is the platform's nearest equivalent to a site type, and it
+        // is what the server falls back to. Sent explicitly so the intent is
+        // visible here rather than only in the endpoint.
+        twinType: candidate.subClass,
+      })
+
+      const name = summaryToITwin(candidate).shortName
+
+      // Re-read rather than appending the result: the carousel is meant to show
+      // what ENG holds, and trusting the response would let the two disagree if
+      // the twin was already there under a different code.
+      await loadTwins()
+      setActiveTwin(engToITwin({
+        id: result.iTwinId, code: result.code, name: result.name,
+        description: null, createdAt: '',
+      }))
+      setSelected(new Set())
+
+      flash(result.announced
+        ? `${name} added — SyncSites published`
+        : `${name} added, but not published: ${result.detail ?? 'reason unknown'}`)
+    } catch (err) {
+      flash(err instanceof Error ? err.message : String(err))
+    } finally {
+      setAdding(false)
+    }
+  }
 
   // Mirror the live selection back to storage so the next reload finds it.
   useEffect(() => {
@@ -2653,7 +2837,7 @@ function Workspace({ user }: { user: CurrentUser }) {
       </header>
 
       {/* ── iTwin context bar ──────────────────────────────────────────────── */}
-      <div style={{ background: 'var(--bg-panel)', borderBottom: '1px solid var(--border-subtle)', padding: '0 32px', display: 'flex', alignItems: 'center', gap: 0, height: 40, flexShrink: 0 }}>
+      <div style={{ background: 'var(--bg-panel)', borderBottom: '1px solid var(--border-subtle)', padding: '0 32px', display: 'flex', alignItems: 'center', gap: 0, height: 40, flexShrink: 0, position: 'relative' }}>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.14em', marginRight: 16, flexShrink: 0 }}>iTwin CONTEXT</span>
         {twinsLoading && (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>loading twins…</span>
@@ -2662,14 +2846,14 @@ function Workspace({ user }: { user: CurrentUser }) {
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#f87171' }}>{twinsError}</span>
         )}
         {!twinsLoading && !twinsError && twins.length === 0 && (
-          // No twins is a normal state rather than a fault, so say what to do
-          // about it instead of leaving a bar that reads as a broken screen.
-          // Having none at all and having none that qualify need different
-          // remedies, so they are called out separately.
+          // No twins is a normal state on a fresh sandbox rather than a fault,
+          // so say what to do about it instead of leaving a bar that reads as a
+          // broken screen. Having nothing to add and having nothing added yet
+          // need different remedies, so they are called out separately.
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
             {assetTwinCount === 0
-              ? 'no asset iTwins visible — check the signed-in account has access'
-              : `none of ${assetTwinCount} asset iTwin${assetTwinCount === 1 ? '' : 's'} carry a district number — expected one of ${[...BANNER_TWIN_NUMBERS].join(', ')}`}
+              ? 'no iTwins in the sandbox — and none visible on the platform to add'
+              : `no iTwins in the sandbox yet — add one of ${assetTwinCount} from the platform with +`}
           </span>
         )}
         <TwinCarousel
@@ -2677,6 +2861,34 @@ function Workspace({ user }: { user: CurrentUser }) {
           activeUuid={activeTwin?.uuid ?? null}
           onSelect={tw => { setActiveTwin(tw); setSelected(new Set()) }}
         />
+        <button
+          onClick={() => setPickerOpen(open => !open)}
+          disabled={adding}
+          title="Add an existing iTwin to the sandbox"
+          aria-label="Add an existing iTwin to the sandbox"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 30, height: '100%', flexShrink: 0,
+            background: pickerOpen ? 'var(--overlay-active)' : 'transparent',
+            border: 'none',
+            borderRight: '1px solid var(--border-subtle)',
+            color: adding ? 'var(--text-muted)' : 'var(--text-secondary)',
+            cursor: adding ? 'default' : 'pointer',
+            fontFamily: 'var(--font-mono)', fontSize: '14px',
+            transition: 'all 0.13s',
+          }}
+        >
+          {adding ? '…' : '+'}
+        </button>
+        {pickerOpen && (
+          <AddTwinPicker
+            candidates={candidates}
+            registered={twins}
+            busy={adding}
+            onAdd={addTwin}
+            onClose={() => setPickerOpen(false)}
+          />
+        )}
         {activeTwin && (
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 16, flexShrink: 0 }}>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.06em' }}>ACTIVE:</span>

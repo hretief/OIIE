@@ -13,9 +13,33 @@
     "RegLocationEngine__SourceId": "REG-LOCATION",
     "RegLocationEngine__LogicalId": "REG-LOCATION",
 
+    "//": "Both legs derive their channel from IModelId; leaving it empty disables them.",
+    "RegLocationEngine__IModelId": "00000000-0000-0000-0000-000000000000",
+
+    "//inbound": "The leg that receives proposals from ENG. InboundDomain is engineering -- ENG's channel -- and must not be the operations domain above, which is this engine's own outbound channel.",
+    "RegLocationEngine__IngestEnabled": "false",
+    "RegLocationEngine__InboundDomain": "engineering",
+    "RegLocationEngine__InboundTopics__0": "oiie:sc01/ccom:SyncSegments",
+    "RegLocationEngine__InboundItemId": "1",
+    "RegLocationEngine__InboundScopeId": "1",
+    "RegLocationEngine__InboundRevision": "0",
+    "RegLocationEngine__InboundFallbackClassId": "1001",
+    "RegLocationEngine__InboundClassMap__Functional:FunctionalComponentElement": "1001",
+    "RegLocationEngine__MaxMessagesPerPoll": "25",
+
+    "//sites": "The bootstrap leg. Its channel is enterprise-level and not derived from IModelId, because SyncSites is the message that brings an iTwin context into being.",
+    "RegLocationEngine__SitesIngestEnabled": "false",
+    "RegLocationEngine__SitesTopics__0": "oiie/ccom:SyncSites",
+    "RegLocationEngine__SiteNamespaceId": "1",
+    "RegLocationEngine__SiteUnitId": "1",
+    "RegLocationEngine__SiteTrnId": "1",
+    "RegLocationEngine__SiteItemType": "Site",
+
     "Isbm__BaseUrl": "https://isbm-func-44p2f3n6dv7p4.azurewebsites.net/api",
     "Isbm__ApiKey": "",
 
-    "RegLocationEngineSweepSchedule": "0 */5 * * * *"
+    "RegLocationEngineSweepSchedule": "0 */5 * * * *",
+    "RegLocationEngineIngestSchedule": "0 */2 * * * *",
+    "RegLocationEngineSitesIngestSchedule": "0 */2 * * * *"
   }
 }

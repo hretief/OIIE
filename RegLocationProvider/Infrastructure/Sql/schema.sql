@@ -284,6 +284,52 @@ CREATE TABLE dbo.tags
 );
 GO
 
+------------------------------------------------------------
+-- item_serial_nos
+--
+-- A serialised instance of an item. The item says what kind of
+-- thing this is; the serial says which one.
+--
+-- Named as EIS names it. ebps_populate_base_types in
+-- EIS-POPULATE.SQL registers base type 18 against table
+-- 'item_serial_nos' with key 'serial_id', and every other table
+-- here already follows its source name. A friendlier 'serials'
+-- would be the only table whose name had to be translated before
+-- the EIS material could be read against it.
+--
+-- SyncSites uses this for the site instance: the Scope is the
+-- organisational context, the Item is the site type, and this is
+-- the site itself. A Scope and its Serial deliberately carry the
+-- same guid, which dbo.objects permits because it is keyed
+-- (object_id, object_type) -- but it does mean a lookup by guid
+-- alone can return both, so callers must say which type they want.
+------------------------------------------------------------
+
+IF OBJECT_ID('dbo.item_serial_nos','U') IS NULL
+CREATE TABLE dbo.item_serial_nos
+(
+    serial_id   INT NOT NULL,
+
+    item_id     INT NOT NULL,
+
+    name        NVARCHAR(255) NOT NULL,
+    description NVARCHAR(1000) NULL,
+
+    CONSTRAINT PK_item_serial_nos
+        PRIMARY KEY (serial_id),
+
+    CONSTRAINT FK_item_serial_nos_item
+        FOREIGN KEY (item_id)
+        REFERENCES dbo.items(item_id)
+);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes
+               WHERE name = 'IX_item_serial_nos_item_id'
+                 AND object_id = OBJECT_ID('dbo.item_serial_nos'))
+CREATE INDEX IX_item_serial_nos_item_id ON dbo.item_serial_nos(item_id);
+GO
+
 /********************************************************************
  OBJECTS REGISTRY ENFORCEMENT
 
@@ -303,6 +349,7 @@ GO
      items            1   PhysicalItem
      tags           212   Tag
      scopes         227   Scope
+     item_serial_nos 18   SerializedItem
 
  scopes is the awkward one, for two reasons.
 
@@ -427,6 +474,19 @@ IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_items_objects')
     ALTER TABLE dbo.items
         ADD CONSTRAINT FK_items_objects
             FOREIGN KEY (item_id, object_type)
+            REFERENCES dbo.objects(object_id, object_type);
+GO
+
+IF COL_LENGTH('dbo.item_serial_nos','object_type') IS NULL
+    ALTER TABLE dbo.item_serial_nos
+        ADD object_type INT NOT NULL
+            CONSTRAINT DF_item_serial_nos_object_type DEFAULT (18),
+            CONSTRAINT CK_item_serial_nos_object_type CHECK (object_type = 18);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_item_serial_nos_objects')
+    ALTER TABLE dbo.item_serial_nos
+        ADD CONSTRAINT FK_item_serial_nos_objects
+            FOREIGN KEY (serial_id, object_type)
             REFERENCES dbo.objects(object_id, object_type);
 GO
 
@@ -587,6 +647,21 @@ BEGIN
 END;
 GO
 
+CREATE OR ALTER TRIGGER dbo.TR_item_serial_nos_delete_object
+ON dbo.item_serial_nos
+AFTER DELETE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DELETE o
+    FROM dbo.objects AS o
+    INNER JOIN deleted AS d
+        ON o.object_id = d.serial_id AND o.object_type = 18
+    WHERE NOT EXISTS (SELECT 1 FROM dbo.item_serial_nos AS s
+                      WHERE s.serial_id = d.serial_id);
+END;
+GO
+
 -- scopes: the extra guard here is objects.scope_id. Because that
 -- column has no foreign key (see the circularity note above), nothing
 -- would otherwise stop this trigger reaping a registry row while other
@@ -677,4 +752,41 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_tags_state_proposed')
     CREATE INDEX IX_tags_state_proposed
         ON dbo.tags(state)
         WHERE state = N'Proposed';
+GO
+
+/********************************************************************
+ ITEM DESCRIPTION
+
+ An item is a kind of thing, and until now the registry recorded
+ only that one existed -- item_id, its namespace, its unit and the
+ transaction that created it. That is enough while every item is
+ seeded by the bootstrap and named in a comment, and not enough as
+ soon as items arrive from outside.
+
+ SyncSites is what forces the question. It files the site TYPE as
+ an item, so 'Highway' has to be stored somewhere; without these
+ columns the type survives only as an integer that nothing can
+ render. The alternative -- a parallel lookup keyed on item_id --
+ would be a second items table under another name.
+
+ All three are nullable. Existing rows predate the columns and
+ have no values to back-fill, and inventing a code for them would
+ put guesses in the registry.
+
+ item_type is a single character following the EIS convention,
+ 'U' for a unit or site. It is not constrained to a set here:
+ the full EIS vocabulary is not modelled in this schema, so a
+ CHECK would reject legitimate values the moment one is used.
+********************************************************************/
+
+IF COL_LENGTH('dbo.items','code') IS NULL
+    ALTER TABLE dbo.items ADD code NVARCHAR(100) NULL;
+GO
+
+IF COL_LENGTH('dbo.items','description') IS NULL
+    ALTER TABLE dbo.items ADD description NVARCHAR(255) NULL;
+GO
+
+IF COL_LENGTH('dbo.items','item_type') IS NULL
+    ALTER TABLE dbo.items ADD item_type CHAR(1) NULL;
 GO

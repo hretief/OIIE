@@ -245,6 +245,56 @@ export function suggestFederationId(signal?: AbortSignal): Promise<{ federationI
 }
 
 /**
+ * A candidate iTwin being brought into the sandbox.
+ *
+ * The platform's own fields are passed through rather than reduced to a name:
+ * the site type is what REG-LOCATION classifies the site by, and it is derived
+ * from the twin's class and subClass. Dropping them here would mean the
+ * workflow could register a site it cannot classify.
+ */
+export interface AddITwin {
+  iTwinId: string
+  displayName?: string | null
+  number?: string | null
+  description?: string | null
+  twinClass?: string | null
+  subClass?: string | null
+  twinType?: string | null
+}
+
+/**
+ * The outcome of adding an iTwin, in two parts.
+ *
+ * Registered and announced are separate because they fail separately. A twin
+ * can be in the sandbox while the SyncSites publication never happened -- the
+ * usual cause being that the ENG Functions host is not running -- and the
+ * screen needs to say which of the two it got.
+ */
+export interface AddITwinResult {
+  iTwinId: string
+  code: string
+  name: string
+  registered: boolean
+  announced: boolean
+  /** Why the announcement did not happen. Null when it did. */
+  detail: string | null
+}
+
+/**
+ * Bring an existing platform iTwin into the sandbox.
+ *
+ * This is the entry point to SyncSites: registering the twin causes ENG to
+ * announce it, and REG-LOCATION to establish the Scope, Item and Serial that
+ * later segments need in order to have anywhere to land.
+ */
+export function addITwin(twin: AddITwin): Promise<AddITwinResult> {
+  return request<AddITwinResult>('/admin/eng/itwins/add', {
+    method: 'POST',
+    body: JSON.stringify(twin),
+  })
+}
+
+/**
  * Publish the design: promote a Named Version.
  *
  * This is the release event. The ENG repository is an iModel that segments

@@ -51,7 +51,47 @@ public sealed record CreateItemRequest(
     int UnitId,
     int TrnId,
     int ScopeId,
+    Guid? Guid = null,
+    string? Code = null,
+    string? Description = null,
+    string? ItemType = null);
+
+/// <summary>
+/// What a caller supplies to create a serialised item.
+///
+/// Name is required and Description is not: a serial with no name is a row that
+/// can be counted but not recognised, whereas a missing description costs
+/// nothing. Guid is optional and minted when absent, as it is for a tag.
+/// </summary>
+public sealed record CreateSerialRequest(
+    int ItemId,
+    string Name,
+    int ScopeId,
+    string? Description = null,
     Guid? Guid = null);
+
+/// <summary>
+/// What a caller supplies to update an existing serial.
+///
+/// ItemId is absent for the same reason it is absent from
+/// <see cref="UpdateTagRequest"/>: moving an instance to a different type is not
+/// an edit, it is a different thing.
+/// </summary>
+public sealed record UpdateSerialRequest(
+    string Name,
+    string? Description = null);
+
+/// <summary>
+/// Points a scope at the business object whose context it represents.
+///
+/// Separate from creating the scope because the two happen at different times:
+/// SyncSites creates the Scope before the Serial exists, then links them once it
+/// does. Both columns travel together -- the schema rejects a half-filled pair
+/// rather than letting it slip past the composite foreign key.
+/// </summary>
+public sealed record SetScopeContextRequest(
+    int ContextObjectId,
+    int ContextObjectType);
 
 /// <summary>
 /// What a caller supplies to create a scope.

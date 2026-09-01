@@ -33,11 +33,39 @@ public sealed class RegLocationFunctions(
 
     // ---- Scopes -----------------------------------------------------------
 
+    /// <summary>
+    /// Lists scopes, or finds the one carrying a federation GUID.
+    ///
+    /// Single-valued by GUID, unlike the tag equivalent: a scope has no
+    /// revisions, so one GUID names at most one scope. This is what makes
+    /// SyncSites idempotent -- a redelivered site finds the scope the first
+    /// delivery created instead of making a second one.
+    /// </summary>
     [Function("GetScopes")]
     public async Task<HttpResponseData> GetScopes(
         [HttpTrigger(AuthorizationLevel.Function, "get", Route = "scopes")] HttpRequestData req,
         CancellationToken ct)
-        => await OkAsync(req, await store.GetScopesAsync(ct), ct);
+    {
+        var query = System.Web.HttpUtility.ParseQueryString(req.Url.Query);
+        var rawGuid = query["guid"];
+
+        if (!string.IsNullOrWhiteSpace(rawGuid))
+        {
+            if (!Guid.TryParse(rawGuid, out var guid))
+            {
+                return await ProblemAsync(req, HttpStatusCode.BadRequest,
+                    $"guid must be a UUID, but was '{rawGuid}'.", ct);
+            }
+
+            var found = await store.FindScopeByGuidAsync(guid, ct);
+
+            // A list either way, so a caller polling for a scope that does not
+            // exist yet reads an empty array rather than handling a 404.
+            return await OkAsync(req, found is null ? Array.Empty<RegScope>() : [found], ct);
+        }
+
+        return await OkAsync(req, await store.GetScopesAsync(ct), ct);
+    }
 
     [Function("GetScope")]
     public async Task<HttpResponseData> GetScope(
@@ -65,6 +93,33 @@ public sealed class RegLocationFunctions(
 
             var created = await store.CreateScopeAsync(body, ct);
             return await WriteAsync(req, HttpStatusCode.Created, created, ct);
+        }, ct);
+
+    /// <summary>
+    /// Points a scope at the business object whose context it represents.
+    ///
+    /// Its own route rather than a field on scope creation, because the object
+    /// generally does not exist when the scope does. SyncSites creates the Scope
+    /// first so the Serial has somewhere to live, then comes back here to link
+    /// the two once the Serial has an id.
+    /// </summary>
+    [Function("SetScopeContext")]
+    public async Task<HttpResponseData> SetScopeContext(
+        [HttpTrigger(AuthorizationLevel.Function, "put", Route = "scopes/{scopeId:int}/context")] HttpRequestData req,
+        int scopeId,
+        CancellationToken ct)
+        => await WriteGuardedAsync(req, async () =>
+        {
+            var body = await ReadBodyAsync<SetScopeContextRequest>(req, ct);
+
+            if (body is null)
+                return await ProblemAsync(req, HttpStatusCode.BadRequest, "A request body is required.", ct);
+
+            var updated = await store.SetScopeContextAsync(scopeId, body, ct);
+
+            return updated is null
+                ? await ProblemAsync(req, HttpStatusCode.NotFound, $"No scope '{scopeId}'.", ct)
+                : await OkAsync(req, updated, ct);
         }, ct);
 
     [Function("DeleteScope")]
@@ -111,12 +166,33 @@ public sealed class RegLocationFunctions(
 
     // ---- Items ------------------------------------------------------------
 
+    /// <summary>
+    /// Lists items, or finds the one carrying a federation GUID.
+    ///
+    /// The GUID lookup is what lets SyncSites reuse a site type: the second
+    /// Highway project finds the item the first registered instead of creating
+    /// a second 'Highway' nothing can tell apart from it.
+    /// </summary>
     [Function("GetItems")]
     public async Task<HttpResponseData> GetItems(
         [HttpTrigger(AuthorizationLevel.Function, "get", Route = "items")] HttpRequestData req,
         CancellationToken ct)
     {
         var query = System.Web.HttpUtility.ParseQueryString(req.Url.Query);
+
+        var rawGuid = query["guid"];
+
+        if (!string.IsNullOrWhiteSpace(rawGuid))
+        {
+            if (!Guid.TryParse(rawGuid, out var guid))
+            {
+                return await ProblemAsync(req, HttpStatusCode.BadRequest,
+                    $"guid must be a UUID, but was '{rawGuid}'.", ct);
+            }
+
+            var found = await store.FindItemByGuidAsync(guid, ct);
+            return await OkAsync(req, found is null ? Array.Empty<RegItem>() : [found], ct);
+        }
 
         if (!TryParseOptionalInt(query["namespaceId"], "namespaceId", out var ns, out var error))
             return await ProblemAsync(req, HttpStatusCode.BadRequest, error!, ct);
@@ -152,6 +228,32 @@ public sealed class RegLocationFunctions(
             return await WriteAsync(req, HttpStatusCode.Created, created, ct);
         }, ct);
 
+    /// <summary>
+    /// Updates an item's descriptive columns.
+    ///
+    /// Only code, description and item_type move. Namespace, unit and scope are
+    /// what the item IS rather than what it is called, and other rows already
+    /// depend on them.
+    /// </summary>
+    [Function("UpdateItem")]
+    public async Task<HttpResponseData> UpdateItem(
+        [HttpTrigger(AuthorizationLevel.Function, "put", Route = "items/{itemId:int}")] HttpRequestData req,
+        int itemId,
+        CancellationToken ct)
+        => await WriteGuardedAsync(req, async () =>
+        {
+            var body = await ReadBodyAsync<CreateItemRequest>(req, ct);
+
+            if (body is null)
+                return await ProblemAsync(req, HttpStatusCode.BadRequest, "A request body is required.", ct);
+
+            var updated = await store.UpdateItemAsync(itemId, body, ct);
+
+            return updated is null
+                ? await ProblemAsync(req, HttpStatusCode.NotFound, $"No item '{itemId}'.", ct)
+                : await OkAsync(req, updated, ct);
+        }, ct);
+
     [Function("DeleteItem")]
     public async Task<HttpResponseData> DeleteItem(
         [HttpTrigger(AuthorizationLevel.Function, "delete", Route = "items/{itemId:int}")] HttpRequestData req,
@@ -161,6 +263,99 @@ public sealed class RegLocationFunctions(
             await store.DeleteItemAsync(itemId, ct)
                 ? req.CreateResponse(HttpStatusCode.NoContent)
                 : await ProblemAsync(req, HttpStatusCode.NotFound, $"No item '{itemId}'.", ct), ct);
+
+    // ---- Serials ----------------------------------------------------------
+
+    /// <summary>
+    /// Lists serials, optionally narrowed by item, or finds the one carrying a
+    /// federation GUID.
+    ///
+    /// Single-valued by GUID: a serial is one instance and does not carry the
+    /// revisions that make the tag lookup list-valued.
+    /// </summary>
+    [Function("GetSerials")]
+    public async Task<HttpResponseData> GetSerials(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "serials")] HttpRequestData req,
+        CancellationToken ct)
+    {
+        var query = System.Web.HttpUtility.ParseQueryString(req.Url.Query);
+
+        var rawGuid = query["guid"];
+
+        if (!string.IsNullOrWhiteSpace(rawGuid))
+        {
+            if (!Guid.TryParse(rawGuid, out var guid))
+            {
+                return await ProblemAsync(req, HttpStatusCode.BadRequest,
+                    $"guid must be a UUID, but was '{rawGuid}'.", ct);
+            }
+
+            var found = await store.FindSerialByGuidAsync(guid, ct);
+            return await OkAsync(req, found is null ? Array.Empty<RegSerialDetail>() : [found], ct);
+        }
+
+        if (!TryParseOptionalInt(query["itemId"], "itemId", out var itemId, out var error))
+            return await ProblemAsync(req, HttpStatusCode.BadRequest, error!, ct);
+
+        return await OkAsync(req, await store.GetSerialsAsync(itemId, ct), ct);
+    }
+
+    [Function("GetSerial")]
+    public async Task<HttpResponseData> GetSerial(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "serials/{serialId:int}")] HttpRequestData req,
+        int serialId,
+        CancellationToken ct)
+    {
+        var serial = await store.FindSerialAsync(serialId, ct);
+
+        return serial is null
+            ? await ProblemAsync(req, HttpStatusCode.NotFound, $"No serial '{serialId}'.", ct)
+            : await OkAsync(req, serial, ct);
+    }
+
+    [Function("CreateSerial")]
+    public async Task<HttpResponseData> CreateSerial(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "serials")] HttpRequestData req,
+        CancellationToken ct)
+        => await WriteGuardedAsync(req, async () =>
+        {
+            var body = await ReadBodyAsync<CreateSerialRequest>(req, ct);
+
+            if (body is null || string.IsNullOrWhiteSpace(body.Name))
+                return await ProblemAsync(req, HttpStatusCode.BadRequest, "A serial requires a name.", ct);
+
+            var created = await store.CreateSerialAsync(body, ct);
+            return await WriteAsync(req, HttpStatusCode.Created, created, ct);
+        }, ct);
+
+    [Function("UpdateSerial")]
+    public async Task<HttpResponseData> UpdateSerial(
+        [HttpTrigger(AuthorizationLevel.Function, "put", Route = "serials/{serialId:int}")] HttpRequestData req,
+        int serialId,
+        CancellationToken ct)
+        => await WriteGuardedAsync(req, async () =>
+        {
+            var body = await ReadBodyAsync<UpdateSerialRequest>(req, ct);
+
+            if (body is null || string.IsNullOrWhiteSpace(body.Name))
+                return await ProblemAsync(req, HttpStatusCode.BadRequest, "A serial requires a name.", ct);
+
+            var updated = await store.UpdateSerialAsync(serialId, body, ct);
+
+            return updated is null
+                ? await ProblemAsync(req, HttpStatusCode.NotFound, $"No serial '{serialId}'.", ct)
+                : await OkAsync(req, updated, ct);
+        }, ct);
+
+    [Function("DeleteSerial")]
+    public async Task<HttpResponseData> DeleteSerial(
+        [HttpTrigger(AuthorizationLevel.Function, "delete", Route = "serials/{serialId:int}")] HttpRequestData req,
+        int serialId,
+        CancellationToken ct)
+        => await WriteGuardedAsync(req, async () =>
+            await store.DeleteSerialAsync(serialId, ct)
+                ? req.CreateResponse(HttpStatusCode.NoContent)
+                : await ProblemAsync(req, HttpStatusCode.NotFound, $"No serial '{serialId}'.", ct), ct);
 
     // ---- Tags -------------------------------------------------------------
 

@@ -40,6 +40,84 @@ public sealed class EngFunctions(IEngDesignStore store, ILogger<EngFunctions> lo
         CancellationToken ct)
         => await OkAsync(req, await store.GetITwinsAsync(ct), ct);
 
+    /// <summary>
+    /// Registers an iTwin the sandbox has been told about, or refreshes one it
+    /// already holds.
+    ///
+    /// This is how a twin that exists on the platform enters the sandbox. It
+    /// stands in for the iTwinCreated webhook during development, and it is what
+    /// the UI's "add an existing iTwin" action calls.
+    ///
+    /// Deliberately not a publish. Recording the twin and announcing it are
+    /// separate acts, and the engine owns the second one.
+    /// </summary>
+    [Function("UpsertITwin")]
+    public async Task<HttpResponseData> UpsertITwin(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "itwins")] HttpRequestData req,
+        CancellationToken ct)
+    {
+        UpsertITwinRequest? body;
+
+        try
+        {
+            body = await JsonSerializer.DeserializeAsync<UpsertITwinRequest>(req.Body, Json, ct);
+        }
+        catch (JsonException ex)
+        {
+            return await ProblemAsync(req, HttpStatusCode.BadRequest,
+                $"Malformed request body: {ex.Message}", ct);
+        }
+
+        if (body is null || body.ITwinId == Guid.Empty)
+        {
+            return await ProblemAsync(req, HttpStatusCode.BadRequest,
+                "An iTwin requires an iTwinId.", ct);
+        }
+
+        // Code is NOT NULL and unique in the schema, but the platform has no
+        // field of that name -- the caller is relaying a payload with number and
+        // displayName instead. Falling back through those, and finally to the id,
+        // keeps a legitimate platform response from being rejected over a column
+        // it was never going to carry.
+        var code = FirstNonBlank(body.Code, body.Number, body.DisplayName)
+                   ?? body.ITwinId.ToString();
+
+        var existing = await store.FindITwinAsync(body.ITwinId, ct);
+        var saved = await store.UpsertITwinAsync(body with { Code = code }, ct);
+
+        return await WriteAsync(req,
+            existing is null ? HttpStatusCode.Created : HttpStatusCode.OK, saved, ct);
+    }
+
+    /// <summary>
+    /// The stable UUID for a site type, minting one if this is the first time
+    /// ENG has been asked about it.
+    ///
+    /// A POST rather than a GET because it may create: the first caller to ask
+    /// about "Highway" is the one that decides what Highway's identity is. Every
+    /// caller after that receives the same answer, which is what lets two iTwins
+    /// of one type classify as the same type downstream.
+    /// </summary>
+    [Function("ResolveITwinType")]
+    public async Task<HttpResponseData> ResolveITwinType(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "itwin-types/{typeName}")] HttpRequestData req,
+        string typeName,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(typeName))
+        {
+            return await ProblemAsync(req, HttpStatusCode.BadRequest,
+                "A site type requires a name.", ct);
+        }
+
+        var uuid = await store.GetOrCreateITwinTypeUuidAsync(typeName, ct);
+
+        return await OkAsync(req, new { typeName, typeUuid = uuid }, ct);
+    }
+
+    private static string? FirstNonBlank(params string?[] candidates) =>
+        candidates.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c));
+
     [Function("GetIModels")]
     public async Task<HttpResponseData> GetIModels(
         [HttpTrigger(AuthorizationLevel.Function, "get", Route = "imodels")] HttpRequestData req,

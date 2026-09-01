@@ -40,10 +40,26 @@ public sealed class SqlEngDesignStore(
 
     // ---- iTwins and iModels ----------------------------------------------
 
+    private const string ITwinColumns = """
+        iTwinId, Code, Description, CreatedUtc,
+        DisplayName, Number, TwinClass, SubClass, TwinType
+        """;
+
+    private static EngITwin ReadITwin(SqlDataReader r) => new(
+        r.GetGuid(0),
+        r.GetString(1),
+        r.IsDBNull(2) ? null : r.GetString(2),
+        r.GetDateTime(3),
+        r.IsDBNull(4) ? null : r.GetString(4),
+        r.IsDBNull(5) ? null : r.GetString(5),
+        r.IsDBNull(6) ? null : r.GetString(6),
+        r.IsDBNull(7) ? null : r.GetString(7),
+        r.IsDBNull(8) ? null : r.GetString(8));
+
     public async Task<IReadOnlyList<EngITwin>> GetITwinsAsync(CancellationToken ct)
     {
-        const string sql = """
-            SELECT iTwinId, Code, Description, CreatedUtc
+        var sql = $"""
+            SELECT {ITwinColumns}
             FROM dbo.iTwin
             ORDER BY Code;
             """;
@@ -55,14 +71,94 @@ public sealed class SqlEngDesignStore(
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
         {
-            twins.Add(new EngITwin(
-                reader.GetGuid(0),
-                reader.GetString(1),
-                reader.IsDBNull(2) ? null : reader.GetString(2),
-                reader.GetDateTime(3)));
+            twins.Add(ReadITwin(reader));
         }
 
         return twins;
+    }
+
+    public async Task<EngITwin?> FindITwinAsync(Guid iTwinId, CancellationToken ct)
+    {
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand(
+            $"SELECT {ITwinColumns} FROM dbo.iTwin WHERE iTwinId = @id;", cn);
+        cmd.Parameters.AddWithValue("@id", iTwinId);
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct) ? ReadITwin(reader) : null;
+    }
+
+    public async Task<EngITwin> UpsertITwinAsync(UpsertITwinRequest request, CancellationToken ct)
+    {
+        // UPDATE-then-INSERT rather than MERGE. MERGE would express this in one
+        // statement, but it needs HOLDLOCK to be race-free and has a long list
+        // of known correctness caveats; this shape is the one used elsewhere in
+        // the sandbox and is easier to reason about.
+        //
+        // CreatedUtc is deliberately absent from the UPDATE: re-registering a
+        // twin the sandbox already knows does not make it new.
+        const string sql = """
+            UPDATE dbo.iTwin WITH (UPDLOCK, HOLDLOCK)
+            SET Code = @code,
+                Description = @description,
+                DisplayName = @displayName,
+                Number = @number,
+                TwinClass = @twinClass,
+                SubClass = @subClass,
+                TwinType = @twinType
+            WHERE iTwinId = @id;
+
+            IF @@ROWCOUNT = 0
+                INSERT INTO dbo.iTwin
+                    (iTwinId, Code, Description, DisplayName, Number, TwinClass, SubClass, TwinType)
+                VALUES
+                    (@id, @code, @description, @displayName, @number, @twinClass, @subClass, @twinType);
+            """;
+
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand(sql, cn);
+        cmd.Parameters.AddWithValue("@id", request.ITwinId);
+        cmd.Parameters.AddWithValue("@code", request.Code);
+        cmd.Parameters.AddWithValue("@description", (object?)request.Description ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@displayName", (object?)request.DisplayName ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@number", (object?)request.Number ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@twinClass", (object?)request.TwinClass ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@subClass", (object?)request.SubClass ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@twinType", (object?)request.TwinType ?? DBNull.Value);
+
+        await cmd.ExecuteNonQueryAsync(ct);
+
+        return (await FindITwinAsync(request.ITwinId, ct))!;
+    }
+
+    public async Task<Guid> GetOrCreateITwinTypeUuidAsync(string typeName, CancellationToken ct)
+    {
+        // The read takes UPDLOCK/HOLDLOCK so two iTwins of a new type arriving
+        // together cannot each mint a UUID and race to insert it. The second
+        // caller blocks on the range lock and then reads the first one's value,
+        // which is the entire point of storing the mapping.
+        const string sql = """
+            DECLARE @existing UNIQUEIDENTIFIER;
+
+            SELECT @existing = TypeUuid
+            FROM dbo.iTwinType WITH (UPDLOCK, HOLDLOCK)
+            WHERE TypeName = @name;
+
+            IF @existing IS NULL
+            BEGIN
+                SET @existing = @minted;
+                INSERT INTO dbo.iTwinType (TypeName, TypeUuid) VALUES (@name, @existing);
+            END
+
+            SELECT @existing;
+            """;
+
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand(sql, cn);
+        cmd.Parameters.AddWithValue("@name", typeName);
+        cmd.Parameters.AddWithValue("@minted", Guid.NewGuid());
+
+        return (Guid)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
     public async Task<IReadOnlyList<EngIModel>> GetIModelsAsync(Guid? iTwinId, CancellationToken ct)

@@ -14,6 +14,28 @@ public class SyncSegments : SyncBodBase<Segment>
     }
 }
 
+/// <summary>
+/// Synchronises sites -- the plants, facilities and projects a segment can belong to.
+///
+/// This is the one Sync BOD that has to travel on an enterprise-level channel. Every
+/// other flow is scoped to an iTwin, but this is what creates the iTwin context, so
+/// there is no per-iTwin channel to carry it yet.
+///
+/// No members are declared here because CCOM models Site as a specialisation of
+/// Segment: ShortName, FullName, Description and Type are inherited. Restating them
+/// would create a second set that could disagree with the first.
+/// </summary>
+public class SyncSites : SyncBodBase<Site>
+{
+    public SyncSites()
+    {
+    }
+
+    public SyncSites(string actionCode) : base(actionCode)
+    {
+    }
+}
+
 public class SyncAssets : SyncBodBase<Asset>
 {
     public SyncAssets()

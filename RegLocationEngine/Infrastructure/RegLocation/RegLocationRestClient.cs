@@ -22,13 +22,65 @@ public interface IRegLocationClient
     /// its listener is unreachable, so something has to notice what was missed.
     /// </summary>
     Task<IReadOnlyList<RegTagDetail>> GetApprovedTagsAsync(int? scopeId, CancellationToken ct);
+
+    /// <summary>
+    /// Every tag carrying this federation GUID, empty when none do.
+    ///
+    /// A list, not a single tag: the GUID identifies the functional location and
+    /// survives revision, so one location legitimately has several rows. This is
+    /// the inbound leg's idempotency check, which is why it asks the registry
+    /// rather than consulting engine state -- the registry is the thing that
+    /// actually knows, and its answer stays right if the engine's state is lost
+    /// or the same location arrives on two channels.
+    /// </summary>
+    Task<IReadOnlyList<RegTagDetail>> FindTagsByGuidAsync(Guid guid, CancellationToken ct);
+
+    /// <summary>
+    /// Files a new tag proposal.
+    ///
+    /// The one write this engine performs, and it deliberately cannot approve
+    /// anything: it proposes, and a steward disposes.
+    /// </summary>
+    Task<RegTagDetail> CreateTagAsync(CreateTagRequest request, CancellationToken ct);
+
+    // ---- Sites ------------------------------------------------------------
+
+    /// <summary>
+    /// The scope carrying this federation GUID, or null.
+    ///
+    /// Single-valued, unlike the tag lookup: a scope has no revisions, so one
+    /// GUID names at most one scope. This is what makes site ingestion
+    /// idempotent without any engine-side state.
+    /// </summary>
+    Task<RegScope?> FindScopeByGuidAsync(Guid guid, CancellationToken ct);
+
+    Task<RegScope> CreateScopeAsync(CreateScopeRequest request, CancellationToken ct);
+
+    /// <summary>
+    /// Links a scope to the object whose context it represents.
+    /// </summary>
+    Task SetScopeContextAsync(int scopeId, SetScopeContextRequest request, CancellationToken ct);
+
+    /// <summary>
+    /// The item carrying this federation GUID, or null. This is how a site type
+    /// is reused rather than recreated for each site of that type.
+    /// </summary>
+    Task<RegItem?> FindItemByGuidAsync(Guid guid, CancellationToken ct);
+
+    Task<RegItem> CreateItemAsync(CreateItemRequest request, CancellationToken ct);
+
+    /// <summary>The serial carrying this federation GUID, or null.</summary>
+    Task<RegSerialDetail?> FindSerialByGuidAsync(Guid guid, CancellationToken ct);
+
+    Task<RegSerialDetail> CreateSerialAsync(CreateSerialRequest request, CancellationToken ct);
 }
 
 /// <summary>
-/// Reads REG-LOCATION over its REST surface.
+/// Reads REG-LOCATION over its REST surface, and files proposals into it.
 ///
-/// Reads only. The engine never writes to the registry: an approval is a
-/// steward's act, and an integration component able to record one could
+/// The only write is <see cref="CreateTagAsync"/>, which creates tags in the
+/// Proposed state. The engine has no route to approval and that absence is the
+/// point: an integration component able to record a steward's decision could
 /// manufacture a release nobody authorised.
 /// </summary>
 public sealed class RegLocationRestClient(HttpClient http) : IRegLocationClient
@@ -83,6 +135,127 @@ public sealed class RegLocationRestClient(HttpClient http) : IRegLocationClient
         var all = await response.Content.ReadFromJsonAsync<List<RegTagDetail>>(Json, ct) ?? [];
 
         return [.. all.Where(t => string.Equals(t.Tag.State, "Approved", StringComparison.OrdinalIgnoreCase))];
+    }
+
+    public async Task<IReadOnlyList<RegTagDetail>> FindTagsByGuidAsync(Guid guid, CancellationToken ct)
+    {
+        using var response = await http.GetAsync($"tags?guid={guid:D}", ct);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return [];
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+
+            throw new RegLocationClientException(
+                $"REG-LOCATION returned {(int)response.StatusCode} for guid '{guid:D}': {body}");
+        }
+
+        return await response.Content.ReadFromJsonAsync<List<RegTagDetail>>(Json, ct) ?? [];
+    }
+
+    public async Task<RegTagDetail> CreateTagAsync(CreateTagRequest request, CancellationToken ct)
+    {
+        using var response = await http.PostAsJsonAsync("tags", request, Json, ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+
+            // 409 is included rather than swallowed. The caller has already
+            // checked the GUID, so a conflict here means a registry rule was
+            // broken that the check does not cover -- a duplicate
+            // code/revision under the same item, most likely. Treating it as
+            // success would file nothing and report that it had.
+            throw new RegLocationClientException(
+                $"REG-LOCATION returned {(int)response.StatusCode} creating tag '{request.Code}': {body}");
+        }
+
+        return await response.Content.ReadFromJsonAsync<RegTagDetail>(Json, ct)
+            ?? throw new RegLocationClientException(
+                $"REG-LOCATION accepted tag '{request.Code}' but returned no body.");
+    }
+
+    // ---- Sites ------------------------------------------------------------
+
+    public async Task<RegScope?> FindScopeByGuidAsync(Guid guid, CancellationToken ct) =>
+        (await GetListAsync<RegScope>($"scopes?guid={guid:D}", $"scope guid '{guid:D}'", ct))
+            .FirstOrDefault();
+
+    public async Task<RegScope> CreateScopeAsync(CreateScopeRequest request, CancellationToken ct) =>
+        await PostAsync<CreateScopeRequest, RegScope>(
+            "scopes", request, $"scope '{request.Name}'", ct);
+
+    public async Task SetScopeContextAsync(
+        int scopeId, SetScopeContextRequest request, CancellationToken ct)
+    {
+        using var response = await http.PutAsJsonAsync($"scopes/{scopeId}/context", request, Json, ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+
+            throw new RegLocationClientException(
+                $"REG-LOCATION returned {(int)response.StatusCode} linking scope '{scopeId}': {body}");
+        }
+    }
+
+    public async Task<RegItem?> FindItemByGuidAsync(Guid guid, CancellationToken ct) =>
+        (await GetListAsync<RegItem>($"items?guid={guid:D}", $"item guid '{guid:D}'", ct))
+            .FirstOrDefault();
+
+    public async Task<RegItem> CreateItemAsync(CreateItemRequest request, CancellationToken ct) =>
+        await PostAsync<CreateItemRequest, RegItem>(
+            "items", request, $"item '{request.Code}'", ct);
+
+    public async Task<RegSerialDetail?> FindSerialByGuidAsync(Guid guid, CancellationToken ct) =>
+        (await GetListAsync<RegSerialDetail>($"serials?guid={guid:D}", $"serial guid '{guid:D}'", ct))
+            .FirstOrDefault();
+
+    public async Task<RegSerialDetail> CreateSerialAsync(
+        CreateSerialRequest request, CancellationToken ct) =>
+        await PostAsync<CreateSerialRequest, RegSerialDetail>(
+            "serials", request, $"serial '{request.Name}'", ct);
+
+    // The GUID lookups all return a list even when at most one row can match,
+    // so a caller polling for something not yet created reads an empty array
+    // rather than distinguishing 404-means-absent from 404-means-wrong-route.
+    private async Task<IReadOnlyList<T>> GetListAsync<T>(
+        string url, string subject, CancellationToken ct)
+    {
+        using var response = await http.GetAsync(url, ct);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return [];
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+
+            throw new RegLocationClientException(
+                $"REG-LOCATION returned {(int)response.StatusCode} for {subject}: {body}");
+        }
+
+        return await response.Content.ReadFromJsonAsync<List<T>>(Json, ct) ?? [];
+    }
+
+    private async Task<TResult> PostAsync<TRequest, TResult>(
+        string url, TRequest request, string subject, CancellationToken ct)
+    {
+        using var response = await http.PostAsJsonAsync(url, request, Json, ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+
+            throw new RegLocationClientException(
+                $"REG-LOCATION returned {(int)response.StatusCode} creating {subject}: {body}");
+        }
+
+        return await response.Content.ReadFromJsonAsync<TResult>(Json, ct)
+            ?? throw new RegLocationClientException(
+                $"REG-LOCATION accepted {subject} but returned no body.");
     }
 }
 

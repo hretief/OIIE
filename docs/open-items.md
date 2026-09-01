@@ -485,24 +485,44 @@ come back off once each schema is settled.
 
 ## Finish wiring RegLocationEngine into a running SC01
 
-**Status:** new 2026-09-01. The engine exists, builds and is unit-tested; nothing
-has been run end to end yet.
+**Status:** updated 2026-09-01. Both legs now exist, build and are unit-tested;
+nothing has been run end to end yet.
 
-`RegLocationEngine` was added as the outbound leg of SC01: a steward approves a
-tag in `RegLocationProvider`, the provider notifies the engine, the engine reads
-the tag back, publishes `SyncSegments` to ISBM and registers the entry in CIR.
-See DR-020 for why the gate sits in the provider rather than the engine.
+`RegLocationEngine` carries both directions of SC01. Inbound, it subscribes to
+ENG's channel, unpacks `SyncSegments` and files each segment as a `Proposed` tag
+in `RegLocationProvider`. Outbound, a steward approves a tag, the provider
+notifies the engine, the engine reads the tag back, publishes `SyncSegments` to
+ISBM and registers the entry in CIR. See DR-020 for why the gate sits in the
+provider rather than the engine.
 
 What remains:
 
 - **Nothing has been deployed or run.** No Function app exists for the engine,
   and the deploy scripts have not been extended. The whole path is unexercised
   outside unit tests.
-- **The inbound leg is still missing.** Nothing consumes ENG's `SyncSegments` and
-  creates `Proposed` tags in REG-LOCATION, so today there is nothing for a
-  steward to approve except tags created by hand. Until that exists, SC01 is only
-  half wired: `sc01-design-release.yaml` describes the inbound half and the
-  sandbox implements it, but `RegLocationProvider` does not.
+- **The ENG-class-to-`class_id` map is guesswork.** `InboundClassMap` seeds
+  `Functional:FunctionalComponentElement` to `1001` (`rdl:FunctionalLocation`),
+  but nobody has confirmed that is the intended correspondence. It has to be
+  configuration because the two sides share no joinable value: ENG names its EC
+  class in `SegmentType/IDInInfoSource`, while `class_objects` has no name column
+  and its seeded rows have null GUIDs. Giving classes GUIDs on both sides would
+  turn this into a lookup and is the better long-term fix.
+- **An unmapped class silently lands on the fallback.** Logged at warning and
+  filed under `InboundFallbackClassId` rather than rejected, so a wrong mapping
+  table produces plausible-looking tags of the wrong class rather than an error.
+  A steward is the only thing that would catch it.
+- **`CreateTagRequest.State` still defaults to `Approved` in the provider.** The
+  inbound leg passes `Proposed` explicitly, so it is correct today, but the safe
+  behaviour depends on every future caller remembering. The default should
+  probably be inverted, with the bootstrap seed stating `Approved` out loud.
+- **Inbound identity matching is GUID-only, first-proposal-wins.** A segment
+  whose GUID the registry already holds is ignored entirely, whatever state that
+  tag is in. That makes redelivery harmless and never reopens a steward's
+  decision, but it also means a genuine revision from ENG will not update
+  anything. Revision handling is unimplemented.
+- **A message that fails to file blocks the queue.** The drain stops rather than
+  skipping ahead, and the publication stays on the channel. Correct for ordering
+  and for not losing data, but a permanently bad message needs manual removal.
 - **`GetApprovedTagsAsync` filters client-side.** It reads `tags` and keeps the
   approved ones in memory. Fine at demo scale and wrong at registry scale; a
   by-state route on the provider would fix it, but "approved" is nearly every row
@@ -512,7 +532,10 @@ What remains:
   registers on the ECSchema path is unverified, and if the two disagree the
   CIRIDs will not converge — which is the one thing the FederationGuid guideline
   exists to guarantee. Related to rules 4 and 8 above.
-- **No integration test crosses the boundary.** The unit tests pin the BOD shape
-  and the publish gate, but nothing exercises provider approval → notification →
-  read-back → publish. That test needs a live provider and broker, so it belongs
+- **No integration test crosses the boundary.** The unit tests pin the mapping
+  and the publish gate, but nothing exercises publish → subscribe → propose →
+  approve → publish. That test needs a live provider and broker, so it belongs
   with the E2E suite rather than in `Oiie.Sandbox.Tests`.
+- **`SegmentIngestionService` itself is untested.** Session reuse, the
+  remove-after-success ordering, and the stop-on-failure behaviour are exercised
+  by nothing — the same gap `EngPublicationService.DrainAsync` has.

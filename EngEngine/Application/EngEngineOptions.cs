@@ -73,6 +73,16 @@ public sealed class EngEngineOptions
     public string[] Topics { get; set; } = ["oiie:sc01/ccom:SyncSegments"];
 
     /// <summary>
+    /// Topics a SyncSites publication is posted under.
+    ///
+    /// Separate from <see cref="Topics"/> because it travels on a different
+    /// channel to a different audience. A subscriber to the enterprise sites
+    /// channel wants to know that a site exists; it has no interest in the
+    /// segments that later fill it.
+    /// </summary>
+    public string[] SitesTopics { get; set; } = ["oiie/ccom:SyncSites"];
+
+    /// <summary>
     /// How far back the watermark is rewound on each pass.
     ///
     /// ENG documents modifiedSince as inclusive and expects readers to overlap
@@ -125,4 +135,29 @@ public sealed class EngEngineOptions
         !string.IsNullOrWhiteSpace(ChannelUriOverride)
             ? ChannelUriOverride
             : $"/{Enterprise}/{iTwinFederationId:D}/{Domain}/publication";
+
+    /// <summary>
+    /// Overrides the derived sites channel URI. Empty by default, for the same
+    /// reason as <see cref="ChannelUriOverride"/>.
+    /// </summary>
+    public string? SitesChannelUriOverride { get; set; }
+
+    /// <summary>
+    /// The channel SyncSites publishes onto:
+    ///
+    ///     /{enterprise}/enterprise/sites/publication
+    ///
+    /// The literal 'enterprise' sits where a federation id sits on every other
+    /// channel, and that is the whole point: this message is what creates an
+    /// iTwin context, so it cannot be addressed to one. A per-iTwin channel for
+    /// SyncSites would have to be provisioned by the message it carries.
+    ///
+    /// It is the only flow where the enterprise level is structurally required
+    /// rather than merely convenient, which is why it is a distinct member and
+    /// not a Domain the caller passes in.
+    /// </summary>
+    public string SitesChannelUri =>
+        !string.IsNullOrWhiteSpace(SitesChannelUriOverride)
+            ? SitesChannelUriOverride
+            : $"/{Enterprise}/enterprise/sites/publication";
 }

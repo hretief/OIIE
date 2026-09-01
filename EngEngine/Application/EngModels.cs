@@ -1,6 +1,25 @@
 namespace EngEngine.Application;
 
 /// <summary>
+/// An iTwin as the engine reads it back from ENG.
+///
+/// This is the site context a design belongs to, and it is what SyncSites
+/// carries. The platform-sourced fields are nullable because ENG stores what
+/// it was told: a twin registered from a sparse payload has a code and little
+/// else, and the builder decides what that is enough to publish.
+/// </summary>
+public sealed record EngITwin(
+    Guid ITwinId,
+    string Code,
+    string? Description,
+    DateTime CreatedUtc,
+    string? DisplayName,
+    string? Number,
+    string? TwinClass,
+    string? SubClass,
+    string? TwinType);
+
+/// <summary>
 /// A model, and the iTwin it belongs to.
 ///
 /// The iTwin matters to the engine for one reason: the ISBM channel convention

@@ -188,6 +188,69 @@ public class CcomBodTests
         Assert.False(attribute.ShouldSerializeValueContent());
     }
 
+    /// <summary>
+    /// A site names the iTwin a design belongs to. It carries its own identity and
+    /// its type, and nothing else -- the registered content CCOM allows on a Site is
+    /// deliberately not modelled, so a round trip has to preserve exactly this much.
+    /// </summary>
+    private static SyncSites BuildSyncSites()
+    {
+        var bod = new SyncSites(ActionCodes.Add);
+        bod.ApplicationArea.Sender = new Sender
+        {
+            LogicalID = "urn:oiie-sandbox:eng",
+            ComponentID = "SimHost"
+        };
+        bod.ApplicationArea.BODID = "corr-site-0001";
+        bod.ApplicationArea.CreationDateTime = Instant.FromUtc(2026, 8, 1, 9, 14, 0);
+
+        bod.With(new Site
+        {
+            UUID = Guid.Parse("ce40a55a-6954-4de3-85c7-f796c3e423d9"),
+            IDInInfoSource = "ce40a55a-6954-4de3-85c7-f796c3e423d9",
+            InfoSource = new InfoSource
+            {
+                UUID = CcomUuid.ForInfoSource("ENG"),
+                ShortName = "ENG"
+            },
+            ShortName = "US Route 202",
+            FullName = "US Route 202 — HWYUSR202",
+            Type = new SegmentType
+            {
+                UUID = Guid.Parse("f7e8d9c0-1111-2222-3333-444455556666"),
+                IDInInfoSource = "Highway",
+                InfoSource = new InfoSource
+                {
+                    UUID = CcomUuid.ForInfoSource("ENG"),
+                    ShortName = "ENG"
+                },
+                ShortName = "Highway",
+                FullName = "Highway Project"
+            }
+        });
+
+        return bod;
+    }
+
+    [Fact]
+    public void SyncSites_round_trip_preserves_the_site_and_its_type()
+    {
+        var envelope = BodEnvelope.Parse(BuildSyncSites().ToXmlString());
+
+        // Site is a Segment specialisation, so the noun element is named for the
+        // concrete type rather than for the base it inherits from.
+        Assert.Equal("Site", Assert.Single(envelope.NounElements).Name.LocalName);
+
+        var site = envelope.NounsAs(e => new Site(e)).Single();
+
+        Assert.Equal(Guid.Parse("ce40a55a-6954-4de3-85c7-f796c3e423d9"), site.UUID);
+        Assert.Equal("US Route 202", site.ShortName);
+        Assert.Equal("US Route 202 — HWYUSR202", site.FullName);
+        Assert.Equal(Guid.Parse("f7e8d9c0-1111-2222-3333-444455556666"), site.Type?.UUID);
+        Assert.Equal("Highway", site.Type?.ShortName);
+        Assert.Equal("Highway Project", site.Type?.FullName);
+    }
+
     [Fact]
     public void Distinct_bod_types_do_not_share_a_cached_serializer()
     {

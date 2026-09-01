@@ -86,6 +86,73 @@ END
 GO
 
 /* ============================================================================
+   iTwin platform attributes
+
+   The table above models an iTwin as a code and a description, which is all
+   the seeded projects ever needed. SyncSites needs what the platform actually
+   returns from GET /iTwins/{id}: a display name, a project number, and the
+   class/subClass/type triple that classifies it.
+
+   Added as guarded ALTERs rather than folded into the CREATE above, so a
+   database that already exists picks them up on the next run. Every column is
+   nullable: rows created before these existed have no values, and inventing a
+   class for them would put a guess in the provider.
+   ============================================================================ */
+IF COL_LENGTH('dbo.iTwin', 'DisplayName') IS NULL
+    ALTER TABLE dbo.iTwin ADD DisplayName NVARCHAR(200) NULL;
+GO
+
+IF COL_LENGTH('dbo.iTwin', 'Number') IS NULL
+    ALTER TABLE dbo.iTwin ADD Number NVARCHAR(100) NULL;
+GO
+
+IF COL_LENGTH('dbo.iTwin', 'TwinClass') IS NULL
+    ALTER TABLE dbo.iTwin ADD TwinClass NVARCHAR(50) NULL;
+GO
+
+IF COL_LENGTH('dbo.iTwin', 'SubClass') IS NULL
+    ALTER TABLE dbo.iTwin ADD SubClass NVARCHAR(50) NULL;
+GO
+
+IF COL_LENGTH('dbo.iTwin', 'TwinType') IS NULL
+    ALTER TABLE dbo.iTwin ADD TwinType NVARCHAR(100) NULL;
+GO
+
+/* ============================================================================
+   iTwinType
+
+   The UUID ENG gives a site type, keyed on the type string.
+
+   Site.Type.UUID has to be stable across iTwins: the second Highway project
+   must classify as the same 'Highway' as the first, or REG-LOCATION receives
+   two site types that nothing can tell apart. The platform does not supply an
+   identifier for a type -- 'Highway' arrives as a bare string -- so ENG mints
+   one on first sight and remembers it here.
+
+   That memory is the whole point of the table. Deriving the UUID from the
+   type string instead would need no storage, but it would make the identifier
+   a function of the spelling, so correcting a type name would silently
+   reclassify every site already published under it.
+   ============================================================================ */
+IF OBJECT_ID('dbo.iTwinType', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.iTwinType
+    (
+        TypeName        NVARCHAR(100) NOT NULL,
+        TypeUuid        UNIQUEIDENTIFIER NOT NULL,
+        CreatedUtc      DATETIME2(7) NOT NULL
+            CONSTRAINT DF_iTwinType_CreatedUtc DEFAULT SYSUTCDATETIME(),
+
+        CONSTRAINT PK_iTwinType PRIMARY KEY (TypeName),
+
+        -- Two type names sharing a UUID would defeat the reuse this table
+        -- exists to provide, so the mapping is unique in both directions.
+        CONSTRAINT UQ_iTwinType_TypeUuid UNIQUE (TypeUuid)
+    );
+END
+GO
+
+/* ============================================================================
    iModel
    ============================================================================ */
 IF OBJECT_ID('dbo.iModel', 'U') IS NULL

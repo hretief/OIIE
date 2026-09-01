@@ -1250,3 +1250,76 @@ who decided and when. The engine reads the tag back before publishing.
   `EngEngine`/`EngProvider`. The shared record shapes are duplicated deliberately, so a breaking
   change to the provider's API surfaces here as a decision rather than a silent recompile.
 
+---
+
+## DR-021 — The inbound leg: how an ENG segment becomes a REG-LOCATION proposal
+
+**Status:** Decided
+**Date:** 2026-09-01
+**Context:** SC01's outbound half (DR-020) had nothing to react to, because nothing carried
+`SyncSegments` off the channel into `RegLocationProvider`. The user specified the full flow:
+create in ENG → NamedVersion releases → wrapped in `SyncSegments` → publish to channel →
+REG-LOCATION **engine** subscribes → unpacks segments → persists in the **provider** → approved
+in the provider.
+
+### Decision
+
+`RegLocationEngine` subscribes; `RegLocationProvider` only persists and approves. The engine
+polls the channel on a timer, unpacks each `Segment`, and POSTs a `Proposed` tag to the
+provider's existing REST surface.
+
+- **The engine subscribes, not the provider.** A customer registry does not know it is being
+  integrated with. Putting a subscriber in the provider would contradict the comments in its own
+  `Program.cs` and make the emulation dishonest.
+- **The inbound channel is a different channel.** ENG publishes on `domain = engineering`; this
+  engine publishes on `operations` (DR-020). Reusing `ChannelUriFor` for the subscription would
+  have subscribed the engine to *its own* outbound channel — which produces silence rather than
+  an error, and would have been invisible until someone counted rows. Hence a separate
+  `InboundDomain` and `InboundChannelUriFor`.
+- **Polling, not push.** The user asked for polling now and ISBM webhook notification later.
+  The reasoning matches `EngEngine`: a missed event is missed forever, a reader that is behind
+  catches up.
+- **First proposal wins, checked against the registry.** A segment whose federation GUID the
+  registry already holds is ignored, whatever state that tag is in. Idempotency is therefore a
+  property of the registry rather than of engine state, so it survives the engine losing its
+  state or the same location arriving on two channels — and a re-publication can never reopen a
+  decision a steward has already made.
+- **State is always `Proposed`, and always explicit.** `CreateTagRequest.State` defaults to
+  `Approved` in the provider (chosen so the bootstrap seed kept working). Omitting it here would
+  walk every published segment straight past the gate this leg exists to feed.
+
+### The awkward part: class resolution
+
+The user specified that `ClassId` resolves against `SegmentType`. It cannot, as a lookup: ENG
+puts its **EC class name** in `SegmentType/IDInInfoSource` and derives the UUID by hashing
+`"ENG" + className`, while REG-LOCATION's `class_objects` table has **no name column** and its
+seeded class rows have **null GUIDs**. The two sides share no value that can be joined on.
+
+So resolution is an explicit configured map (`InboundClassMap`) from ENG class name to
+`class_id`, with a configured fallback. This is worse than a lookup and better than a hash: the
+correspondence between one system's vocabulary and another's is a decision somebody has to make,
+and it is better written where it can be read and changed. Giving classes GUIDs on both sides
+would turn it back into a lookup and is recorded in `open-items.md`.
+
+An unmapped class **falls back rather than rejects**, logged at warning. A gap in the mapping
+table is not a defect in the proposal, and dropping the segment would hide the location from the
+one person able to notice the table is wrong.
+
+### Consequences
+
+- `ItemId`, `ScopeId` and revision are bootstrapped configuration. A CCOM `Segment` carries no
+  item or scope — that context arrives as `Site`/`SiteType` in a message this leg does not
+  handle — and a proposal enters at revision 0 because it has not been through a revision cycle
+  in *this* registry.
+- The engine gains its first write to the provider. It creates proposals and has deliberately no
+  route to approval: a component able to record a steward's decision could manufacture a release
+  nobody authorised.
+- A publication is removed from the subscription only after every segment in it is filed, and a
+  failure stops the drain rather than skipping ahead. A permanently bad message therefore blocks
+  the queue and needs manual removal — accepted, because the alternative is discarding data
+  silently. The one exception is content that will not parse as XML, which is discarded, since
+  retrying cannot fix it and it would block the queue forever.
+- Revisions from ENG do not yet update anything, because matching is GUID-only and first
+  proposal wins.
+
+

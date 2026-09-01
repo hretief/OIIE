@@ -109,6 +109,21 @@ GO
        227  Scope         -> scopes.scope_id
        285  Unit          -> uom_units.unit_id
          1  PhysicalItem  -> items.item_id
+        18  SerializedItem-> item_serial_nos.serial_id
+
+   18 is easy to misread. It also appears in this script as a lock_flags
+   value (2|16, 'cannot be modified or deleted'), which is an unrelated
+   column that happens to share the number. The base type is what
+   EIS-POPULATE.SQL registers:
+
+       ebps_populate_base_types 18, N'SerializedItem', N'Serialized Item',
+                                    N'item_serial_nos', N'serial_id', ...
+
+   Note also that EIS defines a separate base type 255 'Site'. SyncSites
+   does not use it: a site is modelled as the triple Scope(227) for the
+   organisational context, PhysicalItem(1) for the site type, and
+   SerializedItem(18) for the site instance. That keeps one mechanism for
+   naming an instance of a type, whether the instance is a plant or a pump.
 
    transactions has no entry: EIS defines no base type for it, because it is
    bookkeeping rather than a registered object.

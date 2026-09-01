@@ -53,3 +53,108 @@ public sealed record TagApprovedNotification(
     int ScopeId,
     string DecidedBy,
     DateTimeOffset DecidedAt);
+
+/// <summary>
+/// The tag states the engine names. Mirrors the provider's RegTagState.
+/// </summary>
+public static class RegTagStates
+{
+    public const string Proposed = "Proposed";
+    public const string Approved = "Approved";
+    public const string Rejected = "Rejected";
+}
+
+/// <summary>
+/// What the engine posts to file an incoming segment as a proposal.
+///
+/// State is present and is always Proposed on this path. The provider's own
+/// default is Approved -- chosen so the bootstrap seed kept working -- so
+/// leaving it out here would admit every published segment to the registry
+/// without a steward ever seeing it.
+/// </summary>
+public sealed record CreateTagRequest(
+    int ItemId,
+    int ClassId,
+    string Code,
+    int Revision,
+    string Name,
+    int ScopeId,
+    Guid? Guid,
+    string? State);
+
+// ---- Sites ---------------------------------------------------------------
+
+public sealed record RegScope(
+    int ScopeId,
+    string Name,
+    int NamespaceId,
+    int? ContextObjectId,
+    int? ContextObjectType,
+    int? ParentId,
+    bool IsEnabled,
+    int UsageCount);
+
+public sealed record RegItem(
+    int ItemId,
+    int NamespaceId,
+    int UnitId,
+    int TrnId,
+    string? Code,
+    string? Description,
+    string? ItemType);
+
+public sealed record RegSerial(
+    int SerialId,
+    int ItemId,
+    string Name,
+    string? Description);
+
+public sealed record RegSerialDetail(RegSerial Serial, RegObject Object);
+
+/// <summary>
+/// What the engine posts to create the scope a site's contents live in.
+/// </summary>
+public sealed record CreateScopeRequest(
+    string Name,
+    int NamespaceId,
+    int? ParentId,
+    int? ContextObjectId,
+    int? ContextObjectType,
+    Guid? Guid);
+
+/// <summary>
+/// What the engine posts to create the item a site type becomes.
+///
+/// The namespace, unit and TRN come from configuration rather than the BOD.
+/// They are how the registry partitions its own identifiers, and a sender has
+/// no standing to assert one.
+/// </summary>
+public sealed record CreateItemRequest(
+    int NamespaceId,
+    int UnitId,
+    int TrnId,
+    int ScopeId,
+    Guid? Guid,
+    string? Code,
+    string? Description,
+    string? ItemType);
+
+/// <summary>What the engine posts to create the serial representing one site.</summary>
+public sealed record CreateSerialRequest(
+    int ItemId,
+    string Name,
+    int ScopeId,
+    string? Description,
+    Guid? Guid);
+
+/// <summary>
+/// Points a scope at the object whose context it represents.
+///
+/// Sent after the serial exists, because the scope has to be created first for
+/// the serial to have somewhere to live -- so the link can only be made on a
+/// second pass.
+/// </summary>
+public sealed record SetScopeContextRequest(
+    int ContextObjectId,
+    int ContextObjectType);
+

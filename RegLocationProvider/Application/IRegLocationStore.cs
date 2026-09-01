@@ -31,6 +31,24 @@ public interface IRegLocationStore
 
     Task<RegScope> CreateScopeAsync(CreateScopeRequest request, CancellationToken ct);
 
+    /// <summary>
+    /// Finds a scope by its federation GUID.
+    ///
+    /// Single-valued, unlike the tag equivalent: a scope has no revisions, so one
+    /// GUID names at most one scope. This is what makes SyncSites idempotent --
+    /// the second delivery of a site finds the scope the first one created.
+    /// </summary>
+    Task<RegScope?> FindScopeByGuidAsync(Guid guid, CancellationToken ct);
+
+    /// <summary>
+    /// Points a scope at the business object it represents.
+    ///
+    /// Deliberately not part of <see cref="CreateScopeAsync"/>: the object a scope
+    /// stands for may not exist when the scope does. SyncSites creates the Scope
+    /// first so the Serial has somewhere to live, then links the two.
+    /// </summary>
+    Task<RegScope?> SetScopeContextAsync(int scopeId, SetScopeContextRequest request, CancellationToken ct);
+
     Task<bool> DeleteScopeAsync(int scopeId, CancellationToken ct);
 
     // ---- Catalogue --------------------------------------------------------
@@ -49,7 +67,39 @@ public interface IRegLocationStore
 
     Task<RegItem> CreateItemAsync(CreateItemRequest request, CancellationToken ct);
 
+    /// <summary>
+    /// Finds an item by its federation GUID.
+    ///
+    /// SyncSites needs this to reuse a site type: the second Highway project must
+    /// find the item the first one created rather than registering a second
+    /// 'Highway' the registry cannot tell apart from the first.
+    /// </summary>
+    Task<RegItem?> FindItemByGuidAsync(Guid guid, CancellationToken ct);
+
+    Task<RegItem?> UpdateItemAsync(int itemId, CreateItemRequest request, CancellationToken ct);
+
     Task<bool> DeleteItemAsync(int itemId, CancellationToken ct);
+
+    // ---- Serials ----------------------------------------------------------
+
+    Task<IReadOnlyList<RegSerialDetail>> GetSerialsAsync(int? itemId, CancellationToken ct);
+
+    Task<RegSerialDetail?> FindSerialAsync(int serialId, CancellationToken ct);
+
+    /// <summary>
+    /// Finds a serial by its federation GUID.
+    ///
+    /// Single-valued: a serial is one instance and does not carry revisions the
+    /// way a tag does. The type filter matters here -- a site's Scope and its
+    /// Serial share a GUID by design, and only the object type separates them.
+    /// </summary>
+    Task<RegSerialDetail?> FindSerialByGuidAsync(Guid guid, CancellationToken ct);
+
+    Task<RegSerialDetail> CreateSerialAsync(CreateSerialRequest request, CancellationToken ct);
+
+    Task<RegSerialDetail?> UpdateSerialAsync(int serialId, UpdateSerialRequest request, CancellationToken ct);
+
+    Task<bool> DeleteSerialAsync(int serialId, CancellationToken ct);
 
     // ---- Tags -------------------------------------------------------------
 

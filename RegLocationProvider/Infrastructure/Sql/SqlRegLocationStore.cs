@@ -28,6 +28,7 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
     // These are pinned by CHECK constraints in the schema, so they are facts
     // about the database rather than choices this class is free to make.
     private const int TypePhysicalItem = 1;
+    private const int TypeSerializedItem = 18;
     private const int TypeTag = 212;
     private const int TypeScope = 227;
 
@@ -126,6 +127,54 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
         }
     }
 
+    public async Task<RegScope?> FindScopeByGuidAsync(Guid guid, CancellationToken ct)
+    {
+        // The object_type filter is not optional here. A site's Scope and its
+        // Serial deliberately carry the same GUID, so without it this returns
+        // whichever of the two the query happens to reach first.
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand($"""
+            SELECT {ScopeColumns}
+            FROM dbo.scopes AS s
+            INNER JOIN dbo.objects AS o
+                ON o.object_id = s.scope_id AND o.object_type = @type
+            WHERE o.guid = @guid;
+            """, cn);
+        cmd.Parameters.AddWithValue("@guid", guid);
+        cmd.Parameters.AddWithValue("@type", TypeScope);
+
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        return await r.ReadAsync(ct) ? ReadScope(r) : null;
+    }
+
+    public async Task<RegScope?> SetScopeContextAsync(
+        int scopeId, SetScopeContextRequest request, CancellationToken ct)
+    {
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand("""
+            UPDATE dbo.scopes
+            SET object_id = @ctxId, object_type = @ctxType
+            WHERE scope_id = @id;
+            """, cn);
+        cmd.Parameters.AddWithValue("@id", scopeId);
+        cmd.Parameters.AddWithValue("@ctxId", request.ContextObjectId);
+        cmd.Parameters.AddWithValue("@ctxType", request.ContextObjectType);
+
+        try
+        {
+            if (await cmd.ExecuteNonQueryAsync(ct) == 0) return null;
+        }
+        catch (SqlException ex) when (IsConstraintViolation(ex))
+        {
+            // The composite FK into dbo.objects means the context object has to
+            // be a real registry entry. A scope cannot stand for a serial the
+            // registry has never heard of.
+            throw Translate(ex);
+        }
+
+        return await FindScopeAsync(scopeId, ct);
+    }
+
     public async Task<bool> DeleteScopeAsync(int scopeId, CancellationToken ct)
     {
         // Only the domain row is deleted. The AFTER DELETE trigger reaps the
@@ -189,17 +238,23 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
 
     // ---- Items ------------------------------------------------------------
 
+    private const string ItemColumns =
+        "i.item_id, i.namespace_id, i.unit_id, i.trn_id, i.code, i.description, i.item_type";
+
     private static RegItem ReadItem(SqlDataReader r) =>
-        new(r.GetInt32(0), r.GetInt32(1), r.GetInt32(2), r.GetInt32(3));
+        new(r.GetInt32(0), r.GetInt32(1), r.GetInt32(2), r.GetInt32(3),
+            r.IsDBNull(4) ? null : r.GetString(4),
+            r.IsDBNull(5) ? null : r.GetString(5),
+            r.IsDBNull(6) ? null : r.GetString(6));
 
     public async Task<IReadOnlyList<RegItem>> GetItemsAsync(int? namespaceId, CancellationToken ct)
     {
         await using var cn = await OpenAsync(ct);
-        await using var cmd = new SqlCommand("""
-            SELECT item_id, namespace_id, unit_id, trn_id
-            FROM dbo.items
-            WHERE (@ns IS NULL OR namespace_id = @ns)
-            ORDER BY item_id;
+        await using var cmd = new SqlCommand($"""
+            SELECT {ItemColumns}
+            FROM dbo.items AS i
+            WHERE (@ns IS NULL OR i.namespace_id = @ns)
+            ORDER BY i.item_id;
             """, cn);
         cmd.Parameters.AddWithValue("@ns", (object?)namespaceId ?? DBNull.Value);
 
@@ -212,9 +267,9 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
     public async Task<RegItem?> FindItemAsync(int itemId, CancellationToken ct)
     {
         await using var cn = await OpenAsync(ct);
-        await using var cmd = new SqlCommand("""
-            SELECT item_id, namespace_id, unit_id, trn_id
-            FROM dbo.items WHERE item_id = @id;
+        await using var cmd = new SqlCommand($"""
+            SELECT {ItemColumns}
+            FROM dbo.items AS i WHERE i.item_id = @id;
             """, cn);
         cmd.Parameters.AddWithValue("@id", itemId);
 
@@ -235,25 +290,72 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
             await InsertObjectAsync(cn, tx, itemId, TypePhysicalItem, request.ScopeId, request.Guid, ct);
 
             await using (var cmd = new SqlCommand("""
-                INSERT INTO dbo.items (item_id, namespace_id, unit_id, trn_id)
-                VALUES (@id, @ns, @unit, @trn);
+                INSERT INTO dbo.items
+                    (item_id, namespace_id, unit_id, trn_id, code, description, item_type)
+                VALUES
+                    (@id, @ns, @unit, @trn, @code, @desc, @itemType);
                 """, cn, tx))
             {
                 cmd.Parameters.AddWithValue("@id", itemId);
                 cmd.Parameters.AddWithValue("@ns", request.NamespaceId);
                 cmd.Parameters.AddWithValue("@unit", request.UnitId);
                 cmd.Parameters.AddWithValue("@trn", request.TrnId);
+                cmd.Parameters.AddWithValue("@code", (object?)request.Code ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@desc", (object?)request.Description ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@itemType", (object?)request.ItemType ?? DBNull.Value);
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
             await tx.CommitAsync(ct);
-            return new RegItem(itemId, request.NamespaceId, request.UnitId, request.TrnId);
+            return new RegItem(itemId, request.NamespaceId, request.UnitId, request.TrnId,
+                request.Code, request.Description, request.ItemType);
         }
         catch (SqlException ex) when (IsConstraintViolation(ex))
         {
             await tx.RollbackAsync(ct);
             throw Translate(ex);
         }
+    }
+
+    public async Task<RegItem?> FindItemByGuidAsync(Guid guid, CancellationToken ct)
+    {
+        // Joined to the registry rather than looking for a guid column on items:
+        // the GUID lives in dbo.objects, and the object_type filter is what stops
+        // this matching a scope or serial that shares the value.
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand($"""
+            SELECT {ItemColumns}
+            FROM dbo.items AS i
+            INNER JOIN dbo.objects AS o
+                ON o.object_id = i.item_id AND o.object_type = @type
+            WHERE o.guid = @guid;
+            """, cn);
+        cmd.Parameters.AddWithValue("@guid", guid);
+        cmd.Parameters.AddWithValue("@type", TypePhysicalItem);
+
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        return await r.ReadAsync(ct) ? ReadItem(r) : null;
+    }
+
+    public async Task<RegItem?> UpdateItemAsync(int itemId, CreateItemRequest request, CancellationToken ct)
+    {
+        // Only the descriptive columns move. Namespace, unit and scope are what
+        // the item IS rather than what it is called, and changing them on a row
+        // other rows already point at is a different operation than renaming.
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand("""
+            UPDATE dbo.items
+            SET code = @code, description = @desc, item_type = @itemType
+            WHERE item_id = @id;
+            """, cn);
+        cmd.Parameters.AddWithValue("@id", itemId);
+        cmd.Parameters.AddWithValue("@code", (object?)request.Code ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@desc", (object?)request.Description ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@itemType", (object?)request.ItemType ?? DBNull.Value);
+
+        if (await cmd.ExecuteNonQueryAsync(ct) == 0) return null;
+
+        return await FindItemAsync(itemId, ct);
     }
 
     public async Task<bool> DeleteItemAsync(int itemId, CancellationToken ct)
@@ -513,6 +615,155 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
         }
     }
 
+    // ---- Serials ----------------------------------------------------------
+
+    // Read with the registry row for the same reason a tag is: the federation
+    // GUID lives in objects, and a serial without it cannot be matched to the
+    // iTwin it represents.
+    private const string SerialSelect = """
+        SELECT s.serial_id, s.item_id, s.name, s.description,
+               o.object_id, o.object_type, o.guid, o.scope_id,
+               o.hide_flags, o.lock_flags,
+               o.date_added, o.added_by, o.date_changed, o.changed_by
+        FROM dbo.item_serial_nos AS s
+        INNER JOIN dbo.objects AS o
+            ON o.object_id = s.serial_id AND o.object_type = s.object_type
+        """;
+
+    private static RegSerialDetail ReadSerialDetail(SqlDataReader r) => new(
+        new RegSerial(
+            r.GetInt32(0),
+            r.GetInt32(1),
+            r.GetString(2),
+            r.IsDBNull(3) ? null : r.GetString(3)),
+        new RegObject(
+            r.GetInt32(4),
+            r.GetInt32(5),
+            r.IsDBNull(6) ? null : r.GetGuid(6),
+            r.GetInt32(7),
+            r.GetByte(8),
+            r.GetByte(9),
+            r.IsDBNull(10) ? null : r.GetDateTime(10),
+            r.IsDBNull(11) ? null : r.GetInt32(11),
+            r.IsDBNull(12) ? null : r.GetDateTime(12),
+            r.IsDBNull(13) ? null : r.GetInt32(13)));
+
+    public async Task<IReadOnlyList<RegSerialDetail>> GetSerialsAsync(int? itemId, CancellationToken ct)
+    {
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand($"""
+            {SerialSelect}
+            WHERE (@item IS NULL OR s.item_id = @item)
+            ORDER BY s.serial_id;
+            """, cn);
+        cmd.Parameters.AddWithValue("@item", (object?)itemId ?? DBNull.Value);
+
+        var result = new List<RegSerialDetail>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct)) result.Add(ReadSerialDetail(r));
+        return result;
+    }
+
+    public async Task<RegSerialDetail?> FindSerialAsync(int serialId, CancellationToken ct)
+    {
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand($"{SerialSelect} WHERE s.serial_id = @id;", cn);
+        cmd.Parameters.AddWithValue("@id", serialId);
+
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        return await r.ReadAsync(ct) ? ReadSerialDetail(r) : null;
+    }
+
+    public async Task<RegSerialDetail?> FindSerialByGuidAsync(Guid guid, CancellationToken ct)
+    {
+        // The join in SerialSelect already pins object_type to the serial's own,
+        // so a scope sharing this GUID cannot be returned here.
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand($"{SerialSelect} WHERE o.guid = @guid;", cn);
+        cmd.Parameters.AddWithValue("@guid", guid);
+
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        return await r.ReadAsync(ct) ? ReadSerialDetail(r) : null;
+    }
+
+    public async Task<RegSerialDetail> CreateSerialAsync(CreateSerialRequest request, CancellationToken ct)
+    {
+        await using var cn = await OpenAsync(ct);
+        await using var tx = (SqlTransaction)await cn.BeginTransactionAsync(ct);
+
+        try
+        {
+            var serialId = await NextIdAsync(cn, tx, "dbo.item_serial_nos", "serial_id", ct);
+
+            // Minted when absent, as it is for a tag: an identifier that only
+            // sometimes exists is not a federation identifier.
+            var guid = request.Guid ?? Guid.NewGuid();
+
+            await EnsureScopeExistsAsync(cn, tx, request.ScopeId, ct);
+            await InsertObjectAsync(cn, tx, serialId, TypeSerializedItem, request.ScopeId, guid, ct);
+
+            await using (var cmd = new SqlCommand("""
+                INSERT INTO dbo.item_serial_nos (serial_id, item_id, name, description)
+                VALUES (@id, @item, @name, @desc);
+                """, cn, tx))
+            {
+                cmd.Parameters.AddWithValue("@id", serialId);
+                cmd.Parameters.AddWithValue("@item", request.ItemId);
+                cmd.Parameters.AddWithValue("@name", request.Name);
+                cmd.Parameters.AddWithValue("@desc", (object?)request.Description ?? DBNull.Value);
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+
+            await tx.CommitAsync(ct);
+
+            return (await FindSerialAsync(serialId, ct))!;
+        }
+        catch (SqlException ex) when (IsConstraintViolation(ex))
+        {
+            await tx.RollbackAsync(ct);
+            throw Translate(ex);
+        }
+    }
+
+    public async Task<RegSerialDetail?> UpdateSerialAsync(
+        int serialId, UpdateSerialRequest request, CancellationToken ct)
+    {
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand("""
+            UPDATE dbo.item_serial_nos
+            SET name = @name, description = @desc
+            WHERE serial_id = @id;
+            """, cn);
+        cmd.Parameters.AddWithValue("@id", serialId);
+        cmd.Parameters.AddWithValue("@name", request.Name);
+        cmd.Parameters.AddWithValue("@desc", (object?)request.Description ?? DBNull.Value);
+
+        // The registry row is untouched. Renaming a site does not make it a
+        // different site, so the federation GUID has to survive the edit.
+        if (await cmd.ExecuteNonQueryAsync(ct) == 0) return null;
+
+        return await FindSerialAsync(serialId, ct);
+    }
+
+    public async Task<bool> DeleteSerialAsync(int serialId, CancellationToken ct)
+    {
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand(
+            "DELETE FROM dbo.item_serial_nos WHERE serial_id = @id;", cn);
+        cmd.Parameters.AddWithValue("@id", serialId);
+
+        try
+        {
+            return await cmd.ExecuteNonQueryAsync(ct) > 0;
+        }
+        catch (SqlException ex) when (IsConstraintViolation(ex))
+        {
+            // A scope pointing at this serial as its context object will hold it
+            // here -- the composite FK is what makes that link real.
+            throw Translate(ex);
+        }
+    }
+
     // ---- Health -----------------------------------------------------------
 
     public async Task<RegistryHealth> GetHealthAsync(CancellationToken ct)
@@ -549,6 +800,9 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
                       + (SELECT COUNT(*) FROM dbo.scopes d
                          WHERE NOT EXISTS (SELECT 1 FROM dbo.objects o
                                            WHERE o.object_id = d.scope_id AND o.object_type = 227))
+                      + (SELECT COUNT(*) FROM dbo.item_serial_nos d
+                         WHERE NOT EXISTS (SELECT 1 FROM dbo.objects o
+                                           WHERE o.object_id = d.serial_id AND o.object_type = 18))
                 ),
                 (SELECT COUNT(*) FROM sys.foreign_keys
                  WHERE is_disabled = 1 OR is_not_trusted = 1);

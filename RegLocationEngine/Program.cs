@@ -115,4 +115,17 @@ builder.Services.AddSingleton<IRegLocationEngineStateStore, BlobRegLocationEngin
 builder.Services.AddSingleton<RegLocationSegmentsBuilder>();
 builder.Services.AddSingleton<RegLocationApprovalService>();
 
+builder.Services.AddSingleton<IncomingSegmentMapper>();
+
+// Singleton because it holds the ISBM subscription session between polls. A
+// scoped or transient ingestor would open a new session on every timer tick,
+// and the broker's record of what this consumer has already read would be
+// discarded along with it.
+builder.Services.AddSingleton<SegmentIngestionService>();
+
+builder.Services.AddSingleton<IncomingSiteMapper>();
+
+// Singleton for the same session-holding reason as the segment ingestor above.
+builder.Services.AddSingleton<SiteIngestionService>();
+
 builder.Build().Run();

@@ -26,6 +26,31 @@ builder.Services.AddSandboxCore(builder.Configuration, builder.Environment, cred
 // deterministic.
 builder.Services.AddSandboxMessagePumps();
 
+// --- ENG Functions apps ----------------------------------------------------
+//
+// The provider and engine that carry the SyncSites bootstrap. Reached over HTTP
+// rather than by project reference: they are separate Functions hosts that
+// emulate a customer system and its integration engine, and the sandbox must
+// reach them the way anything else would.
+//
+// The key is set once here rather than per call. Both hosts are ours and share
+// a key in the sandbox; a deployment that separates them would need a client
+// each, which is a larger change than adding a second header.
+builder.Services.AddHttpClient<EngEngineClient>((sp, http) =>
+{
+    var configuration = sp.GetRequiredService<IConfiguration>();
+    var key = configuration["Sandbox:EngFunctionsKey"];
+
+    if (!string.IsNullOrWhiteSpace(key))
+    {
+        http.DefaultRequestHeaders.Add("x-functions-key", key);
+    }
+
+    // Longer than a UI click would suggest, because the engine's leg of this
+    // opens an ISBM session and publishes before it answers.
+    http.Timeout = TimeSpan.FromSeconds(60);
+});
+
 // --- Telemetry -------------------------------------------------------------
 builder.Services.AddApplicationInsightsTelemetry();
 

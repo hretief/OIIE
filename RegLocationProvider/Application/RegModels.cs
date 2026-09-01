@@ -55,12 +55,22 @@ public sealed record RegUnit(int UnitId);
 /// <summary>A namespace.</summary>
 public sealed record RegNamespace(int NamespaceId);
 
-/// <summary>A physical item.</summary>
+/// <summary>
+/// A physical item: a kind of thing, not one of them.
+///
+/// Code, Description and ItemType are nullable because rows created before the
+/// registry recorded them have no values to back-fill. SyncSites files a site
+/// type here -- 'Highway' -- so a type with no code would be an integer nothing
+/// can render.
+/// </summary>
 public sealed record RegItem(
     int ItemId,
     int NamespaceId,
     int UnitId,
-    int TrnId);
+    int TrnId,
+    string? Code = null,
+    string? Description = null,
+    string? ItemType = null);
 
 /// <summary>
 /// A tag: what an operator reads off a plate in the field, and what the rest of
@@ -103,3 +113,29 @@ public static class RegTagState
 /// scope. The two are always written as a pair, so they are read as one.
 /// </summary>
 public sealed record RegTagDetail(RegTag Tag, RegObject Object);
+
+/// <summary>
+/// A serialised item: one particular instance of the kind of thing an item
+/// describes. The item says 'Highway'; this says 'US Route 202'.
+///
+/// EIS calls the table item_serial_nos and the key serial_id, and those names
+/// are kept so the EIS material can be read against this schema without
+/// translation.
+/// </summary>
+public sealed record RegSerial(
+    int SerialId,
+    int ItemId,
+    string Name,
+    string? Description);
+
+/// <summary>
+/// A serial together with its registry row, read as a pair for the same reason
+/// <see cref="RegTagDetail"/> is.
+///
+/// The GUID on the registry row is what makes a serial findable from outside:
+/// SyncSites gives the site instance the iTwin's federation ID, and the same
+/// GUID also appears on the Scope. They are different object types, so both can
+/// hold it -- but it does mean a caller searching by GUID has to say which of
+/// the two it wants.
+/// </summary>
+public sealed record RegSerialDetail(RegSerial Serial, RegObject Object);

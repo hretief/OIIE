@@ -94,5 +94,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<IEngEngineStateStore, BlobEngEngineStateStore>();
 builder.Services.AddSingleton<EngSegmentsBuilder>();
 builder.Services.AddSingleton<EngPublicationService>();
+builder.Services.AddSingleton<EngSitesBuilder>();
+builder.Services.AddSingleton<EngSitePublicationService>();
 
 builder.Build().Run();

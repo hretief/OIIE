@@ -38,6 +38,27 @@ public interface IEngDesignStore
 
     Task<IReadOnlyList<EngITwin>> GetITwinsAsync(CancellationToken ct);
 
+    Task<EngITwin?> FindITwinAsync(Guid iTwinId, CancellationToken ct);
+
+    /// <summary>
+    /// Records an iTwin, or updates the one already stored under this id.
+    ///
+    /// Idempotent because the trigger it serves is not: an iTwinCreated event
+    /// can be redelivered, and the sandbox UI can be asked to add a twin that
+    /// is already present. Neither should produce a second project.
+    /// </summary>
+    Task<EngITwin> UpsertITwinAsync(UpsertITwinRequest request, CancellationToken ct);
+
+    /// <summary>
+    /// The stable UUID for a site type, minted on first sight.
+    ///
+    /// Site.Type.UUID must be the same for every iTwin of a given type, or
+    /// REG-LOCATION receives two site types nothing can tell apart. The platform
+    /// supplies only the type string, so the identifier is ENG's to invent and
+    /// then to remember.
+    /// </summary>
+    Task<Guid> GetOrCreateITwinTypeUuidAsync(string typeName, CancellationToken ct);
+
     Task<IReadOnlyList<EngIModel>> GetIModelsAsync(Guid? iTwinId, CancellationToken ct);
 
     Task<EngIModel?> FindIModelAsync(Guid iModelId, CancellationToken ct);
@@ -145,12 +166,38 @@ public interface IEngDesignStore
 
 /// <summary>
 /// The project or asset an iModel belongs to.
+///
+/// Everything from DisplayName onward is what the iTwin platform returns from
+/// GET /iTwins/{id} rather than anything ENG derives. All nullable, because a
+/// twin seeded before the sandbox called the platform has none of it.
 /// </summary>
 public sealed record EngITwin(
     Guid ITwinId,
     string Code,
     string? Description,
-    DateTime CreatedUtc);
+    DateTime CreatedUtc,
+    string? DisplayName = null,
+    string? Number = null,
+    string? TwinClass = null,
+    string? SubClass = null,
+    string? TwinType = null);
+
+/// <summary>
+/// Registers an iTwin the sandbox has been told about, or refreshes one it
+/// already knows.
+///
+/// Keyed on ITwinId rather than Code, because the id is the platform's own
+/// federation identifier and survives a project being renamed.
+/// </summary>
+public sealed record UpsertITwinRequest(
+    Guid ITwinId,
+    string Code,
+    string? Description = null,
+    string? DisplayName = null,
+    string? Number = null,
+    string? TwinClass = null,
+    string? SubClass = null,
+    string? TwinType = null);
 
 /// <summary>
 /// A model. CodeValue is unique within one of these, which is what makes a code

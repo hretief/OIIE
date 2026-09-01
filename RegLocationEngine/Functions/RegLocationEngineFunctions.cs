@@ -12,6 +12,8 @@ namespace RegLocationEngine.Functions;
 
 public sealed class RegLocationEngineFunctions(
     RegLocationApprovalService approvals,
+    SegmentIngestionService ingestion,
+    SiteIngestionService siteIngestion,
     IRegLocationEngineStateStore stateStore,
     IOptions<RegLocationEngineOptions> options,
     ILogger<RegLocationEngineFunctions> logger)
@@ -112,6 +114,74 @@ public sealed class RegLocationEngineFunctions(
         => new OkObjectResult(await approvals.SweepAsync(ct));
 
     /// <summary>
+    /// Reads proposals published by ENG off the inbound channel.
+    ///
+    /// Gated by its own IngestEnabled rather than by Enabled, because the two
+    /// legs fail independently: receiving proposals is useful long before there
+    /// is a CIR to register approvals in, and a broker problem on one channel
+    /// should not silence the other.
+    ///
+    /// Flat setting name for the schedule, for the same WebJobs binding reason as
+    /// the sweep above.
+    /// </summary>
+    [Function("RegLocationEngineIngest")]
+    public async Task RegLocationEngineIngest(
+        [TimerTrigger("%RegLocationEngineIngestSchedule%")] TimerInfo timer,
+        CancellationToken ct)
+    {
+        if (!_options.IngestEnabled) return;
+
+        var report = await ingestion.DrainAsync(ct);
+
+        if (report.Failed > 0)
+        {
+            logger.LogError(
+                "Inbound drain left {Failed} message(s) on the channel after {Read} read.",
+                report.Failed, report.MessagesRead);
+        }
+    }
+
+    /// <summary>Drains the inbound channel on demand, without waiting for the timer.</summary>
+    [Function("RegLocationEngineIngestNow")]
+    public async Task<IActionResult> RegLocationEngineIngestNow(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "engine/ingest")] HttpRequest req,
+        CancellationToken ct)
+        => new OkObjectResult(await ingestion.DrainAsync(ct));
+
+    /// <summary>
+    /// Reads sites published by ENG off the enterprise sites channel.
+    ///
+    /// Shares a schedule with the segment ingest rather than having its own, but
+    /// deliberately runs first within the tick: a segment can only land in a
+    /// scope that a site created, so draining the sites channel first lets a
+    /// site and the segments that depend on it be handled in the same pass
+    /// instead of the segments having to wait for the next one.
+    /// </summary>
+    [Function("RegLocationEngineIngestSites")]
+    public async Task RegLocationEngineIngestSites(
+        [TimerTrigger("%RegLocationEngineSitesIngestSchedule%")] TimerInfo timer,
+        CancellationToken ct)
+    {
+        if (!_options.SitesIngestEnabled) return;
+
+        var report = await siteIngestion.DrainAsync(ct);
+
+        if (report.Failed > 0)
+        {
+            logger.LogError(
+                "Site drain left {Failed} message(s) on the channel after {Read} read.",
+                report.Failed, report.MessagesRead);
+        }
+    }
+
+    /// <summary>Drains the sites channel on demand, without waiting for the timer.</summary>
+    [Function("RegLocationEngineIngestSitesNow")]
+    public async Task<IActionResult> RegLocationEngineIngestSitesNow(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "engine/ingest-sites")] HttpRequest req,
+        CancellationToken ct)
+        => new OkObjectResult(await siteIngestion.DrainAsync(ct));
+
+    /// <summary>
     /// Configuration and progress, without exposing any key.
     ///
     /// The published set is reported as a count rather than in full: it grows
@@ -146,7 +216,23 @@ public sealed class RegLocationEngineFunctions(
             topics = _options.Topics,
             iModelId = _options.IModelId,
             maxTagsPerSweep = _options.MaxTagsPerSweep,
-            publishedTags = state.PublishedTags.Count
+            publishedTags = state.PublishedTags.Count,
+
+            // The inbound leg reported beside the outbound one, and the channel
+            // spelled out: the commonest misconfiguration is an engine
+            // subscribed to its own publication channel, which produces silence
+            // rather than an error and is invisible unless the two URIs can be
+            // read side by side.
+            ingestEnabled = _options.IngestEnabled,
+            inboundDomain = _options.InboundDomain,
+            inboundChannelUri = _options.InboundChannelUriFor(_options.IModelId),
+            inboundTopics = _options.InboundTopics,
+            inboundItemId = _options.InboundItemId,
+            inboundScopeId = _options.InboundScopeId,
+            inboundRevision = _options.InboundRevision,
+            inboundClassMap = _options.InboundClassMap,
+            inboundFallbackClassId = _options.InboundFallbackClassId,
+            maxMessagesPerPoll = _options.MaxMessagesPerPoll
         });
     }
 }
