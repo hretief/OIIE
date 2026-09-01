@@ -219,20 +219,15 @@ public sealed class CmsSegmentsHandler(
     }
 
     /// <summary>
-    /// Finds the provisioned CMS site a segment's <c>RegistrationSite</c> names, or
-    /// null when no such site has been provisioned.
+    /// Finds the CMS site a segment's <c>RegistrationSite</c> names, or null when no
+    /// such site has been received.
     ///
-    /// Nothing is created here. A site is established by provisioning — in production
-    /// by BIC publishing SyncSites — so a segment naming an unknown plant is a segment
-    /// about somewhere CMS does not operate. Creating the site on demand would let a
-    /// publisher silently extend the estate by mentioning it, and the resulting row
-    /// would be unrelated in the registry and invisible to every scoped read anyway.
-    ///
-    /// Matched on the publisher's UUID first and the short name second. The UUID is
-    /// tried first because it is an identity rather than a label, but a provisioned
-    /// site has no publisher-supplied UUID to match — its own was derived at seed time
-    /// — so the code is what actually connects a segment to a plant. Both are lookups;
-    /// neither is a foreign key stored on the row.
+    /// Nothing is created here. A site is established by ENG publishing SyncSites and
+    /// CmsEngine recording it, so a segment naming an unknown plant is a segment about
+    /// somewhere CMS does not operate -- or one that arrived before the site did.
+    /// Creating the site on demand would let a publisher silently extend the estate by
+    /// mentioning it, and the resulting row would be unrelated in the registry and
+    /// invisible to every scoped read anyway.
     /// </summary>
     /// <summary>
     /// The CMS site a segment belongs to, resolved through the registry.

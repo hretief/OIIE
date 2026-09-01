@@ -1,0 +1,30 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+
+    "//mms": "MmsProvider is reached over HTTP as a peer system. Leaving the base URL empty disables the ingest leg rather than failing it, so the engine can run before MMS is up.",
+    "MmsEngine__MmsBaseUrl": "http://localhost:7074/api",
+    "MmsEngine__MmsApiKey": "",
+
+    "MmsEngine__Enterprise": "acme",
+    "MmsEngine__SourceId": "MMS",
+    "MmsEngine__LogicalId": "MMS",
+
+    "//sites": "The only leg. Its channel is enterprise-level and not derived from an iTwin id, because SyncSites is the message that brings an iTwin context into being. This is the same channel CMS and REG-LOCATION read; each subscriber holds its own session.",
+    "MmsEngine__SitesIngestEnabled": "true",
+    "MmsEngine__SitesTopics__0": "oiie/ccom:SyncSites",
+    "MmsEngine__MaxMessagesPerPoll": "25",
+
+    "//cir": "Registering the site's identity so other systems can resolve MMS's key space. Empty CirBaseUrl leaves the site written but unregistered.",
+    "MmsEngine__RegisterInCir": "true",
+    "MmsEngine__CirBaseUrl": "http://localhost:7072/api",
+    "MmsEngine__CirApiKey": "",
+
+    "Isbm__BaseUrl": "https://isbm-func-44p2f3n6dv7p4.azurewebsites.net/api",
+    "Isbm__ApiKey": "",
+
+    "MmsEngineSitesIngestSchedule": "0 */2 * * * *"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+
+    "//cms": "CmsProvider is reached over HTTP as a peer system. Leaving the base URL empty disables the ingest leg rather than failing it, so the engine can run before CMS is up.",
+    "CmsEngine__CmsBaseUrl": "http://localhost:7075/api",
+    "CmsEngine__CmsApiKey": "",
+
+    "CmsEngine__Enterprise": "acme",
+    "CmsEngine__SourceId": "CMS",
+    "CmsEngine__LogicalId": "CMS",
+
+    "//sites": "The only leg. Its channel is enterprise-level and not derived from an iTwin id, because SyncSites is the message that brings an iTwin context into being. This is the same channel REG-LOCATION reads; each subscriber holds its own session.",
+    "CmsEngine__SitesIngestEnabled": "true",
+    "CmsEngine__SitesTopics__0": "oiie/ccom:SyncSites",
+    "CmsEngine__MaxMessagesPerPoll": "25",
+
+    "//cir": "Registering the site's identity so other systems can resolve CMS's key space. Empty CirBaseUrl leaves the site written but unregistered.",
+    "CmsEngine__RegisterInCir": "true",
+    "CmsEngine__CirBaseUrl": "http://localhost:7072/api",
+    "CmsEngine__CirApiKey": "",
+
+    "Isbm__BaseUrl": "https://isbm-func-44p2f3n6dv7p4.azurewebsites.net/api",
+    "Isbm__ApiKey": "",
+
+    "CmsEngineSitesIngestSchedule": "0 */2 * * * *"
+  }
+}

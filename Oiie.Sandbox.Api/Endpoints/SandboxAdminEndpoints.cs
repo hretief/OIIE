@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Oiie.Ccom;
 using Oiie.Ccom.Oagis;
 using Oiie.Isbm.Client;
+using Oiie.Sandbox.Api.Services;
 using SimHost.Application;
 using SimHost.Application.Bods;
 using SimHost.Application.Cir;
@@ -201,31 +202,15 @@ app.MapPost("/admin/reset", async (
         // broken rather than empty.
         var fixtures = await loader.LoadAsync(participant, fixtureRoot, ct);
 
-        // CMS's owner domain is reference data in the same sense, but it is not a
-        // classification fixture: it is the local key space the registry resolves
-        // against, so it is seeded directly rather than through classes.yaml.
+        // CMS and MMS are no longer seeded with owners or sites. Their site data
+        // arrives over the bus: ENG publishes SyncSites, and CmsEngine/MmsEngine
+        // consume it and call each provider's REST API. Laying the same rows down
+        // here made a greenfield look like the integration had already run.
         //
-        // MMS is seeded the same way but with more of it: its lookup tables and a
-        // sample of LIGHT_SYSTEM_INVENTORY are the customer's real rows, so they are
-        // reproduced rather than generated.
+        // Reported as zero rather than dropped from the response, so the shape of
+        // the day-zero result stays stable for anything reading it.
         var owners = 0;
         var sites = 0;
-        if (participant.ParticipantId == CmsService.ParticipantId)
-        {
-            await using var ownerDb = contextFactory.Create(participant.ParticipantId);
-            owners = await ContextOwnerSeeder.SeedCmsAsync(ownerDb, ct);
-
-            // Sites are provisioned here rather than created by an arriving segment.
-            // In production BIC publishes SyncSites and CMS provisions from that; the
-            // sandbox does not implement that workflow yet, so the same rows are laid
-            // down directly. Either way a plant exists before assets are placed in it.
-            sites = await ContextOwnerSeeder.SeedCmsSitesAsync(ownerDb, ct);
-        }
-        else if (participant.ParticipantId == MmsService.ParticipantId)
-        {
-            await using var mmsDb = contextFactory.Create(participant.ParticipantId);
-            owners = await ContextOwnerSeeder.SeedMmsAsync(mmsDb, ct);
-        }
 
         steps.Add(new
         {
@@ -293,6 +278,7 @@ app.MapPost("/admin/reset/day-zero", async (
     IParticipantDbContextFactory contextFactory,
     ClassFixtureLoader loader,
     ClassificationRefresher refresher,
+    EngEngineClient engine,
     IConfiguration configuration,
     IWebHostEnvironment environment,
     ILoggerFactory loggerFactory,
@@ -330,23 +316,27 @@ app.MapPost("/admin/reset/day-zero", async (
         }
     }
 
-    // 2. Delete and recreate every channel this deployment touches, ours and the
-    // registry's. Deleting is what clears the queue: there is no drain-all operation.
-    var owned = registry.All
+    // 2. Delete every channel the provider holds, then recreate the ones the
+    // registry expects. Deleting is what clears the queue: there is no drain-all
+    // operation.
+    //
+    // The delete list comes from the provider itself rather than from the
+    // registry, because a channel created by an earlier demo — or by a workflow
+    // that has since been removed — is exactly the clutter day zero exists to
+    // remove, and the registry has no record of it to delete. The recreate list
+    // stays registry-driven: a channel nobody is configured to use should not be
+    // conjured back, and only the registry knows the intended publication or
+    // request type.
+    var expected = registry.All
         .SelectMany(p => p.Config.Channels.Select(c => new
         {
             Uri = c.ChannelUri,
             IsRequest = c.Role is ChannelRole.RequestProvider or ChannelRole.RequestConsumer,
             Ours = true
         }))
-        .ToList();
-
-    var foreign = registry.All
-        .Where(p => !string.IsNullOrWhiteSpace(p.Config.Cir.ChannelUri))
-        .Select(p => new { Uri = p.Config.Cir.ChannelUri, IsRequest = true, Ours = false })
-        .ToList();
-
-    var all = owned.Concat(foreign)
+        .Concat(registry.All
+            .Where(p => !string.IsNullOrWhiteSpace(p.Config.Cir.ChannelUri))
+            .Select(p => new { Uri = p.Config.Cir.ChannelUri, IsRequest = true, Ours = false }))
         .GroupBy(c => c.Uri, StringComparer.Ordinal)
         .Select(g => new
         {
@@ -356,15 +346,44 @@ app.MapPost("/admin/reset/day-zero", async (
         })
         .ToList();
 
-    var rebuilt = new List<object>();
+    var expectedUris = expected
+        .Select(c => c.Uri)
+        .ToHashSet(StringComparer.Ordinal);
 
-    foreach (var channel in all)
+    // Everything the provider currently reports. If this call fails the wipe
+    // cannot be honest about what it removed, so it is not swallowed.
+    var discovered = new List<string>();
+    string? discoveryError = null;
+
+    try
     {
-        var type = channel.IsRequest ? IsbmChannelType.Request : IsbmChannelType.Publication;
+        discovered = (await client.GetChannelsAsync(ct))
+            .Select(c => c.ChannelUri)
+            .Where(u => !string.IsNullOrWhiteSpace(u))
+            .ToList();
+    }
+    catch (Exception ex)
+    {
+        discoveryError = ex.Message;
+        log.LogWarning(ex,
+            "Could not enumerate channels; only registry-known channels will be deleted.");
+    }
+
+    var toDelete = discovered
+        .Concat(expectedUris)
+        .ToHashSet(StringComparer.Ordinal);
+
+    var rebuilt = new List<object>();
+    var removed = new List<object>();
+
+    foreach (var uri in toDelete)
+    {
+        var match = expected.FirstOrDefault(c => string.Equals(c.Uri, uri, StringComparison.Ordinal));
+        var type = match is { IsRequest: true } ? IsbmChannelType.Request : IsbmChannelType.Publication;
 
         try
         {
-            await client.DeleteChannelAsync(channel.Uri, ct);
+            await client.DeleteChannelAsync(uri, ct);
 
             // Wait for the delete to become visible before recreating.
             //
@@ -377,16 +396,16 @@ app.MapPost("/admin/reset/day-zero", async (
             for (var i = 0; i < 10 && !gone; i++)
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(300 * (i + 1)), ct);
-                gone = await client.GetChannelAsync(channel.Uri, ct) is null;
+                gone = await client.GetChannelAsync(uri, ct) is null;
             }
 
             if (!gone)
             {
                 rebuilt.Add(new
                 {
-                    channel.Uri,
+                    Uri = uri,
                     type = type.ToString(),
-                    ours = channel.Ours,
+                    ours = match?.Ours ?? false,
                     ok = false,
                     error = "Still present after delete. Not recreated — the queue and any " +
                             "sessions on it were left as they were."
@@ -394,12 +413,25 @@ app.MapPost("/admin/reset/day-zero", async (
                 continue;
             }
 
-            await client.CreateChannelAsync(channel.Uri, type, "OIIE Sandbox day zero", null, ct);
-            rebuilt.Add(new { channel.Uri, type = type.ToString(), ours = channel.Ours, ok = true });
+            // Not in the registry: deleted deliberately and left gone.
+            if (match is null)
+            {
+                removed.Add(new { Uri = uri, ok = true });
+                continue;
+            }
+
+            await client.CreateChannelAsync(uri, type, "OIIE Sandbox day zero", null, ct);
+            rebuilt.Add(new { Uri = uri, type = type.ToString(), ours = match.Ours, ok = true });
         }
         catch (Exception ex)
         {
-            rebuilt.Add(new { channel.Uri, type = type.ToString(), ours = channel.Ours, ok = false, error = ex.Message });
+            if (match is null)
+            {
+                removed.Add(new { Uri = uri, ok = false, error = ex.Message });
+                continue;
+            }
+
+            rebuilt.Add(new { Uri = uri, type = type.ToString(), ours = match.Ours, ok = false, error = ex.Message });
         }
     }
 
@@ -416,37 +448,15 @@ app.MapPost("/admin/reset/day-zero", async (
 
         var fixtures = await loader.LoadAsync(participant, fixtureRoot, ct);
 
-        // Reference data that is not a classification fixture: the local key spaces
-        // the registry resolves against. Day zero without these leaves CMS and MMS
-        // with no owner domain at all, so a later relate has nothing to relate.
+        // Nothing beyond the classification fixtures is laid down here any more.
+        //
+        // CMS and MMS owner domains used to be seeded as "structural" reference
+        // data, but that reasoning does not survive contact with the site flow:
+        // the districts those rows describe are the same districts SyncSites
+        // carries, and pre-creating them meant a greenfield already agreed with
+        // a publication it had never received. Sites, owners and twins now all
+        // arrive the same way -- over the bus, or not at all.
         var owners = 0;
-        var sites = 0;
-        var twins = 0;
-
-        if (participant.ParticipantId == CmsService.ParticipantId)
-        {
-            await using var cmsDb = contextFactory.Create(participant.ParticipantId);
-            owners = await ContextOwnerSeeder.SeedCmsAsync(cmsDb, ct);
-
-            // Sites are provisioned here rather than created by an arriving segment.
-            // In production BIC publishes SyncSites and CMS provisions from that; the
-            // sandbox does not implement that workflow yet, so the same rows are laid
-            // down directly. Either way a plant exists before assets are placed in it.
-            sites = await ContextOwnerSeeder.SeedCmsSitesAsync(cmsDb, ct);
-        }
-        else if (participant.ParticipantId == MmsService.ParticipantId)
-        {
-            await using var mmsDb = contextFactory.Create(participant.ParticipantId);
-            owners = await ContextOwnerSeeder.SeedMmsAsync(mmsDb, ct);
-        }
-        else if (participant.ParticipantId == EngService.ParticipantId)
-        {
-            // The twins carry GUIDs iTwin actually issued, so they are seeded rather
-            // than left to EnsureTwinAsync, which would mint identifiers that resolve
-            // nowhere. A tag cannot be scoped to a twin that does not exist yet.
-            await using var engDb = contextFactory.Create(participant.ParticipantId);
-            twins = await ContextOwnerSeeder.SeedEngTwinsAsync(engDb, ct);
-        }
 
         participants.Add(new
         {
@@ -454,36 +464,74 @@ app.MapPost("/admin/reset/day-zero", async (
             schema = participant.Schema,
             classes = fixtures.Classes,
             propertyDefinitions = fixtures.Definitions,
-            contextOwners = owners,
-            sites,
-            twins
+            contextOwners = owners
         });
     }
 
     await refresher.RefreshAllAsync(ct);
 
+    // 4. The external systems: ENG's database, the engine's watermark, and the
+    //    REG-LOCATION, MMS and CMS databases.
+    //
+    // Separate from the participant schemas above because none of these are
+    // sandbox participants: each is a Functions host with its own database,
+    // reached over HTTP like anything else would reach it. Without this an iTwin
+    // added through the UI outlives every reset, and the next demo starts with
+    // the previous one's twins, locations and assets already present -- which is
+    // exactly the state a greenfield walkthrough is meant to rule out.
+    var providerProblems = await engine.ResetAsync(ct);
+
     var foreignRebuilt = rebuilt
         .Where(r => r.GetType().GetProperty("ours")?.GetValue(r) is false)
         .ToList();
 
-    log.LogInformation("Day zero complete: {Channels} channel(s) rebuilt", rebuilt.Count);
+    log.LogInformation(
+        "Day zero complete: {Channels} channel(s) rebuilt, {Removed} removed, {Providers} provider problem(s)",
+        rebuilt.Count, removed.Count, providerProblems.Count);
+
+    // Warnings are assembled rather than listed literally: the wipe now removes
+    // channels the registry never knew about, and which sessions that breaks
+    // depends on what was actually found.
+    var actionRequired = new List<string>();
+
+    if (foreignRebuilt.Count > 0)
+    {
+        actionRequired.Add(
+            "The CIR provider's sessions were destroyed with its channel. Call " +
+            "POST {cirBaseUrl}/api/isbm/reset to make it re-open, or it will keep polling " +
+            "a session the broker no longer knows about.");
+
+        actionRequired.Add(
+            "The CIR registry's own data is NOT cleared by this call — entries registered " +
+            "earlier still carry their CIRIDs. Call POST /admin/cir/registry/delete for a " +
+            "true day zero, then re-register.");
+    }
+
+    if (removed.Count > 0)
+    {
+        actionRequired.Add(
+            $"{removed.Count} channel(s) not known to the registry were deleted and NOT " +
+            "recreated. Any system still holding a session on one will keep polling an id " +
+            "the broker has forgotten; restart it or have it re-open.");
+    }
+
+    if (discoveryError is not null)
+    {
+        actionRequired.Add(
+            $"Channels could not be enumerated ({discoveryError}), so only registry-known " +
+            "channels were deleted. Channels left by earlier demos may still be present.");
+    }
+
+    actionRequired.AddRange(providerProblems);
 
     return Results.Ok(new
     {
         sessionsClosed = closed,
         channels = rebuilt,
+        channelsRemoved = removed,
         participants,
-        actionRequired = foreignRebuilt.Count == 0
-            ? []
-            : new[]
-            {
-                "The CIR provider's sessions were destroyed with its channel. Call " +
-                "POST {cirBaseUrl}/api/isbm/reset to make it re-open, or it will keep polling " +
-                "a session the broker no longer knows about.",
-                "The CIR registry's own data is NOT cleared by this call — entries registered " +
-                "earlier still carry their CIRIDs. Call POST /admin/cir/registry/delete for a " +
-                "true day zero, then re-register."
-            }
+        providersReset = providerProblems.Count == 0,
+        actionRequired
     });
 });
 
@@ -543,89 +591,10 @@ app.MapGet("/health/sql", async (
 // the first publish rather than assumed: the Sandbox resets constantly, and a
 // simulator that needs manual channel setup between runs is not resettable.
 app.MapPost("/admin/isbm/channels/ensure", async (
-    ParticipantRegistry registry,
-    IIsbmClientAccessor clients,
+    IsbmChannelProvisioner provisioner,
     CancellationToken ct) =>
 {
-    var results = new List<object>();
-
-    foreach (var participant in registry.All)
-    {
-        var client = clients.For(participant.ParticipantId);
-
-        // Several participants may bind the same channel in different roles, and a
-        // channel is created once regardless of how many bind it.
-        var channels = participant.Config.Channels
-            .GroupBy(c => c.ChannelUri, StringComparer.Ordinal)
-            .ToList();
-
-        // The CIR channel is not a peer binding, so it is not in Channels — but it
-        // still has to exist before anything can register.
-        var cirChannel = participant.Config.Cir.ChannelUri;
-
-        foreach (var group in channels)
-        {
-            var isRequestChannel = group.Any(c =>
-                c.Role is ChannelRole.RequestProvider or ChannelRole.RequestConsumer);
-
-            var type = isRequestChannel ? IsbmChannelType.Request : IsbmChannelType.Publication;
-
-            try
-            {
-                await client.CreateChannelAsync(
-                    group.Key, type, $"OIIE Sandbox: {participant.ParticipantId}", null, ct);
-
-                results.Add(new
-                {
-                    participant.ParticipantId,
-                    channelUri = group.Key,
-                    channelType = type.ToString(),
-                    created = true
-                });
-            }
-            catch (Exception ex)
-            {
-                results.Add(new
-                {
-                    participant.ParticipantId,
-                    channelUri = group.Key,
-                    channelType = type.ToString(),
-                    created = false,
-                    error = ex.Message
-                });
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(cirChannel)
-            && !channels.Any(g => string.Equals(g.Key, cirChannel, StringComparison.Ordinal)))
-        {
-            try
-            {
-                await client.CreateChannelAsync(
-                    cirChannel, IsbmChannelType.Request, "OIIE Sandbox: ws-CIR", null, ct);
-
-                results.Add(new
-                {
-                    participant.ParticipantId,
-                    channelUri = cirChannel,
-                    channelType = nameof(IsbmChannelType.Request),
-                    created = true
-                });
-            }
-            catch (Exception ex)
-            {
-                results.Add(new
-                {
-                    participant.ParticipantId,
-                    channelUri = cirChannel,
-                    channelType = nameof(IsbmChannelType.Request),
-                    created = false,
-                    error = ex.Message
-                });
-            }
-        }
-    }
-
+    var results = await provisioner.EnsureAllAsync(ct);
     return Results.Ok(results);
 });
 
@@ -1784,8 +1753,9 @@ app.MapGet("/admin/cms/customer-sites", async (
             {
                 records = Array.Empty<object>(),
                 unresolvedContext = twin,
-                detail = "No CMS site is related to that twin. Provision the site, " +
-                         "then relate it with POST /admin/cms/sites/relate."
+                detail = "No CMS site is related to that twin. Publish SyncSites so " +
+                         "CmsEngine records the site, then relate it with " +
+                         "POST /admin/cms/sites/relate."
             });
         }
 
@@ -2488,21 +2458,26 @@ app.MapPost("/admin/eng/twins", async (
 // Brings an iTwin that already exists on the platform into the sandbox.
 //
 // This is the UI's "add an existing iTwin" action, and it is the entry point to
-// the SyncSites workflow: the twin is recorded in ENG, then announced, and the
-// REG-LOCATION engine turns that announcement into the Scope, Item and Serial
-// that every later SyncSegments needs somewhere to land.
+// the SyncSites workflow: the twin is recorded in ENG, given its own publication
+// channel, then announced, and the REG-LOCATION engine turns that announcement
+// into the Scope, Item and Serial that every later SyncSegments needs somewhere
+// to land.
 //
 // Two stores are written because the sandbox has two ENG representations -- the
 // SimHost personality the screens read from, and the ENG provider the Functions
 // engines read from. Registering in only the first would show the twin in the
 // carousel while leaving the workflow unable to publish it.
 //
-// A failed announcement is reported, not thrown. The twin is genuinely
-// registered by then, and answering with an error would invite a retry that
-// looks like a duplicate rather than telling the operator the Functions host is
-// not running.
+// Neither a failed channel nor a failed announcement is thrown. The twin is
+// genuinely registered by then, and answering with an error would invite a retry
+// that looks like a duplicate rather than telling the operator which downstream
+// piece is not running.
 app.MapPost("/admin/eng/itwins/add", async (
-    EngService eng, EngEngineClient engine, AddITwinRequest request, CancellationToken ct) =>
+    EngService eng,
+    EngEngineClient engine,
+    IsbmChannelProvisioner channels,
+    AddITwinRequest request,
+    CancellationToken ct) =>
 {
     if (request.ITwinId == Guid.Empty)
     {
@@ -2518,13 +2493,22 @@ app.MapPost("/admin/eng/itwins/add", async (
     var twin = await eng.EnsureTwinAsync(
         request.ITwinId, code, name, request.Description, ct);
 
+    // Before the announcement, not after: SyncSegments for this twin will be
+    // published onto this channel, and a channel created only once something
+    // tries to publish is a channel that is missing exactly when it is first
+    // needed. Creating it here makes the twin publishable from the moment it
+    // exists rather than from the first failure.
+    var channel = await channels.EnsureForITwinAsync(twin.Id, twin.Name, ct);
+
     var detail = await engine.BootstrapAsync(request, ct);
 
     return Results.Ok(new AddITwinResult(
         twin.Id, twin.Code, twin.Name,
         Registered: true,
         Announced: detail is null,
-        Detail: detail));
+        Detail: detail,
+        ChannelUri: channel.ChannelUri,
+        ChannelError: channel.Created ? null : channel.Error));
 });
 
 static string? Blank(string? value) =>

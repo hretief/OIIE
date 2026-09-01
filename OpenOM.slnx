@@ -1,6 +1,8 @@
 <Solution>
   <Folder Name="/01-Apps/">
+    <Project Path="CmsEngine/CmsEngine.csproj" />
     <Project Path="CmsProvider/CmsProvider.csproj" />
+    <Project Path="MmsEngine/MmsEngine.csproj" />
     <Project Path="MmsProvider/MmsProvider.csproj" />
     <Project Path="EngEngine/EngEngine.csproj" />
     <Project Path="EngProvider/EngProvider.csproj" />
