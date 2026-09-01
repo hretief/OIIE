@@ -1,6 +1,7 @@
 using Azure.Identity;
 using Oiie.Sandbox.Api.Endpoints;
 using Oiie.Sandbox.Api.Middleware;
+using Oiie.Sandbox.Api.Services;
 using SimHost.Application;
 using SimHost.Application.Classification;
 using SimHost.Application.Participants;
@@ -50,6 +51,10 @@ builder.Services.AddHttpClient<EngEngineClient>((sp, http) =>
     // opens an ISBM session and publishes before it answers.
     http.Timeout = TimeSpan.FromSeconds(60);
 });
+
+// Channel provisioning is shared by the admin endpoint and the startup hook
+// below, so it is registered rather than written inline in either.
+builder.Services.AddScoped<IsbmChannelProvisioner>();
 
 // --- Telemetry -------------------------------------------------------------
 builder.Services.AddApplicationInsightsTelemetry();
@@ -202,6 +207,43 @@ using (var scope = app.Services.CreateScope())
     {
         app.Logger.LogWarning(ex,
             "Could not load classification at startup; run POST /admin/schema/seed.");
+    }
+
+    // Channels are provisioned here rather than assumed to exist.
+    //
+    // Without this, a deployment whose channels were never created fails at the
+    // first publish with a 404 naming the channel, and the outbox exhausts its
+    // retries and stops — while the UI has already reported the release as
+    // queued. Creating them is idempotent, so the cost of doing it on every
+    // start is a few calls; the cost of not doing it is a silent dead end.
+    if (SandboxCapabilities.IsIsbmConfigured(app.Services.GetRequiredService<ParticipantRegistry>()))
+    {
+        try
+        {
+            var ensured = await scope.ServiceProvider
+                .GetRequiredService<IsbmChannelProvisioner>().EnsureAllAsync();
+
+            var failed = ensured.Where(r => !r.Created).ToList();
+
+            foreach (var failure in failed)
+            {
+                app.Logger.LogWarning(
+                    "Could not ensure ISBM channel {ChannelUri} for {ParticipantId}: {Error}",
+                    failure.ChannelUri, failure.ParticipantId, failure.Error);
+            }
+
+            app.Logger.LogInformation(
+                "ISBM channels ensured: {Ok} ok, {Failed} failed.",
+                ensured.Count - failed.Count, failed.Count);
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal, like the blocks above: the sandbox is still usable for
+            // anything that does not publish, and /admin/isbm/channels/ensure can
+            // be run by hand once ISBM is reachable.
+            app.Logger.LogWarning(ex,
+                "Could not ensure ISBM channels at startup; run POST /admin/isbm/channels/ensure.");
+        }
     }
 }
 

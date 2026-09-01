@@ -39,7 +39,11 @@ public sealed record AddITwinResult(
     /// <summary>True when the SyncSites publication was triggered.</summary>
     bool Announced,
     /// <summary>Why the announcement did not happen, when it did not.</summary>
-    string? Detail = null);
+    string? Detail = null,
+    /// <summary>The twin's publication channel, once provisioned.</summary>
+    string? ChannelUri = null,
+    /// <summary>Why the channel could not be created, when it could not.</summary>
+    string? ChannelError = null);
 
 /// <summary>
 /// The sandbox's link to the ENG-side Functions apps.
@@ -63,12 +67,90 @@ public sealed class EngEngineClient(
     private readonly string? _engineBaseUrl =
         Trimmed(configuration["Sandbox:EngEngineBaseUrl"]);
 
+    private readonly string? _regLocationBaseUrl =
+        Trimmed(configuration["Sandbox:RegLocationProviderBaseUrl"]);
+
+    private readonly string? _mmsBaseUrl =
+        Trimmed(configuration["Sandbox:MmsProviderBaseUrl"]);
+
+    private readonly string? _cmsBaseUrl =
+        Trimmed(configuration["Sandbox:CmsProviderBaseUrl"]);
+
     /// <summary>Whether the bootstrap can run at all.</summary>
     public bool IsConfigured => _providerBaseUrl is not null && _engineBaseUrl is not null;
 
     /// <summary>
-    /// Records the twin with the ENG provider and asks the engine to publish it
-    /// as a SyncSites BOD.
+    /// Empties every emulated system the sandbox can reach: ENG's tables, the
+    /// engine's watermark, and the REG-LOCATION, MMS and CMS databases.
+    ///
+    /// ENG's two halves are both cleared, not either: the engine remembers
+    /// published versions by VersionGuid so that its memory survives ENG being
+    /// rebuilt, which after a reset means it would decline to republish anything
+    /// it recognised. Dropping ENG's rows without clearing that memory produces
+    /// an engine that publishes nothing and reports no error.
+    ///
+    /// The other three each own their database, so emptying them is a call to
+    /// the system that owns the data rather than a table drop from here. That
+    /// keeps the emulation honest -- the sandbox has no more access to a
+    /// customer system's schema than a real integrator would.
+    ///
+    /// An unconfigured base URL is a skip, not a failure. Running only part of
+    /// the stack is the normal case during front-end work, and reporting "MMS
+    /// was not reachable" for a host nobody started would bury the failures that
+    /// do matter.
+    ///
+    /// Returns the reasons rather than throwing. Day zero has already torn down
+    /// channels and participant schemas by the time this runs, and failing the
+    /// whole call because one Functions host is not running would leave the
+    /// caller unsure which half happened.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> ResetAsync(CancellationToken ct)
+    {
+        var problems = new List<string>();
+
+        var targets = new List<(string Label, string? Url)>
+        {
+            ("ENG provider", _providerBaseUrl is null ? null : $"{_providerBaseUrl}/eng/reset"),
+            ("ENG engine", _engineBaseUrl is null ? null : $"{_engineBaseUrl}/engine/reset"),
+            ("REG-LOCATION provider", _regLocationBaseUrl is null ? null : $"{_regLocationBaseUrl}/reglocation/reset"),
+            ("MMS provider", _mmsBaseUrl is null ? null : $"{_mmsBaseUrl}/mms/reset"),
+            ("CMS provider", _cmsBaseUrl is null ? null : $"{_cmsBaseUrl}/cms/reset"),
+        };
+
+        if (!IsConfigured)
+        {
+            problems.Add("Sandbox:EngProviderBaseUrl and Sandbox:EngEngineBaseUrl are not configured, " +
+                         "so ENG's own data was left as it was.");
+        }
+
+        foreach (var (label, url) in targets)
+        {
+            if (url is null)
+            {
+                continue;
+            }
+
+            try
+            {
+                var response = await http.PostAsync(url, null, ct);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    problems.Add($"{label} refused the reset ({(int)response.StatusCode}): " +
+                                 Excerpt(await response.Content.ReadAsStringAsync(ct)));
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                logger.LogWarning(ex, "Resetting {Label} failed.", label);
+                problems.Add($"Could not reach {label}: {ex.Message}");
+            }
+        }
+
+        return problems;
+    }
+
+
     ///
     /// Ordered, not concurrent: the engine deliberately publishes what the
     /// provider holds rather than trusting the event's copy of a twin's detail,

@@ -172,6 +172,41 @@ public sealed class EngEngineFunctions(
         [property: JsonPropertyName("eventType")] string? EventType);
 
     /// <summary>
+    /// Forgets the watermark and every published marker.
+    ///
+    /// Called by the Sandbox's day zero, after ENG's own tables are dropped. The
+    /// two have to happen together: the engine's published-marker set is keyed by
+    /// VersionGuid precisely so it survives ENG being rebuilt, so an ENG reset on
+    /// its own would leave the engine declining to republish work it believes it
+    /// has already sent.
+    ///
+    /// Not routed under admin/: the Functions host reserves that prefix, and a
+    /// function that claims it fails indexing and is silently disabled rather
+    /// than rejected at build time.
+    /// </summary>
+    [Function("EngEngineReset")]
+    public async Task<IActionResult> EngEngineReset(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "engine/reset")] HttpRequest req,
+        CancellationToken ct)
+    {
+        try
+        {
+            await stateStore.ClearAsync(ct);
+            logger.LogWarning("ENG engine state cleared: watermark and published markers forgotten.");
+
+            return new OkObjectResult(new { reset = true });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "ENG engine state reset failed.");
+            return new ObjectResult(new { reset = false, detail = ex.Message })
+            {
+                StatusCode = StatusCodes.Status500InternalServerError
+            };
+        }
+    }
+
+    /// <summary>
     /// Configuration and watermark, without exposing the ENG key.
     ///
     /// The published-marker set is reported as a count rather than in full: it
