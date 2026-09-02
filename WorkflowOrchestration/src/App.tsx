@@ -1235,7 +1235,7 @@ function matchesFilter(seg: api.Tag, filter: MaturityFilter): boolean {
  * instead of inventing one. This is the difference between driving the sandbox
  * and replaying a script through it.
  */
-function SegmentForm({ accent, dimBg, busy, error, editing, classes, onSubmit, onDismissError, onCancelEdit }: {
+function SegmentForm({ accent, dimBg, busy, error, editing, classes, iModels, iModelsLoading, iModelId, onIModelChange, onSubmit, onDismissError, onCancelEdit }: {
   accent: string
   dimBg: string
   busy: boolean
@@ -1244,6 +1244,11 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, onSubmit, o
   editing: api.Tag | null
   /** What ENG can bind. Chosen from rather than typed. */
   classes: api.ClassDefinition[]
+  /** The models of the active twin, cached by the workspace. */
+  iModels: api.EngIModel[]
+  iModelsLoading: boolean
+  iModelId: string | null
+  onIModelChange: (id: string | null) => void
   onSubmit: (segment: api.NewTag) => void
   onDismissError: () => void
   onCancelEdit: () => void
@@ -1278,7 +1283,13 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, onSubmit, o
     trimmedFederationId.length >= 32 &&
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmedFederationId)
 
-  const canSubmit = segmentNumber.trim().length > 0 && !federationIdMalformed && !busy
+  // Required when authoring: a segment belongs to the model it was drawn in, and
+  // there is no later point at which anyone can say which that was. Not required
+  // when editing, so segments authored before the field existed remain editable.
+  const needsIModel = !editing && !iModelId
+
+  const canSubmit =
+    segmentNumber.trim().length > 0 && !federationIdMalformed && !needsIModel && !busy
 
   async function suggest() {
     setSuggesting(true)
@@ -1314,6 +1325,9 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, onSubmit, o
       // Omitted when editing. The server ignores it on an existing segment, and
       // sending it anyway would imply the field is in play when it is not.
       federationId: editing ? undefined : trimmedFederationId || undefined,
+      // Omitted when editing for the same reason as the identity: the model a
+      // segment was drawn in is not changed by correcting its description.
+      iModelId: editing ? undefined : iModelId ?? undefined,
     })
 
     // Only when authoring. After an edit the fields stay as submitted, so the
@@ -1367,6 +1381,29 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, onSubmit, o
       )}
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        {/* Left of the number because it scopes it: ENG codes are unique within a
+            model, so which model is being drawn in is read before the code, not
+            after. Disabled while editing -- see the submit handler. */}
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 200 }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '8px', color: 'var(--text-muted)', letterSpacing: '0.1em' }}>IMODEL *</span>
+          <select
+            value={iModelId ?? ''}
+            disabled={editing !== null || iModelsLoading}
+            onChange={e => onIModelChange(e.target.value || null)}
+            style={{ background: editing ? 'var(--bg-surface)' : 'var(--bg-panel)', border: '1px solid var(--border-mid)', borderRadius: '3px', color: iModelId ? 'var(--text-primary)' : 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '11px', padding: '5px 8px', outline: 'none' }}
+          >
+            {/* The three states are told apart deliberately: a twin still loading,
+                a twin with no models, and a twin whose models are listed but none
+                chosen are different situations, and one placeholder for all three
+                would read as "nothing to pick" in every case. */}
+            <option value="">
+              {iModelsLoading ? '— loading —' : iModels.length === 0 ? '— none in this twin —' : '— select —'}
+            </option>
+            {iModels.map(m => (
+              <option key={m.iModelId} value={m.iModelId}>{m.code}</option>
+            ))}
+          </select>
+        </label>
         {/* Read-only while editing: the number is the key the upsert matches on,
             so changing it would silently author a second segment rather than
             rename this one. */}
@@ -2247,6 +2284,66 @@ function Workspace({ user }: { user: CurrentUser }) {
     void refreshSegments(abort.signal)
     return () => abort.abort()
   }, [refreshSegments])
+
+  // ── The twin's iModels ──────────────────────────────────────────────────────
+
+  // Not cached. A twin holds one or two models, so the platform call is cheaper
+  // than the staleness a cache would introduce: a model added in the platform
+  // minutes ago should be selectable now, and re-selecting the twin is the
+  // natural moment to look again.
+  const [iModels, setIModels] = useState<api.EngIModel[]>([])
+  const [iModelsLoading, setIModelsLoading] = useState(false)
+  const [iModelId, setIModelId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!activeTwin) {
+      setIModels([])
+      return
+    }
+
+    const twinId = activeTwin.uuid
+    const abort = new AbortController()
+    setIModelsLoading(true)
+
+    void (async () => {
+      try {
+        // Read from the platform, then tell ENG about what was found: the
+        // provider will refuse a segment against a model it has no row for, and
+        // the platform is the only place that knows the models exist. Both are
+        // idempotent, so this settles rather than accumulating.
+        const found = await itwin.listIModels(twinId, abort.signal)
+
+        await Promise.all(found.map(m =>
+          api.syncIModel(twinId, m.id, m.displayName ?? m.name, m.description)))
+
+        if (abort.signal.aborted) return
+
+        // Listed back from ENG rather than reusing the platform response, so the
+        // picker offers exactly what authoring will accept.
+        const known = await api.listIModels(twinId, abort.signal)
+        if (abort.signal.aborted) return
+
+        setIModels(known)
+      } catch {
+        // Empty rather than stale. The form refuses to author without a model,
+        // so a failed lookup blocks the segment instead of letting it be
+        // attributed to a model that could not be confirmed.
+        if (!abort.signal.aborted) setIModels([])
+      } finally {
+        if (!abort.signal.aborted) setIModelsLoading(false)
+      }
+    })()
+
+    return () => abort.abort()
+  }, [activeTwin])
+
+  // One model is the common case, so choosing it is not a decision worth asking
+  // for. The selection is reset when the twin's models no longer contain it,
+  // which is what happens on switching twins.
+  useEffect(() => {
+    if (iModelId && iModels.some(m => m.iModelId === iModelId)) return
+    setIModelId(iModels.length === 1 ? iModels[0].iModelId : null)
+  }, [iModels, iModelId])
 
   // ── Loading MMS's inventory ────────────────────────────────────────────────
   //
@@ -3264,6 +3361,10 @@ function Workspace({ user }: { user: CurrentUser }) {
                     error={createError}
                     editing={editingSegment}
                     classes={engClasses}
+                    iModels={iModels}
+                    iModelsLoading={iModelsLoading}
+                    iModelId={iModelId}
+                    onIModelChange={setIModelId}
                     onSubmit={segment => void saveSegment(segment)}
                     onDismissError={() => setCreateError(null)}
                     onCancelEdit={() => { setEditingId(null); setCreateError(null) }}

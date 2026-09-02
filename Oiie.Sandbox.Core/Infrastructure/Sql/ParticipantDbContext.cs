@@ -801,6 +801,11 @@ public class ParticipantDbContext : DbContext
             entity.HasIndex(e => new { e.ITwinId, e.TagNumber }).IsUnique();
             entity.HasIndex(e => e.Maturity);
 
+            // Not unique, and not folded into the constraint above: see Tag.IModelId.
+            // This exists so the authoring UI can list one model's tags without
+            // scanning the twin.
+            entity.HasIndex(e => new { e.ITwinId, e.IModelId });
+
             // Deliberately NOT scoped by twin. FederationId is minted per tag, so two
             // twins' tags already differ here, and this is the column MMS and CIR
             // correlate on. Scoping it would imply the same identity may recur across

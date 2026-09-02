@@ -80,6 +80,17 @@ public interface IEngDesignStore
 
     Task<EngIModel?> FindIModelAsync(Guid iModelId, CancellationToken ct);
 
+    /// <summary>
+    /// Records an iModel, or updates the one already stored under this id.
+    ///
+    /// Idempotent for the same reason as <see cref="UpsertITwinAsync"/>: the
+    /// caller mirrors what the iTwin Platform reports for a twin, and re-reading
+    /// the platform must not produce a second model. The identity is the
+    /// platform's own, adopted rather than minted, so a model keeps the same id
+    /// here as it has everywhere else.
+    /// </summary>
+    Task<EngIModel> UpsertIModelAsync(UpsertIModelRequest request, CancellationToken ct);
+
     // ---- Schema catalogue -------------------------------------------------
 
     /// <summary>
@@ -226,6 +237,20 @@ public sealed record EngIModel(
     string Code,
     string? Description,
     DateTime CreatedUtc);
+
+/// <summary>
+/// An iModel being recorded against its iTwin.
+///
+/// Keyed on IModelId, the platform's own identifier, so a model renamed on the
+/// platform updates in place rather than arriving as a second row. Code is
+/// separate because <c>UQ_iModel_iTwin_Code</c> requires one and the platform
+/// calls it a display name.
+/// </summary>
+public sealed record UpsertIModelRequest(
+    Guid IModelId,
+    Guid ITwinId,
+    string Code,
+    string? Description = null);
 
 // ---- Schema catalogue ----------------------------------------------------
 

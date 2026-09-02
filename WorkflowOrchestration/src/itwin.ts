@@ -53,14 +53,20 @@ const MAX_PAGES = 20
  */
 const ACCEPT = 'application/vnd.bentley.itwin-platform.v1+json'
 
-async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
+/**
+ * The iModels API is on v2. The version is per-API, not per-platform, so asking
+ * for v1 there answers 406 rather than falling back.
+ */
+const ACCEPT_V2 = 'application/vnd.bentley.itwin-platform.v2+json'
+
+async function request<T>(path: string, signal?: AbortSignal, accept = ACCEPT): Promise<T> {
   const token = auth.accessToken()
   if (!token) throw new Error('Not signed in to Bentley IMS')
 
   const res = await fetch(`${BASE}${path}`, {
     signal,
     headers: {
-      Accept: ACCEPT,
+      Accept: accept,
       // The platform expects the raw token prefixed with Bearer; auth.ts stores
       // it without the scheme.
       Authorization: `Bearer ${token}`,
@@ -120,6 +126,52 @@ export async function listITwins(
 
     // A short page is the last page. The platform returns no total, so this is
     // the only signal that the collection is exhausted.
+    if (found.length < PAGE_SIZE) break
+  }
+
+  return collected
+}
+
+/**
+ * An iModel as the platform returns it.
+ *
+ * As with ITwinSummary, only the fields the picker shows are modelled.
+ */
+export interface IModelSummary {
+  id: string
+  displayName: string | null
+  name: string | null
+  description: string | null
+}
+
+interface IModelsResponse {
+  iModels?: IModelSummary[]
+}
+
+/**
+ * The iModels belonging to one iTwin.
+ *
+ * Unpaged in practice -- a twin holds one or two of these, well under a single
+ * page -- but the same short-page loop is kept so a larger twin degrades into
+ * more requests rather than into silently truncated results.
+ */
+export async function listIModels(
+  iTwinId: string,
+  signal?: AbortSignal,
+): Promise<IModelSummary[]> {
+  const collected: IModelSummary[] = []
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const query = new URLSearchParams({
+      iTwinId,
+      $top: String(PAGE_SIZE),
+      $skip: String(page * PAGE_SIZE),
+    })
+
+    const body = await request<IModelsResponse>(`/imodels?${query}`, signal, ACCEPT_V2)
+    const found = body.iModels ?? []
+    collected.push(...found)
+
     if (found.length < PAGE_SIZE) break
   }
 

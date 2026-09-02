@@ -201,6 +201,7 @@ public sealed class CreateTagAction(EngService eng) : IScenarioAction
             // Scenarios may pin the identity so an assertion can name it. Left unset
             // the tag is minted as usual, which is what most scenarios want.
             context.GetGuid("federationId"),
+            context.GetGuid("iModelId"),
             ct);
 
         return new ScenarioActionResult(

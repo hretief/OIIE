@@ -2514,6 +2514,57 @@ app.MapPost("/admin/eng/itwins/add", async (
 static string? Blank(string? value) =>
     string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
+// The iModels ENG will accept elements against, for one twin.
+//
+// The browser could read these from the platform itself -- it holds the IMS
+// token -- but what matters when authoring is which iModels ENG knows, and those
+// are only the ones that have been synced. Listing the provider's view keeps the
+// picker from offering a model the POST would then refuse.
+app.MapGet("/admin/eng/imodels", async (
+    EngEngineClient engine,
+    Guid? iTwinId,
+    HttpRequest http,
+    CancellationToken ct) =>
+{
+    if (ResolveTwin(iTwinId, http) is not { } twin)
+    {
+        return Results.BadRequest(new { error = "iTwinId is required, in the query or the x-itwin-id header." });
+    }
+
+    if (!engine.IsProviderConfigured)
+    {
+        return Results.Ok(Array.Empty<EngIModelSummary>());
+    }
+
+    return Results.Ok(await engine.GetIModelsAsync(twin, ct));
+});
+
+// Records an iModel the browser read from the platform.
+//
+// The sandbox has no platform credentials of its own, so the caller carries the
+// detail it has just read rather than the server fetching it again -- the same
+// reason AddITwinRequest carries the twin's classification.
+app.MapPost("/admin/eng/imodels/sync", async (
+    EngEngineClient engine,
+    SyncIModelRequest request,
+    CancellationToken ct) =>
+{
+    if (request.IModelId == Guid.Empty || request.ITwinId == Guid.Empty)
+    {
+        return Results.BadRequest(new { error = "iModelId and iTwinId are both required." });
+    }
+
+    // Both platform names are optional, so neither can be relied on for a code.
+    var code = Blank(request.Code) ?? Blank(request.DisplayName) ?? request.IModelId.ToString();
+
+    var detail = await engine.SyncIModelAsync(
+        request.IModelId, request.ITwinId, code, Blank(request.Description), ct);
+
+    return detail is null
+        ? Results.Ok(new { recorded = true, iModelId = request.IModelId, code })
+        : Results.Ok(new { recorded = false, iModelId = request.IModelId, code, detail });
+});
+
 // The twin a request works in.
 //
 // Body first, then header, then ENG's default. The header exists so a client can set
@@ -2548,6 +2599,7 @@ app.MapGet("/admin/eng/tags", async (
             t.Id,
             t.TagNumber,
             federationId = t.FederationId,
+            iModelId = t.IModelId,
             t.ServiceDescription,
             t.UnitNumber,
             t.ClassKey,
@@ -2570,7 +2622,7 @@ app.MapPost("/admin/eng/tags", async (
         var tag = await eng.AddTagAsync(
             request.TagNumber, request.ServiceDescription, request.UnitNumber, request.ClassKey,
             request.RangeMinimum, request.RangeMaximum, request.ControlAction, request.CodePrefix,
-            ResolveTwin(request.ITwinId, http), request.FederationId, ct);
+            ResolveTwin(request.ITwinId, http), request.FederationId, request.IModelId, ct);
 
         // The identity is returned because in the allocation case the caller did not
         // choose either value and has no other way to learn what it was given. The twin
@@ -2581,6 +2633,7 @@ app.MapPost("/admin/eng/tags", async (
             tag.TagNumber,
             federationId = tag.FederationId,
             iTwinId = tag.ITwinId,
+            iModelId = tag.IModelId,
             maturity = tag.Maturity.ToString()
         });
     }
@@ -2849,7 +2902,12 @@ internal sealed record AddTagRequest(
     string? ControlAction = null,
     string? CodePrefix = null,
     Guid? ITwinId = null,
-    Guid? FederationId = null);
+    Guid? FederationId = null,
+    /// <summary>
+    /// The iModel the element's data comes from. Supplied by the picker when
+    /// authoring; omitted when editing, which retains the existing source.
+    /// </summary>
+    Guid? IModelId = null);
 
 internal sealed record RegisterTwinRequest(
     Guid ITwinId,

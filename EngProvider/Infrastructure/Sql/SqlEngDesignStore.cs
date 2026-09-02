@@ -220,6 +220,38 @@ public sealed class SqlEngDesignStore(
         r.IsDBNull(3) ? null : r.GetString(3),
         r.GetDateTime(4));
 
+    public async Task<EngIModel> UpsertIModelAsync(UpsertIModelRequest request, CancellationToken ct)
+    {
+        // UPDATE-then-INSERT under UPDLOCK/HOLDLOCK, as UpsertITwinAsync does and
+        // for the same reasons -- see the note there on MERGE.
+        //
+        // CreatedUtc is absent from the UPDATE: re-reading a model the sandbox
+        // already knows does not make it new. ModifiedUtc is set, because unlike
+        // the iTwin table this one has a column for it.
+        const string sql = """
+            UPDATE dbo.iModel WITH (UPDLOCK, HOLDLOCK)
+            SET Code = @code,
+                Description = @description,
+                ModifiedUtc = SYSUTCDATETIME()
+            WHERE iModelId = @id;
+
+            IF @@ROWCOUNT = 0
+                INSERT INTO dbo.iModel (iModelId, iTwinId, Code, Description)
+                VALUES (@id, @iTwinId, @code, @description);
+            """;
+
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand(sql, cn);
+        cmd.Parameters.AddWithValue("@id", request.IModelId);
+        cmd.Parameters.AddWithValue("@iTwinId", request.ITwinId);
+        cmd.Parameters.AddWithValue("@code", request.Code);
+        cmd.Parameters.AddWithValue("@description", (object?)request.Description ?? DBNull.Value);
+
+        await cmd.ExecuteNonQueryAsync(ct);
+
+        return (await FindIModelAsync(request.IModelId, ct))!;
+    }
+
     // ---- Schema catalogue -------------------------------------------------
 
     public async Task<IReadOnlyList<EngClass>> GetConcreteClassesAsync(CancellationToken ct)

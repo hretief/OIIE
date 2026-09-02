@@ -229,9 +229,90 @@ public sealed class EngEngineClient(
         [property: JsonPropertyName("iTwinId")] Guid ITwinId,
         [property: JsonPropertyName("eventType")] string EventType = "iTwins.iTwinCreated.v1");
 
+    /// <summary>Whether the provider hop alone can run.</summary>
+    public bool IsProviderConfigured => _providerBaseUrl is not null;
+
+    /// <summary>
+    /// The iModels ENG holds for one twin.
+    ///
+    /// The browser reads iModels from the platform directly, but authoring an
+    /// element against one requires the provider to know it, so this is what the
+    /// picker lists: what ENG can actually accept, not what the platform has.
+    /// </summary>
+    public async Task<IReadOnlyList<EngIModelSummary>> GetIModelsAsync(
+        Guid iTwinId, CancellationToken ct)
+    {
+        if (_providerBaseUrl is null) return [];
+
+        var models = await http.GetFromJsonAsync<List<EngIModelSummary>>(
+            $"{_providerBaseUrl}/imodels?iTwinId={iTwinId:D}", ct);
+
+        return models ?? [];
+    }
+
+    /// <summary>
+    /// Records an iModel the browser read from the platform.
+    ///
+    /// Returns the reason on failure rather than throwing, matching
+    /// <see cref="BootstrapAsync"/>: an unreachable Functions host during
+    /// front-end work should be reported, not mistaken for a bad request.
+    /// </summary>
+    public async Task<string?> SyncIModelAsync(
+        Guid iModelId, Guid iTwinId, string? code, string? description, CancellationToken ct)
+    {
+        if (_providerBaseUrl is null)
+        {
+            return "Sandbox:EngProviderBaseUrl is not configured, so the iModel was not recorded.";
+        }
+
+        try
+        {
+            var response = await http.PostAsJsonAsync(
+                $"{_providerBaseUrl}/imodels",
+                new { iModelId, iTwinId, code, description },
+                ct);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return $"ENG provider refused the iModel ({(int)response.StatusCode}): " +
+                       Excerpt(await response.Content.ReadAsStringAsync(ct));
+            }
+
+            return null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            logger.LogWarning(ex, "Recording iModel {IModelId:D} in ENG failed.", iModelId);
+
+            return $"Could not reach the ENG Functions host: {ex.Message}";
+        }
+    }
+
     private static string? Trimmed(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.TrimEnd('/');
 
     private static string Excerpt(string body) =>
         body.Length <= 300 ? body : body[..300];
 }
+
+/// <summary>
+/// An iModel as the ENG provider returns it, reduced to what the picker shows.
+/// </summary>
+public sealed record EngIModelSummary(
+    Guid IModelId,
+    Guid ITwinId,
+    string Code,
+    string? Description);
+
+/// <summary>
+/// What the UI supplies when it records an iModel it has read from the platform.
+///
+/// Code and DisplayName are both carried because the platform names the field
+/// displayName while ENG stores a Code, and neither is guaranteed to be present.
+/// </summary>
+public sealed record SyncIModelRequest(
+    Guid IModelId,
+    Guid ITwinId,
+    string? Code = null,
+    string? DisplayName = null,
+    string? Description = null);

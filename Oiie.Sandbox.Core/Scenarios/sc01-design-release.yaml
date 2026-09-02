@@ -82,6 +82,11 @@ steps:
     at: eng
     action: create_tag
     args:
+      # The model the element's data comes from. A run has no picker to choose one,
+      # so it names the bootstrap model the ENG schema is seeded with. It is stated
+      # on every authoring step rather than defaulted, because a default would let a
+      # scenario claim a source it never had.
+      iModelId: 22222222-2222-2222-2222-222222222222
       tagNumber: TIC-106
       serviceDescription: Top temperature control
       unitNumber: "101"
@@ -103,6 +108,7 @@ steps:
     at: eng
     action: create_tag
     args:
+      iModelId: 22222222-2222-2222-2222-222222222222
       tagNumber: P-101
       serviceDescription: Feed pump
       unitNumber: "101"
@@ -115,6 +121,7 @@ steps:
     at: eng
     action: create_tag
     args:
+      iModelId: 22222222-2222-2222-2222-222222222222
       tagNumber: BBFQ0032
       serviceDescription: Feed pump power supply
       unitNumber: "101"

@@ -129,6 +129,11 @@ public sealed class EngService(
     /// Ignored on edit. The identity is fixed for the entity's whole lifecycle, and
     /// letting an edit reassign it would silently orphan every downstream record
     /// already keyed to the old value.
+    ///
+    /// <paramref name="iModelId"/> is the model the element's data comes from. It is
+    /// required when authoring and refused if absent -- never defaulted, since an
+    /// invented source is a false provenance claim. Optional only when editing an
+    /// element that already carries one.
     /// </summary>
     public async Task<Tag> AddTagAsync(
         string? tagNumber,
@@ -141,6 +146,7 @@ public sealed class EngService(
         string? codePrefix = null,
         Guid? twinId = null,
         Guid? federationId = null,
+        Guid? iModelId = null,
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(tagNumber) && string.IsNullOrWhiteSpace(codePrefix))
@@ -153,6 +159,13 @@ public sealed class EngService(
         var twin = twinId ?? DefaultTwinId;
         await EnsureTwinAsync(twin, ct: ct);
 
+        // Refused, never defaulted. The iModel is where the element's data comes
+        // from, so inventing one would attribute the element to a model that does
+        // not exist -- a provenance claim worse than no element at all. A twin whose
+        // platform account holds no models cannot be authored into, and that is a
+        // real condition to report rather than one to paper over.
+        var modelNamed = iModelId is { } named && named != Guid.Empty;
+
         await using var db = factory.Create(ParticipantId, twin);
 
         // Greenfield: nothing exists yet, so the identity service allocates both the
@@ -160,11 +173,15 @@ public sealed class EngService(
         // tag is called until it has asked.
         if (string.IsNullOrWhiteSpace(tagNumber))
         {
+            // Always a create, so there is no prior element to inherit a source from.
+            if (!modelNamed) throw NoSourceModel();
+
             var allocated = await identities.AllocateAsync(db, ParticipantId, codePrefix!, twin, ct);
 
             var minted = new Tag
             {
                 ITwinId = twin,
+                IModelId = iModelId!.Value,
                 TagNumber = allocated.Code,
                 FederationId = allocated.FederationId
             };
@@ -246,6 +263,16 @@ public sealed class EngService(
                 : identities.Mint()
         };
 
+        // A new element must say where its data came from. An edit need not: the UI
+        // omits the field when editing, and the element already carries a source
+        // that correcting a description does not change.
+        if (existing is null && !modelNamed) throw NoSourceModel();
+
+        if (modelNamed)
+        {
+            tag.IModelId = iModelId!.Value;
+        }
+
         if (existing is null)
         {
             // The tag number is registered as ENG's code for the new identity rather
@@ -276,6 +303,16 @@ public sealed class EngService(
         await db.SaveChangesAsync(ct);
         return tag;
     }
+
+    /// <summary>
+    /// Raised when an element is authored without naming the model its data comes
+    /// from. Worded for the operator, since the usual cause is a twin whose
+    /// platform account holds no iModels rather than a malformed request.
+    /// </summary>
+    private static ArgumentException NoSourceModel() => new(
+        "An element must name the iModel its data comes from. Select an iModel for " +
+        "this iTwin; if the iTwin has none, there is nothing to author into.",
+        "iModelId");
 
     /// <summary>
     /// The editable fields, applied identically whether the tag was allocated or

@@ -46,6 +46,8 @@ export interface Tag {
   id: number
   tagNumber: string
   federationId: string | null
+  /** The iModel the element's data comes from. Always set. */
+  iModelId: string
   serviceDescription: string | null
   unitNumber: string | null
   classKey: string | null
@@ -79,6 +81,12 @@ export interface NewTag {
    * entity's lifetime.
    */
   federationId?: string
+
+  /**
+   * The iModel to author into -- the source of the element data. Required when
+   * authoring; omitted when editing, where the existing source is retained.
+   */
+  iModelId?: string
 }
 
 export interface CreatedTag {
@@ -86,6 +94,7 @@ export interface CreatedTag {
   tagNumber: string
   federationId: string | null
   iTwinId: string
+  iModelId: string
   maturity: TagMaturity
 }
 
@@ -229,6 +238,53 @@ export function createTag(iTwinId: string, tag: NewTag): Promise<CreatedTag> {
   return request<CreatedTag>('/admin/eng/tags', {
     method: 'POST',
     body: JSON.stringify({ ...tag, iTwinId }),
+  })
+}
+
+/** An iModel as ENG holds it. */
+export interface EngIModel {
+  iModelId: string
+  iTwinId: string
+  code: string
+  description: string | null
+}
+
+/**
+ * The iModels ENG will accept segments against, for one twin.
+ *
+ * This is ENG's view rather than the platform's: a model the provider has never
+ * been told about would be refused at authoring time, so offering it in the
+ * picker would only produce a failure the user cannot act on.
+ */
+export function listIModels(iTwinId: string, signal?: AbortSignal): Promise<EngIModel[]> {
+  return request<EngIModel[]>(
+    `/admin/eng/imodels?iTwinId=${encodeURIComponent(iTwinId)}`,
+    { signal },
+  )
+}
+
+export interface SyncedIModel {
+  recorded: boolean
+  iModelId: string
+  code: string
+  detail?: string
+}
+
+/**
+ * Records an iModel read from the platform so ENG will accept segments against it.
+ *
+ * The browser holds the IMS token and the sandbox does not, so the detail is
+ * carried here rather than fetched server-side.
+ */
+export function syncIModel(
+  iTwinId: string,
+  iModelId: string,
+  displayName: string | null,
+  description: string | null,
+): Promise<SyncedIModel> {
+  return request<SyncedIModel>('/admin/eng/imodels/sync', {
+    method: 'POST',
+    body: JSON.stringify({ iModelId, iTwinId, displayName, description }),
   })
 }
 

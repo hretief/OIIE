@@ -208,6 +208,7 @@ so a separate route would be a second name for one thing.
 |---|---|
 | `GET /api/itwins` | The projects ENG holds models for |
 | `GET /api/imodels` | Models; filter by `?iTwinId=` |
+| `POST /api/imodels` | Mirrors a platform iModel into ENG; idempotent on `iModelId` |
 | `GET /api/imodels/{iModelId}` | One iModel |
 | `GET /api/classes` | EC classes an element may be created on |
 | `GET /api/elements` | Elements; filter by `?iModelId=`, `?namedVersionId=`, `?released=` |

@@ -150,6 +150,56 @@ public sealed class EngFunctions(IEngDesignStore store, ILogger<EngFunctions> lo
             : await OkAsync(req, model, ct);
     }
 
+    /// <summary>
+    /// Records an iModel the caller has read from the platform.
+    ///
+    /// ENG does not create iModels -- the platform does -- so this endpoint only
+    /// mirrors one into the sandbox so that elements can be scoped to it. It is
+    /// idempotent for the same reason UpsertITwin is: the UI re-lists a twin's
+    /// iModels on every selection, and doing so must not accumulate rows.
+    /// </summary>
+    [Function("UpsertIModel")]
+    public async Task<HttpResponseData> UpsertIModel(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "imodels")] HttpRequestData req,
+        CancellationToken ct)
+    {
+        UpsertIModelRequest? body;
+
+        try
+        {
+            body = await JsonSerializer.DeserializeAsync<UpsertIModelRequest>(req.Body, Json, ct);
+        }
+        catch (JsonException ex)
+        {
+            return await ProblemAsync(req, HttpStatusCode.BadRequest,
+                $"Malformed request body: {ex.Message}", ct);
+        }
+
+        if (body is null || body.IModelId == Guid.Empty)
+        {
+            return await ProblemAsync(req, HttpStatusCode.BadRequest,
+                "An iModel requires an iModelId.", ct);
+        }
+
+        // The foreign key would refuse this anyway, but saying so here names the
+        // missing twin rather than surfacing a constraint violation.
+        if (body.ITwinId == Guid.Empty || await store.FindITwinAsync(body.ITwinId, ct) is null)
+        {
+            return await ProblemAsync(req, HttpStatusCode.BadRequest,
+                $"An iModel must belong to a known iTwin, but '{body.ITwinId}' is not registered.", ct);
+        }
+
+        // Code is NOT NULL; the platform calls the field displayName, so fall back
+        // through it and finally to the id rather than rejecting a real payload.
+        var code = FirstNonBlank(body.Code) ?? body.IModelId.ToString();
+
+        var existing = await store.FindIModelAsync(body.IModelId, ct);
+        var saved = await store.UpsertIModelAsync(body with { Code = code }, ct);
+
+        return await WriteAsync(req,
+            existing is null ? HttpStatusCode.Created : HttpStatusCode.OK, saved, ct);
+    }
+
     // ---- Schema catalogue -------------------------------------------------
 
     /// <summary>

@@ -54,6 +54,18 @@ public class Tag
     public Guid ITwinId { get; set; }
 
     /// <summary>
+    /// The iModel the element was authored into. Mandatory: it is the source of
+    /// the element data, and an element that cannot say which model it came from
+    /// has no provenance worth carrying downstream.
+    ///
+    /// Deliberately not part of the uniqueness of <see cref="TagNumber"/>. ENG
+    /// proper scopes code uniqueness to the iModel, but the sandbox keeps its
+    /// twin-wide constraint: within one plant a code names one thing, whichever
+    /// model it was drawn in.
+    /// </summary>
+    public Guid IModelId { get; set; }
+
+    /// <summary>
     /// The identity, minted here because ENG is the design tool and the entity comes
     /// into existence at its drawing board. Immutable for the whole lifecycle —
     /// conceptual through operations — and unrelated to TagNumber, which is only what
