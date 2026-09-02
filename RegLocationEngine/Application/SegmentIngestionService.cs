@@ -64,9 +64,9 @@ public sealed class SegmentIngestionService(
     {
         var report = new IngestionReport();
 
-        if (_options.IModelId == Guid.Empty)
+        if (_options.ITwinFederationId == Guid.Empty)
         {
-            report.Note = "IModelId is not configured, so the inbound channel cannot be derived.";
+            report.Note = "ITwinFederationId is not configured, so the inbound channel cannot be derived.";
             logger.LogWarning("{Note}", report.Note);
             return report;
         }
@@ -78,7 +78,7 @@ public sealed class SegmentIngestionService(
             return report;
         }
 
-        var channelUri = _options.InboundChannelUriFor(_options.IModelId);
+        var channelUri = _options.InboundChannelUriFor(_options.ITwinFederationId);
         _sessionId ??= await isbm.OpenSubscriptionSessionAsync(channelUri, _options.InboundTopics, ct);
 
         while (report.MessagesRead < _options.MaxMessagesPerPoll)

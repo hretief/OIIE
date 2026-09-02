@@ -80,8 +80,35 @@ public sealed class RegLocationEngineOptions
     /// <summary>
     /// The iTwin the channel URI is built from. Required before anything can be
     /// published, because the federation id is the channel's identity.
+    ///
+    /// An iTwin federation id, NOT an iModel id. An iModel is an ENG-internal
+    /// container -- elements and named versions live in one, and REG-LOCATION
+    /// sees neither. What it sees are CCOM Segments on a channel keyed by the
+    /// iTwin, per /{enterprise}/{itwin-federation-id}/{domain}/{type}.
     /// </summary>
-    public Guid IModelId { get; set; }
+    public Guid ITwinFederationId { get; set; }
+
+    /// <summary>
+    /// Former name of <see cref="ITwinFederationId"/>, kept so existing
+    /// RegLocationEngine__IModelId settings keep binding.
+    ///
+    /// The old name was wrong in a way that failed silently: supplying an actual
+    /// iModel id yields a well-formed channel URI that nobody publishes to, so
+    /// the engine polls forever and reports no error. Setting either name works;
+    /// the new one wins if both are present.
+    /// </summary>
+    [Obsolete("Renamed to ITwinFederationId: the value is an iTwin federation id, not an iModel id.")]
+    public Guid IModelId
+    {
+        get => ITwinFederationId;
+        set
+        {
+            if (ITwinFederationId == Guid.Empty)
+            {
+                ITwinFederationId = value;
+            }
+        }
+    }
 
     // ---- Upstream: the inbound leg from ENG --------------------------------
 

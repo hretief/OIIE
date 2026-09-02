@@ -13,8 +13,8 @@
     "RegLocationEngine__SourceId": "REG-LOCATION",
     "RegLocationEngine__LogicalId": "REG-LOCATION",
 
-    "//": "Both legs derive their channel from IModelId; leaving it empty disables them.",
-    "RegLocationEngine__IModelId": "00000000-0000-0000-0000-000000000000",
+    "//": "Both legs derive their channel from ITwinFederationId; leaving it empty disables them. This is an iTwin federation id, not an iModel id -- an iModel id here yields a channel nobody publishes to, which fails as silence rather than an error.",
+    "RegLocationEngine__ITwinFederationId": "00000000-0000-0000-0000-000000000000",
 
     "//inbound": "The leg that receives proposals from ENG. InboundDomain is engineering -- ENG's channel -- and must not be the operations domain above, which is this engine's own outbound channel.",
     "RegLocationEngine__IngestEnabled": "false",
@@ -27,7 +27,7 @@
     "RegLocationEngine__InboundClassMap__Functional:FunctionalComponentElement": "1001",
     "RegLocationEngine__MaxMessagesPerPoll": "25",
 
-    "//sites": "The bootstrap leg. Its channel is enterprise-level and not derived from IModelId, because SyncSites is the message that brings an iTwin context into being.",
+    "//sites": "The bootstrap leg. Its channel is enterprise-level and not derived from ITwinFederationId, because SyncSites is the message that brings an iTwin context into being.",
     "RegLocationEngine__SitesIngestEnabled": "false",
     "RegLocationEngine__SitesTopics__0": "oiie/ccom:SyncSites",
     "RegLocationEngine__SiteNamespaceId": "1",

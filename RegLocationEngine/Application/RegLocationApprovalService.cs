@@ -162,7 +162,7 @@ public sealed class RegLocationApprovalService(
 
         try
         {
-            var channelUri = _options.ChannelUriFor(_options.IModelId);
+            var channelUri = _options.ChannelUriFor(_options.ITwinFederationId);
 
             // Opened only once there is something to say. A pass that finds
             // nothing should not establish a session against the broker to prove
@@ -298,9 +298,9 @@ public sealed class RegLocationApprovalService(
             return true;
         }
 
-        if (_options.IModelId == Guid.Empty)
+        if (_options.ITwinFederationId == Guid.Empty)
         {
-            reason = "RegLocationEngine__IModelId is not configured.";
+            reason = "RegLocationEngine__ITwinFederationId is not configured.";
             return true;
         }
 

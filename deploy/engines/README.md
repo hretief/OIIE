@@ -46,14 +46,22 @@ cleanly and 401s on every poll.
 ## Settings the script does not decide
 
 `EngEngine__Enabled` and the `RegLocationEngine` ingest flags are set to
-`false`. Both derive their channel from `IModelId`, and enabling them before an
-iTwin exists gives a poll loop that fails on a timer. Set `IModelId`, then flip
-the flag:
+`false`. Both derive their channel from an iTwin federation id, and enabling
+them before an iTwin exists gives a poll loop that fails on a timer. Set the id,
+then flip the flag:
 
 ```powershell
 az functionapp config appsettings set -g HilmarRetiefRG -n acme-engn-eng-dev `
     --settings EngEngine__IModelId=<guid> EngEngine__Enabled=true
 ```
+
+Note the setting names differ. REG-LOCATION uses
+`RegLocationEngine__ITwinFederationId`, because the value is an iTwin federation
+id and REG-LOCATION has no iModel concept. ENG still uses `EngEngine__IModelId`,
+where iModel is a genuine domain concept. In both cases the value is an **iTwin
+federation id** -- an iModel id yields a well-formed channel URI that nobody
+publishes to, so the engine polls forever without ever raising an error.
+(`RegLocationEngine__IModelId` still binds as a deprecated alias.)
 
 The `SitesIngestEnabled` legs on CMS, MMS and REG-LOCATION are enabled from the
 start. Their channel is enterprise-level rather than iTwin-derived, which is the

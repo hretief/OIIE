@@ -89,7 +89,7 @@ public sealed class SiteIngestionService(
             return report;
         }
 
-        // No IModelId check, unlike the segment leg. That one derives its channel
+        // No ITwinFederationId check, unlike the segment leg. That one derives its channel
         // from an iTwin; this one cannot, because the message it reads is what
         // brings an iTwin into existence.
         _sessionId ??= await isbm.OpenSubscriptionSessionAsync(

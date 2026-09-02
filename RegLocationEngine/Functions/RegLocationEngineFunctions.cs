@@ -211,10 +211,10 @@ public sealed class RegLocationEngineFunctions(
             enterprise = _options.Enterprise,
             domain = _options.Domain,
             channelUriOverride = _options.ChannelUriOverride,
-            channelUri = _options.ChannelUriFor(_options.IModelId),
+            channelUri = _options.ChannelUriFor(_options.ITwinFederationId),
 
             topics = _options.Topics,
-            iModelId = _options.IModelId,
+            iTwinFederationId = _options.ITwinFederationId,
             maxTagsPerSweep = _options.MaxTagsPerSweep,
             publishedTags = state.PublishedTags.Count,
 
@@ -225,7 +225,7 @@ public sealed class RegLocationEngineFunctions(
             // read side by side.
             ingestEnabled = _options.IngestEnabled,
             inboundDomain = _options.InboundDomain,
-            inboundChannelUri = _options.InboundChannelUriFor(_options.IModelId),
+            inboundChannelUri = _options.InboundChannelUriFor(_options.ITwinFederationId),
             inboundTopics = _options.InboundTopics,
             inboundItemId = _options.InboundItemId,
             inboundScopeId = _options.InboundScopeId,

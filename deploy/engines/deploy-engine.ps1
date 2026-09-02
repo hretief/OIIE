@@ -126,9 +126,11 @@ $engines = @{
         PeerVar = 'EngBaseUrl'
         PeerKey = 'EngApiKey'
         PeerApi = 'eng'
-        # Enabled stays false: this engine's channel is derived from IModelId,
-        # and turning it on before an iTwin exists gives a poll loop that fails
-        # every 15 seconds. Set IModelId then flip Enabled by hand.
+        # Enabled stays false: this engine's channel is derived from an iTwin
+        # federation id, and turning it on before an iTwin exists gives a poll
+        # loop that fails every 15 seconds. Set IModelId then flip Enabled by
+        # hand. (ENG's setting is named IModelId, but the channel value is an
+        # iTwin federation id.)
         Extra   = @{
             'Enabled'   = 'false'
             'Domain'    = 'engineering'
@@ -145,9 +147,10 @@ $engines = @{
         PeerVar = 'RegLocationBaseUrl'
         PeerKey = 'RegLocationApiKey'
         PeerApi = 'reglocation'
-        # Same reasoning as ENG for the IModelId-derived legs. SitesIngest is
-        # the exception -- its channel is enterprise-level, so it can run
-        # before any iTwin exists.
+        # Same reasoning as ENG, but the setting here is ITwinFederationId:
+        # REG-LOCATION has no iModel concept. SitesIngest is the exception --
+        # its channel is enterprise-level, so it can run before any iTwin
+        # exists.
         Extra   = @{
             'Enabled'            = 'false'
             'IngestEnabled'      = 'false'
