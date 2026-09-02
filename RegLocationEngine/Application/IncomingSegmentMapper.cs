@@ -16,14 +16,30 @@ public enum SegmentRejection
     NoFederationId,
 
     /// <summary>Nothing usable as a tag code.</summary>
-    NoCode
+    NoCode,
+
+    /// <summary>
+    /// The segment named a registration site REG-LOCATION holds no scope for.
+    ///
+    /// Distinct from the two above because it is not a defect in the message:
+    /// the segment is well-formed and the site is probably real, it just arrived
+    /// before the SyncSites that establishes the scope. Recoverable by ingesting
+    /// the site, which is why it is not filed into a fallback scope in the
+    /// meantime.
+    /// </summary>
+    UnknownSite
 }
 
 /// <summary>The outcome of translating one segment.</summary>
+/// <param name="SiteGuid">
+/// The registration site the sender named, or null when it named none. The scope
+/// on <see cref="Request"/> is provisional until the service resolves this.
+/// </param>
 public sealed record SegmentMappingResult(
     CreateTagRequest? Request,
     SegmentRejection Rejection,
-    bool ClassWasMapped)
+    bool ClassWasMapped,
+    Guid? SiteGuid = null)
 {
     public bool IsMapped => Request is not null;
 }
@@ -88,6 +104,16 @@ public sealed class IncomingSegmentMapper(
                 classId);
         }
 
+        // The iTwin the sender registered this location against. REG-LOCATION
+        // scopes by site and has no concept of an iModel -- it takes locations
+        // from every model under a twin equally, and which model produced this
+        // one is recorded in InfoSource for whoever needs to go back and ask.
+        //
+        // Only the identity is read. Resolving it to a scope means asking
+        // REG-LOCATION, which this mapper stays out of so its judgements remain
+        // testable without a database; the service does that with the guid.
+        var siteGuid = segment.RegistrationSite?.UUID;
+
         return new SegmentMappingResult(
             new CreateTagRequest(
                 ItemId: _options.InboundItemId,
@@ -95,6 +121,10 @@ public sealed class IncomingSegmentMapper(
                 Code: code,
                 Revision: _options.InboundRevision,
                 Name: name,
+
+                // Provisional. The sender's site decides the real scope, and the
+                // service overwrites this once it has resolved one; this value
+                // stands only for a segment that named no site at all.
                 ScopeId: _options.InboundScopeId,
 
                 // The sender's identity, carried through untouched. The steward
@@ -106,7 +136,8 @@ public sealed class IncomingSegmentMapper(
                 // segment straight past the gate this leg exists to feed.
                 State: RegTagStates.Proposed),
             SegmentRejection.None,
-            mapped);
+            mapped,
+            siteGuid);
     }
 
     private static string? FirstNonBlank(params string?[] candidates) =>

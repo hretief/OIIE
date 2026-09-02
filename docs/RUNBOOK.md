@@ -317,7 +317,27 @@ steps are outside the Sandbox.
 
 5. POST {sandbox}/admin/reset
       only if step 1 reported channel errors
+
+0. (only on a freshly provisioned ENG database)
+      Apply docs/DDL/ENG_BOOTSTRAP.SQL against acme-db-eng-dev.
+      Step 1 does NOT touch the ENG provider database -- it rebuilds the
+      Sandbox participant tables only. The two are separate stores:
+        - Sandbox participant DB  rdl:* classes, from PersonalityPacks
+                                  Fixtures/classes.yaml. Drives the ENG
+                                  panel's CLASS KEY dropdown, property
+                                  requirements and narrowing rules.
+        - ENG provider DB         ENG.* EC classes in dbo.ECClass. What
+                                  ENG elements are actually classified
+                                  against.
+      Idempotent, so running it on an existing database is safe.
+      Verify with /api/classes: expect 28 concrete classes including
+      ENG.Equipment.
 ```
+
+The ENG panel's CLASS KEY dropdown is populated by step 1, not by the ENG
+database. If it renders empty, step 1 has not been run on that environment:
+the classification refresh at startup logs a warning and lets the app boot with
+an empty catalog, so an unseeded environment looks healthy but offers no classes.
 
 The four seeded iTwins, which are the ENG-side context the ENG→CMS workflow runs
 against. The GUIDs were issued by iTwin and are pinned in `ContextOwnerSeeder`:

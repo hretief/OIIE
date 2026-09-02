@@ -154,7 +154,17 @@ public sealed class RegLocationEngineOptions
     /// </summary>
     public int InboundItemId { get; set; } = 1;
 
-    /// <summary>The scope inbound proposals are registered in. Bootstrapped, as with the item.</summary>
+    /// <summary>
+    /// The scope inbound proposals are registered in when the sender named no
+    /// registration site.
+    ///
+    /// A fallback only. A segment that carries a RegistrationSite is filed in the
+    /// scope REG-LOCATION holds for that site, because the sender knows which
+    /// plant a location belongs to and this setting does not: one engine serves
+    /// every iModel under every twin it subscribes to, so a configured scope
+    /// would gather several plants' locations into one and no later correction
+    /// could tell them apart again.
+    /// </summary>
     public int InboundScopeId { get; set; } = 1;
 
     /// <summary>
@@ -235,8 +245,15 @@ public sealed class RegLocationEngineOptions
     /// <summary>The unit a site's Item is created under. See SiteNamespaceId.</summary>
     public int SiteUnitId { get; set; } = 1;
 
-    /// <summary>The TRN a site's Item is created under. See SiteNamespaceId.</summary>
-    public int SiteTrnId { get; set; } = 1;
+    /// <summary>
+    /// The TRN a site's Item is created under. See SiteNamespaceId.
+    ///
+    /// Zero, because that is the one transaction row bootstrap.sql guarantees --
+    /// EIS requires a starting transaction and creates only trn_id 0. items.trn_id
+    /// carries a foreign key to it, so any other default is a write that fails on
+    /// referential integrity rather than a value that means something.
+    /// </summary>
+    public int SiteTrnId { get; set; } = 0;
 
     /// <summary>
     /// The value written to items.item_type for a site type.
@@ -246,8 +263,12 @@ public sealed class RegLocationEngineOptions
     /// classifies what kind of item the row is, and every site type is the same
     /// kind. Putting 'Highway' here would conflate the two and leave nothing
     /// distinguishing a site type from a piece of equipment.
+    ///
+    /// A single character, because items.item_type is CHAR(1) following the EIS
+    /// convention -- 'U' is the unit/site kind. A longer word is not a nicer
+    /// label here, it is a write that the database rejects outright.
     /// </summary>
-    public string SiteItemType { get; set; } = "Site";
+    public string SiteItemType { get; set; } = "U";
 
     /// <summary>
     /// The channel SyncSites is consumed from:

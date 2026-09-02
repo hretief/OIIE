@@ -14,8 +14,8 @@ param storageAccountName string
 @description('Existing SQL server hosting the Sandbox database.')
 param sqlServerName string = 'acme-sql-server'
 
-@description('Sandbox database for this environment.')
-param sqlDatabaseName string
+@description('Sandbox database for this environment. Empty when deploying without a database (DR-022), in which case Sandbox__Database is left blank.')
+param sqlDatabaseName string = ''
 
 @description('ws-ISBM provider base URL, including /api.')
 param isbmBaseUrl string

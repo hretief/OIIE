@@ -64,6 +64,15 @@ export interface TagList {
   iTwinId: string
   count: number
   tags: Tag[]
+  /**
+   * Whether these came from the deployed ENG app rather than the sandbox's own
+   * rehearsal of it.
+   *
+   * Determines which class catalog can be offered when authoring: only ENG's
+   * own classes resolve to an identifier the deployed app will accept, and only
+   * the sandbox holds the reference data the degradation demo depends on.
+   */
+  providerBacked?: boolean
 }
 
 export interface NewTag {
@@ -84,9 +93,17 @@ export interface NewTag {
 
   /**
    * The iModel to author into -- the source of the element data. Required when
-   * authoring; omitted when editing, where the existing source is retained.
+   * authoring, and on an edit it is the element's own model: ENG scopes the
+   * upsert by model, so it is needed either way.
    */
   iModelId?: string
+
+  /**
+   * ENG's ECInstanceId, sent only when editing. Absent means "create". ENG
+   * matches an existing element by this id, so an edit that omitted it would
+   * insert a second element and be refused as a duplicate code.
+   */
+  elementId?: number
 }
 
 export interface CreatedTag {
@@ -111,6 +128,14 @@ export interface PromotionResult {
   name: string
   /** How many segments were considered, published or not. */
   tagCount: number
+  /**
+   * How many markers the release cut.
+   *
+   * Always 1 sandbox-backed, where a named version is scoped to the twin. ENG
+   * pins a marker within one iModel's history, so a twin spanning several
+   * models releases several markers and namedVersionId names only the first.
+   */
+  markerCount?: number
   /** One line per rule violation, naming the segment. Empty when released. */
   findings: string[]
 }
@@ -421,6 +446,25 @@ export function listClasses(
     `/admin/${encodeURIComponent(participantId)}/class-catalog`,
     { signal },
   )
+}
+
+/**
+ * The classes the deployed ENG app can actually store an element against.
+ *
+ * Deliberately a different list from listClasses('eng'). That one is the
+ * sandbox's own reference data (rdl:*), which carries properties and narrowing
+ * rules and drives the degraded-binding demo. This one is ENG's EC metadata
+ * (ENG.*), and its keys are the only ones a write to the deployed app will
+ * resolve.
+ *
+ * Both are needed, and neither replaces the other: sending an rdl:* key to the
+ * deployed ENG app is refused, and the sandbox cannot demonstrate asymmetric
+ * understanding using a vocabulary every participant shares.
+ */
+export function listEngElementClasses(
+  signal?: AbortSignal,
+): Promise<ClassDefinition[]> {
+  return request<ClassDefinition[]>('/admin/eng/element-class-catalog', { signal })
 }
 
 // ─── REG-LOCATION ────────────────────────────────────────────────────────────

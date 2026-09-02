@@ -23,7 +23,10 @@ namespace EngProvider.Functions;
 /// Nor is there a /publish route. Releasing a named version stops at the
 /// database; carrying a release onto a channel is the integrator's work.
 /// </summary>
-public sealed class EngFunctions(IEngDesignStore store, ILogger<EngFunctions> logger)
+public sealed class EngFunctions(
+    IEngDesignStore store,
+    INamedVersionNotifier notifier,
+    ILogger<EngFunctions> logger)
 {
     // Enums are written as names, not ordinals. 'Released' survives a schema
     // reorder; 1 does not, and a caller reading it has no way to notice.
@@ -404,6 +407,21 @@ public sealed class EngFunctions(IEngDesignStore store, ILogger<EngFunctions> lo
 
         logger.LogInformation(
             "ENG created named version {Version} '{Name}'.", created.NamedVersionId, created.Name);
+
+        // Announced only after the store has committed, and never allowed to
+        // fail the response: the marker is already recorded, and an author
+        // should not see an error because a listener was down. A missed
+        // notification is recovered by EngEngine's poll, which remains the
+        // backstop -- this only shortens the wait.
+        await notifier.NotifyNamedVersionCreatedAsync(
+            new NamedVersionCreatedNotification(
+                created.NamedVersionId,
+                created.VersionGuid,
+                created.IModelId,
+                created.Name,
+                created.ChangesetIndex,
+                created.CreatedUtc),
+            ct);
 
         return await WriteAsync(req, HttpStatusCode.Created, created, ct);
     }

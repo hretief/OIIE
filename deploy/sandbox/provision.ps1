@@ -33,6 +33,11 @@ param(
 
     [string]$Alias,
 
+    # Overrides the derived database name, matching deploy.ps1. Lets the sandbox
+    # sit in the acme-*-dev grouping rather than under its own oiie-sandbox-*
+    # convention.
+    [string]$DatabaseName,
+
     [string]$SubscriptionId,
     [string]$ResourceGroup = 'HilmarRetiefRG',
     [string]$SqlServer = 'acme-sql-server',
@@ -56,8 +61,9 @@ Set-StrictMode -Version Latest
 
 # --- Preflight ---------------------------------------------------------------
 
-if ($Environment -eq 'dev' -and [string]::IsNullOrWhiteSpace($Alias)) {
-    throw "-Alias is required for the dev environment."
+if ($Environment -eq 'dev' -and [string]::IsNullOrWhiteSpace($Alias) -and
+    [string]::IsNullOrWhiteSpace($DatabaseName)) {
+    throw "-Alias is required for the dev environment, unless -DatabaseName names one explicitly."
 }
 
 if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
@@ -90,11 +96,14 @@ function Invoke-Az {
 
 # --- Names -------------------------------------------------------------------
 
-$databaseName = switch ($Environment) {
-    'dev'  { "oiie-sandbox-dev-$Alias" }
-    'ci'   { 'oiie-sandbox-ci' }
-    'demo' { 'oiie-sandbox-demo' }
-}
+$databaseName = if (-not [string]::IsNullOrWhiteSpace($DatabaseName)) { $DatabaseName }
+    else {
+        switch ($Environment) {
+            'dev'  { "oiie-sandbox-dev-$Alias" }
+            'ci'   { 'oiie-sandbox-ci' }
+            'demo' { 'oiie-sandbox-demo' }
+        }
+    }
 
 $blobPrefix = switch ($Environment) {
     'dev'  { "dev-$Alias" }

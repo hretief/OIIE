@@ -161,7 +161,11 @@ public sealed class EngPublicationService(
                     sessionId ??= await isbm.OpenPublicationSessionAsync(channelUri, ct);
 
                     var correlationId = Guid.NewGuid().ToString();
-                    var content = builder.Build(marker, elements, correlationId);
+
+                    // The same twin the channel is rooted in, so what the message
+                    // says about itself and where it was delivered cannot disagree.
+                    var content = builder.Build(
+                        marker, elements, model.ITwinId, correlationId);
 
                     var messageId = await isbm.PostPublicationAsync(
                         sessionId,

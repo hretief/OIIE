@@ -56,6 +56,10 @@ public sealed class AdminKeyMiddleware(RequestDelegate next, IConfiguration conf
     [
         "/admin/eng/twins",
         "/admin/eng/tags",
+        // ENG's own EC classes, for the element picker. A separate route from
+        // the participant-scoped /class-catalog because it reads the provider
+        // rather than the Sandbox's reference data.
+        "/admin/eng/element-class-catalog",
         "/admin/reg-location/stewardship",
         "/admin/reg-location/locations",
         "/admin/mms/locations",

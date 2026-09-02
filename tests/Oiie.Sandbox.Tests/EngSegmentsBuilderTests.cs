@@ -25,6 +25,7 @@ namespace SimHost.Tests;
 public class EngSegmentsBuilderTests
 {
     private static readonly Guid IModelId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid ITwinId = Guid.Parse("22222222-2222-2222-2222-222222222222");
     private static readonly Guid FederationGuid = Guid.Parse("550e8400-e29b-41d4-a716-446655440000");
 
     private static EngSegmentsBuilder Builder() =>
@@ -62,7 +63,7 @@ public class EngSegmentsBuilderTests
     [Fact]
     public void Segment_uuid_is_the_federation_guid_unaltered()
     {
-        var bod = Builder().Build(Marker(), [Element()], "corr-1");
+        var bod = Builder().Build(Marker(), [Element()], ITwinId, "corr-1");
 
         // The CIRID. Every participant registers its own key against this value,
         // so any transformation here silently splits one asset into two.
@@ -72,7 +73,7 @@ public class EngSegmentsBuilderTests
     [Fact]
     public void InfoSource_uuid_carries_the_imodel_id_not_a_hash_of_the_source_name()
     {
-        var bod = Builder().Build(Marker(), [Element()], "corr-2");
+        var bod = Builder().Build(Marker(), [Element()], ITwinId, "corr-2");
 
         var infoSource = FirstSegment(bod).InfoSource;
 
@@ -90,7 +91,7 @@ public class EngSegmentsBuilderTests
     [Fact]
     public void Ec_instance_id_and_code_value_complete_the_composite_key()
     {
-        var bod = Builder().Build(Marker(), [Element()], "corr-3");
+        var bod = Builder().Build(Marker(), [Element()], ITwinId, "corr-3");
 
         var segment = FirstSegment(bod);
 
@@ -101,7 +102,7 @@ public class EngSegmentsBuilderTests
     [Fact]
     public void Segment_type_does_not_reuse_the_imodel_info_source()
     {
-        var bod = Builder().Build(Marker(), [Element()], "corr-4");
+        var bod = Builder().Build(Marker(), [Element()], ITwinId, "corr-4");
 
         var segment = FirstSegment(bod);
 
@@ -111,6 +112,37 @@ public class EngSegmentsBuilderTests
         // composite key from that pair would build one that resolves to nothing.
         Assert.NotNull(segment.Type);
         Assert.NotEqual(IModelId, segment.Type?.InfoSource?.UUID);
+    }
+
+    [Fact]
+    public void Registration_site_carries_the_itwin_not_the_imodel()
+    {
+        var bod = Builder().Build(Marker(), [Element()], ITwinId, "corr-5");
+
+        var segment = FirstSegment(bod);
+
+        // The twin, unaltered: REG-LOCATION files this as the Scope, and it has
+        // to be the same value SyncSites registered the site under or the
+        // segments land in a second scope for a plant that only has one.
+        Assert.Equal(ITwinId, segment.RegistrationSite?.UUID);
+
+        // The distinction this whole pairing exists to make. REG-LOCATION has no
+        // concept of an iModel and takes segments from every model under a twin
+        // equally, so the twin scopes it while the iModel stays in InfoSource for
+        // whoever needs to resolve the element back in ENG.
+        Assert.Equal(IModelId, segment.InfoSource?.UUID);
+        Assert.NotEqual(segment.InfoSource?.UUID, segment.RegistrationSite?.UUID);
+    }
+
+    [Fact]
+    public void Registration_site_is_omitted_when_the_twin_is_unknown()
+    {
+        var bod = Builder().Build(Marker(), [Element()], Guid.Empty, "corr-6");
+
+        // Unscoped rather than scoped to Guid.Empty. An empty guid is a value a
+        // receiver would file against, which would collect the segments of every
+        // twin whose owner could not be resolved into one scope.
+        Assert.Null(FirstSegment(bod).RegistrationSite);
     }
 
     [Fact]

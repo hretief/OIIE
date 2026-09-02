@@ -8,8 +8,11 @@
 
     The sandbox is ONE App Service:
 
-      oiie-sandbox-{env}  the API. Owns /admin and /health, runs the inbox pump
-                          and outbox dispatcher.
+      oiie-sandbox-{env}  the API. Owns /admin and /health.
+
+    The inbox pump and outbox dispatcher no longer run here: per DR-022 the ENG
+    and REG-LOCATION engines own publish and ingest, so the sandbox copies were
+    removed rather than migrated.
 
     The Blazor operator UI that used to deploy alongside it (oiie-simhost-{env})
     has been removed -- the demo uses the TypeScript UI in WorkflowOrchestration/,
@@ -54,10 +57,42 @@ param(
     [string]$SqlServer = 'acme-sql-server',
     [string]$SubscriptionId,
 
-    [string]$IsbmApp = 'isbm-func-44p2f3n6dv7p4',
+    [string]$IsbmApp = 'acme-api-isbm-dev',
+
+    # The customer-system emulators the ENG and stewardship panels read through
+    # to. Named per environment rather than hardcoded so a demo can point at a
+    # different set than dev.
+    #
+    # Leave either empty to keep that panel on the sandbox's own participants,
+    # which is what a deployment without the provider apps should do.
+    [string]$EngApp = 'acme-api-eng-dev',
+    [string]$RegLocationApp = 'acme-api-reglocation-dev',
+
+    # The integration engine behind ENG. Separate from the provider app: it
+    # carries the SyncSites publish that add-iTwin triggers.
+    [string]$EngEngineApp = 'acme-engn-eng-dev',
 
     # Only needed when a per-developer database is being deployed.
     [string]$Alias,
+
+    # Deploy without a SQL database.
+    #
+    # Per DR-022 the sandbox database is being removed: ENG and REG-LOCATION now
+    # read through the provider apps, and the engines own publish/ingest. When both
+    # providers are configured the panels never touch a DbContext, so requiring a
+    # database would block a deployment on a dependency it no longer uses.
+    #
+    # The startup schema and classification calls are already wrapped in try/catch
+    # and only log warnings, so the site boots. What stays degraded is anything
+    # genuinely DB-backed: scenario runs, classification seeding, and the sandbox
+    # fallback sources for any panel whose provider is NOT configured.
+    [switch]$NoDatabase,
+
+    # Overrides the derived database name. The derived names carry the sandbox's
+    # own convention (oiie-sandbox-*), which predates the acme-*-dev grouping the
+    # participant services use. Naming one explicitly keeps a deployment from
+    # being the odd resource out.
+    [string]$DatabaseName,
 
     [string]$PlanSku = 'B1',
 
@@ -128,22 +163,31 @@ foreach ($tool in @('az', 'dotnet')) {
     }
 }
 
-if ($Environment -eq 'dev' -and [string]::IsNullOrWhiteSpace($Alias)) {
-    throw '-Alias is required for the dev environment.'
+if ($Environment -eq 'dev' -and -not $NoDatabase -and
+    [string]::IsNullOrWhiteSpace($Alias) -and [string]::IsNullOrWhiteSpace($DatabaseName)) {
+    throw '-Alias is required for the dev environment (it names the per-developer database). Use -DatabaseName to name one explicitly, or -NoDatabase to deploy without one.'
 }
 
-$databaseName = switch ($Environment) {
-    'dev' { "oiie-sandbox-dev-$Alias" }
-    'ci' { 'oiie-sandbox-ci' }
-    'demo' { 'oiie-sandbox-demo' }
-}
+# Bicep only references the SQL server as an existing resource and passes this
+# through as the Sandbox__Database app setting; it never creates a database. With
+# -NoDatabase the setting is left empty so nothing advertises a database that is
+# not there.
+$databaseName = if ($NoDatabase) { '' }
+    elseif (-not [string]::IsNullOrWhiteSpace($DatabaseName)) { $DatabaseName }
+    else {
+        switch ($Environment) {
+            'dev' { "oiie-sandbox-dev-$Alias" }
+            'ci' { 'oiie-sandbox-ci' }
+            'demo' { 'oiie-sandbox-demo' }
+        }
+    }
 
 $apiAppName = "oiie-sandbox-$Environment"
 $isbmBaseUrl = "https://$IsbmApp.azurewebsites.net/api"
 
 Write-Host "Environment : $Environment"
 Write-Host "API         : $apiAppName"
-Write-Host "Database    : $databaseName"
+Write-Host "Database    : $(if ($NoDatabase) { 'none (-NoDatabase; scenario runs and classification seeding stay unavailable)' } else { $databaseName })"
 Write-Host "Storage     : $StorageAccount"
 Write-Host ''
 
@@ -174,11 +218,16 @@ if ($DeleteLegacyUi) {
 # The database must already exist. Deploying an app that cannot reach its database
 # produces a running site that fails on every request, which is worse than a
 # deployment that refuses to start.
-& az sql db show --resource-group $ResourceGroup --server $SqlServer `
-    --name $databaseName --query name -o tsv 2>$null | Out-Null
+#
+# Skipped under -NoDatabase, where having no database is the intent rather than a
+# misconfiguration.
+if (-not $NoDatabase) {
+    & az sql db show --resource-group $ResourceGroup --server $SqlServer `
+        --name $databaseName --query name -o tsv 2>$null | Out-Null
 
-if ($LASTEXITCODE -ne 0) {
-    throw "Database '$databaseName' does not exist. Run deploy/provision.ps1 -Environment $Environment first."
+    if ($LASTEXITCODE -ne 0) {
+        throw "Database '$databaseName' does not exist. Run deploy/provision.ps1 -Environment $Environment first, or pass -NoDatabase."
+    }
 }
 
 # --- Infrastructure --------------------------------------------------------
@@ -257,6 +306,99 @@ if (-not $SkipInfrastructure) {
     Write-Host "  ui  identity: $($outputs.uiPrincipalId.value)"
     Write-Host '  role assignments can take a few minutes to propagate'
 }
+
+# --- Provider read-through -------------------------------------------------
+#
+# The ENG and stewardship panels read the deployed customer-system emulators
+# rather than the sandbox's own participants. The keys are fetched here rather
+# than held in the template or the repo: they are rotatable secrets, and a
+# deployment is the only place that legitimately needs to know them.
+#
+# Set outside the Bicep deployment because these are additive settings on an
+# existing site. A provider whose key cannot be read is left unconfigured, and
+# the API falls back to the sandbox participants for that panel -- a degraded
+# but working demo, rather than a panel of authentication errors.
+
+function Set-ProviderSettings {
+    param(
+        [Parameter(Mandatory)][string]$AppName,
+        [Parameter(Mandatory)][string]$SettingPrefix,
+        [Parameter(Mandatory)][string]$Label
+    )
+
+    if ([string]::IsNullOrWhiteSpace($AppName)) {
+        Write-Host "  $Label`: not configured, panel stays on sandbox data"
+        return
+    }
+
+    $key = & az functionapp keys list -g $ResourceGroup -n $AppName `
+        --query functionKeys.default -o tsv 2>$null
+
+    if ($LASTEXITCODE -ne 0 -or -not $key) {
+        Write-Warning "  $Label`: could not read a function key for '$AppName'. Panel stays on sandbox data."
+        return
+    }
+
+    $baseUrl = "https://$AppName.azurewebsites.net/api"
+
+    # Double underscore is the configuration separator: Providers__Eng__BaseUrl
+    # binds to Providers:Eng:BaseUrl.
+    Invoke-Az @(
+        'webapp', 'config', 'appsettings', 'set',
+        '--resource-group', $ResourceGroup,
+        '--name', $apiAppName,
+        '--settings',
+        "$SettingPrefix`__BaseUrl=$baseUrl",
+        "$SettingPrefix`__Key=$key",
+        '-o', 'none'
+    ) -Because "$Label provider settings"
+
+    Write-Host "  $Label`: $baseUrl"
+}
+
+Write-Host 'Configuring provider read-through...'
+Set-ProviderSettings -AppName $EngApp -SettingPrefix 'Providers__Eng' -Label 'ENG'
+Set-ProviderSettings -AppName $RegLocationApp -SettingPrefix 'Providers__RegLocation' -Label 'REG-LOCATION'
+
+# Read-through and the SyncSites bootstrap are configured separately: the
+# Providers__* settings above drive the panels, while EngEngineClient reads the
+# Sandbox__* pair below. Setting only the first leaves add-iTwin recording the
+# twin and reporting that it was never announced, which is how a working panel
+# and a silent engine coexisted.
+function Set-EngBootstrapSettings {
+    param(
+        [Parameter(Mandatory)][string]$ProviderApp,
+        [Parameter(Mandatory)][string]$EngineApp
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ProviderApp) -or [string]::IsNullOrWhiteSpace($EngineApp)) {
+        Write-Host '  ENG bootstrap: not configured, SyncSites will not be published'
+        return
+    }
+
+    $engineKey = & az functionapp keys list -g $ResourceGroup -n $EngineApp `
+        --query functionKeys.default -o tsv 2>$null
+
+    if ($LASTEXITCODE -ne 0 -or -not $engineKey) {
+        Write-Warning "  ENG bootstrap: could not read a function key for '$EngineApp'."
+        return
+    }
+
+    Invoke-Az @(
+        'webapp', 'config', 'appsettings', 'set',
+        '--resource-group', $ResourceGroup,
+        '--name', $apiAppName,
+        '--settings',
+        "Sandbox__EngProviderBaseUrl=https://$ProviderApp.azurewebsites.net/api",
+        "Sandbox__EngEngineBaseUrl=https://$EngineApp.azurewebsites.net/api",
+        "Sandbox__EngEngineKey=$engineKey",
+        '-o', 'none'
+    ) -Because 'ENG bootstrap settings'
+
+    Write-Host "  ENG bootstrap: provider $ProviderApp, engine $EngineApp"
+}
+
+Set-EngBootstrapSettings -ProviderApp $EngApp -EngineApp $EngEngineApp
 
 # --- Build and deploy ------------------------------------------------------
 

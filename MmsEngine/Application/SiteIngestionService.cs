@@ -168,7 +168,11 @@ public sealed class SiteIngestionService(
 
         var envelope = BodEnvelope.Parse(message.Content.ToString());
 
-        if (!envelope.Is("Sync", "Site"))
+        // "Sites", plural: the noun is the BOD's root name with the verb
+        // removed, so SyncSites yields Sites. The singular matched nothing, and
+        // an unrecognised BOD is skipped rather than failed, so this leg
+        // reported success while registering no sites at all.
+        if (!envelope.Is("Sync", "Sites"))
         {
             logger.LogDebug(
                 "Publication {MessageId} was {Verb}{Noun}, which this leg does not handle.",

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import * as api from './api'
 import * as itwin from './itwin'
 import * as auth from './auth'
@@ -677,8 +677,8 @@ const MATURITY_LABEL: Record<api.TagMaturity, string> = {
  */
 function gateFindings(seg: api.Tag): string[] {
   const missing: string[] = []
-  if (!seg.classKey) missing.push('class key')
-  if (!seg.serviceDescription) missing.push('service description')
+  if (!seg.classKey) missing.push('ECClass')
+  if (!seg.serviceDescription) missing.push('UserLabel')
   return missing
 }
 
@@ -759,29 +759,6 @@ function usePersistedState<T>(key: string, fallback: T, isValid: (v: unknown) =>
   return [value, setValue] as const
 }
 
-/**
- * A coded MMS column: the friendly name with its underlying id kept alongside.
- *
- * MMS stores these as bare ids against reference tables, and operators work in
- * both registers -- they read the name but quote the id. Three cases are
- * distinguished rather than collapsed into one blank:
- *
- *   name + id   the normal resolved case
- *   id, no name a dangling reference; the reference table has no such row, and
- *               hiding it would silently misreport the data as empty
- *   no id       genuinely unset, which is legitimate for a nullable column
- */
-const CodedValue = ({ name, id }: { name: string | null; id: number | null }) => {
-  if (id === null) return <span style={{ color: 'var(--text-muted)' }}>—</span>
-
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5 }}>
-      {name ?? <span style={{ color: '#f59e0b' }}>UNRESOLVED</span>}
-      <span style={{ fontSize: '8px', color: 'var(--text-muted)' }}>#{id}</span>
-    </span>
-  )
-}
-
 function SegmentTable({ segments, selected, onToggle, onToggleAll, accent, dimBg }: { segments: Segment[]; selected: Set<string>; onToggle: (id: string) => void; onToggleAll: () => void; accent: string; dimBg: string }) {
   const allSel = segments.length > 0 && segments.every(s => selected.has(s.uuid))
   return (
@@ -829,13 +806,15 @@ function SegmentTable({ segments, selected, onToggle, onToggleAll, accent, dimBg
  * which these segments enrich. Adding one is ordinary, incremental work -- the
  * deliberate act is publishing them as a Named Version.
  *
- * "Segment" throughout the UI; the API calls the same record a Tag, which is the
- * process-industry word for it. Infrastructure does not use "tag", so the screens
- * say segment and only the wire types in api.ts keep the server's name.
+ * The columns use EC's own names for the fields behind them: CODEVALUE is the
+ * segment short name, USERLABEL its full name, ECCLASS the class CodeValue, and
+ * FEDERATIONGUID its stable identity. Only the wire types in api.ts differ,
+ * keeping the legacy server names at the boundary.
  *
- * The maturity column is the engine's own lifecycle rather than a status this
- * app maintains: a segment is authored WorkInProgress and only becomes Published
- * by being included in a promoted Named Version.
+ * Maturity is not a column. It is the engine's own lifecycle rather than a
+ * status this app maintains -- a segment is authored WorkInProgress and becomes
+ * Published only by being included in a promoted Named Version -- so it is left
+ * to the filter above the table rather than repeated on every row.
  */
 function SegmentTableLive({ segments, accent, dimBg, loading, error, selectedId, onSelect }: {
   segments: api.Tag[]
@@ -851,26 +830,23 @@ function SegmentTableLive({ segments, accent, dimBg, loading, error, selectedId,
       <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
         <thead>
           <tr style={{ borderBottom: '1px solid var(--border-mid)' }}>
-            <TH>SEGMENT NUMBER</TH>
-            <TH>SERVICE DESCRIPTION</TH>
-            <TH>UNIT</TH>
-            <TH>CLASS</TH>
-            <TH>RANGE</TH>
-            <TH>FEDERATION ID</TH>
-            <TH>MATURITY</TH>
+            <TH>CODEVALUE</TH>
+            <TH>USERLABEL</TH>
+            <TH>ECCLASS</TH>
+            <TH>FEDERATIONGUID</TH>
           </tr>
         </thead>
         <tbody>
           {error ? (
-            <tr><td colSpan={7} style={{ padding: '32px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '11px', color: '#f87171' }}>
+            <tr><td colSpan={4} style={{ padding: '32px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '11px', color: '#f87171' }}>
               {error}
             </td></tr>
           ) : loading ? (
-            <tr><td colSpan={7} style={{ padding: '48px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
+            <tr><td colSpan={4} style={{ padding: '48px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
               loading segments&hellip;
             </td></tr>
           ) : segments.length === 0 ? (
-            <tr><td colSpan={7} style={{ padding: '48px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
+            <tr><td colSpan={4} style={{ padding: '48px', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
               <div style={{ opacity: 0.4, fontSize: 24, marginBottom: 8 }}>◎</div>No segments in this twin yet
             </td></tr>
           ) : segments.map(seg => (
@@ -918,18 +894,14 @@ function SegmentRow({ seg, accent, dimBg, isSelected, onSelect }: {
       <td style={{ padding: '9px 8px', fontSize: '11px', color: seg.serviceDescription ? 'var(--text-primary)' : '#f59e0b', maxWidth: 260 }}>
         {seg.serviceDescription || 'missing'}
       </td>
-      <td style={{ padding: '9px 8px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-secondary)' }}>{seg.unitNumber || '—'}</td>
       <td style={{ padding: '9px 8px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: seg.classKey ? 'var(--text-muted)' : '#f59e0b' }}>
         {seg.classKey || 'missing'}
       </td>
-      <td style={{ padding: '9px 8px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
-        {seg.rangeMinimum !== null && seg.rangeMaximum !== null ? `${seg.rangeMinimum}–${seg.rangeMaximum}` : '—'}
-      </td>
-      <td style={{ padding: '9px 8px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>{seg.federationId ? `${seg.federationId.slice(0, 8)}…` : '—'}</td>
-      <td style={{ padding: '9px 8px', whiteSpace: 'nowrap' }}>
-        <Pill label={MATURITY_LABEL[seg.maturity]} color={MATURITY_COLOR[seg.maturity]} />
-        {/* Flagged on the row rather than only at publish time: this one segment
-            would hold back the whole Named Version. */}
+      <td style={{ padding: '9px 8px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+        {seg.federationId ? `${seg.federationId.slice(0, 8)}…` : '—'}
+        {/* Moved here with the maturity column's removal rather than dropped:
+            this one segment would hold back the whole Named Version, and that
+            is worth knowing on the row rather than at publish time. */}
         {missing.length > 0 && (
           <span
             title={`Blocks publication — ${missing.join(' and ')} required`}
@@ -1253,9 +1225,8 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, iModels, iM
   onDismissError: () => void
   onCancelEdit: () => void
 }) {
-  const [segmentNumber, setSegmentNumber] = useState('')
-  const [serviceDescription, setServiceDescription] = useState('')
-  const [unitNumber, setUnitNumber] = useState('')
+  const [shortName, setShortName] = useState('')
+  const [fullName, setFullName] = useState('')
   const [classKey, setClassKey] = useState('')
   const [federationId, setFederationId] = useState('')
   const [suggesting, setSuggesting] = useState(false)
@@ -1268,9 +1239,8 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, iModels, iM
   // Keying on the id means picking a different row re-seeds the form, while
   // typing within one row does not.
   useEffect(() => {
-    setSegmentNumber(editing?.tagNumber ?? '')
-    setServiceDescription(editing?.serviceDescription ?? '')
-    setUnitNumber(editing?.unitNumber ?? '')
+    setShortName(editing?.tagNumber ?? '')
+    setFullName(editing?.serviceDescription ?? '')
     setClassKey(editing?.classKey ?? '')
     setFederationId(editing?.federationId ?? '')
   }, [editing?.id])
@@ -1288,8 +1258,23 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, iModels, iM
   // when editing, so segments authored before the field existed remain editable.
   const needsIModel = !editing && !iModelId
 
+  // Kept to detect a rebinding: changing an identity that was already set is
+  // allowed, because the first assignment can be a mistake, but it is not the
+  // same act as filling in a blank one and is warned about below.
+  const originalFederationId = editing?.federationId ?? ''
+  const rebindingFederationId =
+    originalFederationId.length > 0 &&
+    trimmedFederationId.length > 0 &&
+    trimmedFederationId.toLowerCase() !== originalFederationId.trim().toLowerCase()
+
+  // Business rule, not a database constraint: the column is nullable, but an
+  // element with no federated identity cannot be bound by anything downstream,
+  // and the sandbox exists to demonstrate that binding.
+  const needsFederationId = trimmedFederationId.length === 0
+
   const canSubmit =
-    segmentNumber.trim().length > 0 && !federationIdMalformed && !needsIModel && !busy
+    shortName.trim().length > 0 && !federationIdMalformed && !needsIModel &&
+    !needsFederationId && !busy
 
   async function suggest() {
     setSuggesting(true)
@@ -1308,34 +1293,38 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, iModels, iM
   // Advisory only. The server decides, but naming the gap here means the user
   // learns it while the fields are in front of them rather than at publish time.
   const willBlock = [
-    classKey.trim() ? null : 'class key',
-    serviceDescription.trim() ? null : 'service description',
+    classKey.trim() ? null : 'ECClass',
+    fullName.trim() ? null : 'UserLabel',
   ].filter((x): x is string => x !== null)
 
   function submit() {
     if (!canSubmit) return
 
     onSubmit({
-      // tagNumber is the wire field: the API's name for this, kept only here at
-      // the boundary so the rest of the UI can speak in segments.
-      tagNumber: segmentNumber.trim(),
-      serviceDescription: serviceDescription.trim() || undefined,
-      unitNumber: unitNumber.trim() || undefined,
+      // tagNumber and serviceDescription are the wire fields: the API's legacy
+      // names, kept only here at the boundary so the rest of the UI can speak
+      // EC. They carry CodeValue and UserLabel respectively.
+      tagNumber: shortName.trim(),
+      serviceDescription: fullName.trim() || undefined,
       classKey: classKey.trim() || undefined,
-      // Omitted when editing. The server ignores it on an existing segment, and
-      // sending it anyway would imply the field is in play when it is not.
-      federationId: editing ? undefined : trimmedFederationId || undefined,
-      // Omitted when editing for the same reason as the identity: the model a
-      // segment was drawn in is not changed by correcting its description.
-      iModelId: editing ? undefined : iModelId ?? undefined,
+      // Always sent, on create and edit alike. The server requires it in both
+      // cases, and a changed value here is a deliberate correction.
+      federationId: trimmedFederationId || undefined,
+      // ENG scopes the upsert by model, so it is required even on an edit.
+      // When editing this is the element's own model, not the picker's -- the
+      // model a segment was drawn in is not changed by correcting its label.
+      iModelId: editing ? editing.iModelId : iModelId ?? undefined,
+      // Identifies the element to change. Absent when authoring, which is what
+      // tells the server to create rather than update.
+      elementId: editing ? editing.id : undefined,
     })
 
     // Only when authoring. After an edit the fields stay as submitted, so the
     // result is visible against the row that was just changed.
     if (!editing) {
-      // The number is cleared because it must be unique; the rest is kept, since
-      // segments are usually authored in runs that share a unit and a class.
-      setSegmentNumber('')
+      // The short name is cleared because it must be unique; the rest is kept,
+      // since segments are usually authored in runs that share a type.
+      setShortName('')
       // Cleared for a stronger reason: an identity names exactly one entity, so
       // leaving it populated would have the next segment authored in this run
       // claim the identity of the one just saved.
@@ -1404,17 +1393,21 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, iModels, iM
             ))}
           </select>
         </label>
-        {/* Read-only while editing: the number is the key the upsert matches on,
-            so changing it would silently author a second segment rather than
-            rename this one. */}
-        {field('SEGMENT NUMBER *', segmentNumber, setSegmentNumber, 'TIC-106', 150, editing !== null)}
-        {field('SERVICE DESCRIPTION', serviceDescription, setServiceDescription, 'Top temperature control', 220)}
-        {field('UNIT', unitNumber, setUnitNumber, '101', 70)}
-        {/* Chosen, not typed. A key ENG cannot bind produces a proposal that
+        {/* Editable on an edit: the upsert matches on ECInstanceId, not the
+            code, so changing this renames the element in place rather than
+            authoring a second one.
+
+            Still marked required. ENG's column is nullable, but both write
+            paths refuse a blank code -- ENG allocates none, so an element with
+            no code has nothing to name it. Offering a field the server would
+            reject would be a worse lie than the asterisk. */}
+        {field('CODEVALUE *', shortName, setShortName, 'TIC-106', 150)}
+        {field('USERLABEL', fullName, setFullName, 'Top temperature control', 220)}
+        {/* Chosen, not typed. A type ENG cannot bind produces a proposal that
             arrives at the registry unbound or degraded, which is only visible
             after publication -- far too late to be useful. */}
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 300 }}>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '8px', color: 'var(--text-muted)', letterSpacing: '0.1em' }}>CLASS KEY</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '8px', color: 'var(--text-muted)', letterSpacing: '0.1em' }}>ECCLASS</span>
           <select
             value={classKey}
             onChange={e => setClassKey(e.target.value)}
@@ -1445,36 +1438,37 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, iModels, iM
             they hold the same pump. Minting a fresh one instead would produce a
             second identity for one thing, with nothing to relate them.
 
-            Read-only while editing: the identity is fixed for the entity's
-            lifetime, and changing it would orphan every downstream record
-            already keyed to the old value. */}
+            Editable throughout, including on an element that already has one.
+            A first assignment can be wrong -- a mistyped paste, or a guid
+            adopted from the wrong register entry -- and there is no other
+            place to correct it. Rebinding is a real consequence, so the
+            warning below is shown rather than the field being locked. */}
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 300 }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '8px', color: 'var(--text-muted)', letterSpacing: '0.1em' }}>
-            FEDERATION ID {editing ? '(FIXED)' : '(OPTIONAL)'}
+            FEDERATIONGUID *
           </span>
           <div style={{ display: 'flex', gap: 4 }}>
             <input
               value={federationId}
-              placeholder={editing ? '' : 'paste from tag register, or suggest'}
-              readOnly={editing !== null}
+              placeholder='paste from tag register, or suggest'
               onChange={e => setFederationId(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') submit() }}
               style={{
                 flex: 1,
                 minWidth: 0,
-                background: editing ? 'var(--bg-surface)' : 'var(--bg-panel)',
+                background: 'var(--bg-panel)',
                 border: `1px solid ${federationIdMalformed ? 'rgba(248,113,113,0.6)' : 'var(--border-mid)'}`,
                 borderRadius: '3px',
-                color: editing ? 'var(--text-muted)' : 'var(--text-primary)',
+                color: 'var(--text-primary)',
                 fontFamily: 'var(--font-mono)',
                 fontSize: '11px',
                 padding: '5px 8px',
                 outline: 'none',
               }}
             />
-            {/* Only when authoring. There is nothing to suggest for a segment
-                that already has an identity. */}
-            {!editing && (
+            {/* Offered on edit too: correcting a wrong identity on an element
+                that has none to adopt needs the same mint as authoring. */}
+            {(
               <button
                 onClick={() => void suggest()}
                 disabled={suggesting}
@@ -1501,7 +1495,7 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, iModels, iM
         <button
           onClick={submit}
           disabled={!canSubmit}
-          title={canSubmit ? (editing ? 'Save changes to this segment' : 'Author this segment in the selected twin') : 'Enter a segment number first'}
+          title={canSubmit ? (editing ? 'Save changes to this segment' : 'Author this segment in the selected twin') : 'Enter a CodeValue first'}
           style={{
             background: canSubmit ? dimBg : 'transparent',
             border: `1px solid ${canSubmit ? accent : 'var(--border-mid)'}`,
@@ -1515,20 +1509,31 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, iModels, iM
             padding: '6px 16px',
           }}
         >
-          {busy ? 'SAVING…' : editing ? 'UPDATE SEGMENT' : 'CREATE SEGMENT'}
+          {busy ? 'SAVING…' : editing ? 'UPDATE ELEMENT' : 'CREATE ELEMENT'}
         </button>
-        {/* The button is disabled until there is a segment number, which on an
+        {/* The button is disabled until there is a CodeValue, which on an
             empty form looks indistinguishable from a button that does nothing.
             Now that a malformed identity also disables it, the reason has to be
             named -- otherwise a filled-in form with a bad paste reads as broken. */}
         {!canSubmit && !busy && (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: federationIdMalformed ? '#f87171' : 'var(--text-muted)', paddingBottom: 6 }}>
-            {federationIdMalformed ? 'federation id is not a valid UUID' : 'enter a segment number'}
+            {federationIdMalformed ? 'FederationGuid is not valid'
+              : shortName.trim().length === 0 ? 'enter a CodeValue'
+              : needsFederationId ? 'enter a FederationGuid, or suggest one'
+              : 'select an iModel'}
           </span>
         )}
         {canSubmit && willBlock.length > 0 && (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: '#f59e0b', paddingBottom: 6 }}>
             ⚠ without {willBlock.join(' and ')} this blocks publication
+          </span>
+        )}
+        {/* Changing an identity that was already set is permitted, but it is
+            not a cosmetic edit: anything downstream holding the old guid stops
+            resolving. Shown so the correction is made knowingly. */}
+        {canSubmit && rebindingFederationId && (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: '#f59e0b', paddingBottom: 6 }}>
+            ⚠ rebinding identity — records keyed to the old FederationGuid will not follow
           </span>
         )}
       </div>
@@ -1984,7 +1989,7 @@ export default function App() {
   }
 
   if (state.status === 'loading') {
-    return <AuthScreen title="WORKFLOW ORCHESTRATOR" detail="Checking your Bentley IMS session…" />
+    return <AuthScreen title="OPEN INDUSTRIAL INTEROPERABILITY ECOSYSTEM" detail="Checking your Bentley IMS session…" />
   }
 
   if (state.status === 'unauthenticated') {
@@ -2045,22 +2050,11 @@ function Workspace({ user }: { user: CurrentUser }) {
   // OIIE ecosystem can see. Named engSegments because `segments` above is the
   // seeded mock list and the two must not be confused.
   const [engSegments, setEngSegments] = useState<api.Tag[]>([])
-  // What MMS actually holds for the selected twin. Distinct from the segment
-  // lifecycle above: these rows exist in LIGHT_SYSTEM_INVENTORY whether or not
-  // anything was ever handed over, so an empty segment list does not imply an
-  // empty repository.
-  const [mmsInventory, setMmsInventory] = useState<api.MmsInventory | null>(null)
-  const [mmsLoading, setMmsLoading] = useState(false)
-  const [mmsError, setMmsError] = useState<string | null>(null)
-  // What CMS's own ASSET table holds. Deliberately unscoped: these rows are the
-  // customer's asset register, and the panel exists to show all of it rather
-  // than only what the registry currently relates to the selected twin.
-  const [cmsAssets, setCmsAssets] = useState<api.CmsAsset[]>([])
-  const [cmsLoading, setCmsLoading] = useState(false)
-  const [cmsError, setCmsError] = useState<string | null>(null)
-  // Which light system's detail is open, keyed by LIGHT_SYSTEM_ID. Single-valued:
-  // opening one closes the other, so the grid stays scannable.
-  const [expandedLightSystem, setExpandedLightSystem] = useState<number | null>(null)
+  // MMS and CMS are deliberately NOT backed by the sandbox. Like GIS, they run on
+  // the seeded arrays above and act only as the receiving end of a handover, so
+  // the panels stay meaningful without a participant service behind them.
+  // Reconnecting one means giving it a provider and a source, the way ENG and
+  // REG-LOCATION are wired -- not pointing it back at the sandbox's own tables.
   const [engLoading, setEngLoading] = useState(false)
   const [engError, setEngError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -2094,6 +2088,12 @@ function Workspace({ user }: { user: CurrentUser }) {
   // ENG's reference data, offered in the class picker.
   const [engClasses, setEngClasses] = useState<api.ClassDefinition[]>([])
 
+  // Whether the ENG panel is reading the deployed app or the sandbox's own
+  // participant. Recorded because it decides which catalog the picker may
+  // offer: an rdl:* key is meaningless to the deployed ENG app, and offering
+  // one would produce a segment the save refuses.
+  const [engProviderBacked, setEngProviderBacked] = useState(false)
+
   // Published segments are finished work, so the table opens on what is still
   // pending and the filter is there when the rest is wanted.
   const [maturityFilter, setMaturityFilter] = useState<MaturityFilter>('Pending')
@@ -2120,11 +2120,11 @@ function Workspace({ user }: { user: CurrentUser }) {
       const reset = await api.resetDayZero()
       await api.bootstrapCir()
 
+      // Only the sandbox-backed panels are refreshed. MMS and CMS hold seeded
+      // rows that a reset does not invalidate, because nothing wrote them.
       await Promise.all([
         refreshSegments(),
         refreshStewardship(),
-        refreshCmsAssets(),
-        refreshMmsInventory(),
       ])
 
       // Local view state has no meaning against regenerated data.
@@ -2267,6 +2267,7 @@ function Workspace({ user }: { user: CurrentUser }) {
       const result = await api.listTags(activeTwin.uuid, signal)
       if (signal?.aborted) return
       setEngSegments(result.tags)
+      setEngProviderBacked(result.providerBacked ?? false)
       setEngError(null)
     } catch (err) {
       if (signal?.aborted) return
@@ -2345,71 +2346,14 @@ function Workspace({ user }: { user: CurrentUser }) {
     setIModelId(iModels.length === 1 ? iModels[0].iModelId : null)
   }, [iModels, iModelId])
 
-  // ── Loading MMS's inventory ────────────────────────────────────────────────
+  // ── MMS and CMS: not backed by the sandbox ─────────────────────────────────
   //
-  // Fetched whenever MMS is the persona, for whichever twin is selected. The
-  // repository holds these rows independently of the handover workflows, so they
-  // are shown on their own terms rather than as the result of a scenario run.
-  const refreshMmsInventory = useCallback(async (signal?: AbortSignal) => {
-    if (!activeTwin) {
-      setMmsInventory(null)
-      return
-    }
-
-    setMmsLoading(true)
-
-    try {
-      const result = await api.listMmsLocations(activeTwin.uuid, signal)
-      if (signal?.aborted) return
-      setMmsInventory(result)
-      setMmsError(null)
-    } catch (err) {
-      if (signal?.aborted) return
-      setMmsError(err instanceof Error ? err.message : String(err))
-      // Cleared rather than left in place: stale rows under a new twin would
-      // read as that twin's inventory.
-      setMmsInventory(null)
-    } finally {
-      if (!signal?.aborted) setMmsLoading(false)
-    }
-  }, [activeTwin])
-
-  useEffect(() => {
-    if (persona !== 'MMS') return
-    const abort = new AbortController()
-    void refreshMmsInventory(abort.signal)
-    return () => abort.abort()
-  }, [persona, refreshMmsInventory])
-
-  // ── Loading CMS's asset register ────────────────────────────────────────────
-  //
-  // Read without a twin filter. CMS assets are created as identification-only
-  // placeholders when a segment is accepted, and the operator wants to see every
-  // one of them, so scoping here would hide rows for reasons that belong to the
-  // registry rather than to CMS.
-  const refreshCmsAssets = useCallback(async (signal?: AbortSignal) => {
-    setCmsLoading(true)
-
-    try {
-      const result = await api.listCmsAssets(undefined, signal)
-      if (signal?.aborted) return
-      setCmsAssets(result.records)
-      setCmsError(null)
-    } catch (err) {
-      if (signal?.aborted) return
-      setCmsError(err instanceof Error ? err.message : String(err))
-      setCmsAssets([])
-    } finally {
-      if (!signal?.aborted) setCmsLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (persona !== 'CMS') return
-    const abort = new AbortController()
-    void refreshCmsAssets(abort.signal)
-    return () => abort.abort()
-  }, [persona, refreshCmsAssets])
+  // Both have no loader, by choice. Reading them back out of the sandbox meant
+  // maintaining participant tables for systems the sandbox does not own, which
+  // cost more than the panels returned. They behave as GIS does: a receiving
+  // inbox driven by the workflow steps over the seeded rows. Reconnecting one
+  // means giving it a provider and a source, the way ENG and REG-LOCATION are
+  // wired.
 
   // Switching twins abandons any edit in progress. The segment being edited
   // belongs to the twin that was selected, and leaving it loaded would let a
@@ -2421,18 +2365,30 @@ function Workspace({ user }: { user: CurrentUser }) {
 
   // ── Loading ENG's reference data ─────────────────────────────────────────
   //
-  // Fetched once: reference data is fixture-loaded per participant and does not
-  // change while the app is open. A failure is not surfaced -- the picker simply
-  // has nothing to offer, which the empty state explains.
+  // Which catalog depends on where segments are actually stored, so this waits
+  // for the segment load to answer that rather than guessing.
+  //
+  // When the deployed ENG app is backing the panel, the picker must offer ENG's
+  // own classes: those are the only keys it can resolve to an identifier, and a
+  // save carrying anything else is refused. When the sandbox is backing it, its
+  // own reference data is correct and richer — it is what makes the degraded
+  // binding demo work at all.
+  //
+  // A failure is not surfaced — the picker simply has nothing to offer, which
+  // the empty state explains.
   useEffect(() => {
     const abort = new AbortController()
 
-    api.listClasses('eng', abort.signal)
+    const load = engProviderBacked
+      ? api.listEngElementClasses(abort.signal)
+      : api.listClasses('eng', abort.signal)
+
+    load
       .then(setEngClasses)
       .catch(() => { /* picker renders its own empty state */ })
 
     return () => abort.abort()
-  }, [])
+  }, [engProviderBacked])
 
   // ── Loading the stewardship queue ────────────────────────────────────────
 
@@ -2491,8 +2447,7 @@ function Workspace({ user }: { user: CurrentUser }) {
    * still considering, and approval is not reversible from here.
    *
    * The queue is re-read afterwards so the states shown are the registry's, not
-   * a guess, and MMS is re-read too since approval is what puts the location
-   * within its reach.
+   * a guess. MMS is not re-read: it is no longer backed by the sandbox.
    */
   async function approveProposals() {
     const ids = stewardship
@@ -2506,9 +2461,7 @@ function Workspace({ user }: { user: CurrentUser }) {
       const result = await api.approveStewardship(ids)
       setSelectedProposals(new Set())
       await refreshStewardship()
-      // Approval republishes to the O&M channel, so what MMS holds has changed.
-      if (activeTwin) await refreshMmsInventory()
-      flash(`${result.approved} approved — ${result.locationCodes.length} location code(s) minted`)
+      flash(`${result.approved} approved`)
     } catch (err) {
       // Surfaced against the queue rather than as a toast: an approval that
       // failed is a decision that did not happen, and the reason must stay put.
@@ -2894,7 +2847,7 @@ function Workspace({ user }: { user: CurrentUser }) {
       <header style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border-subtle)', padding: '0 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 52, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <div style={{ width: 18, height: 18, borderRadius: '4px', background: 'linear-gradient(135deg, #3b82f6, #10b981)', flexShrink: 0 }} />
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, letterSpacing: '0.12em', color: 'var(--text-primary)' }}>WORKFLOW ORCHESTRATOR</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, letterSpacing: '0.12em', color: 'var(--text-primary)' }}>OPEN INDUSTRIAL INTEROPERABILITY ECOSYSTEM</span>
           <span style={{ color: 'var(--border-mid)', fontSize: '14px' }}>|</span>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.1em' }}>MULTI-APP PIPELINE v2.4.1</span>
         </div>
@@ -3054,179 +3007,6 @@ function Workspace({ user }: { user: CurrentUser }) {
               </section>
             )}
 
-            {/* ── CMS assets: what the customer's ASSET table actually holds ── */}
-            {persona === 'CMS' && (
-              <section>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.14em', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span>CMS ASSET REGISTER</span>
-                  <span style={{ background: p.dimBg, color: p.accent, padding: '1px 8px', borderRadius: '3px', fontWeight: 600 }}>
-                    {cmsAssets.length} ASSETS
-                  </span>
-                  <span style={{ color: 'var(--text-muted)', fontSize: '8px', letterSpacing: '0.1em', marginLeft: 4 }}>
-                    LIVE — GET /admin/cms/customer-assets
-                  </span>
-                  <button
-                    onClick={() => void refreshCmsAssets()}
-                    disabled={cmsLoading}
-                    style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--border-mid)', borderRadius: '3px', color: 'var(--text-secondary)', cursor: cmsLoading ? 'default' : 'pointer', fontSize: '9px', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', padding: '3px 10px', opacity: cmsLoading ? 0.5 : 1 }}
-                  >
-                    REFRESH
-                  </button>
-                </div>
-                <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: '6px', overflow: 'hidden' }}>
-                  {cmsError ? (
-                    <div style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#ef4444' }}>
-                      {cmsError}
-                    </div>
-                  ) : cmsLoading ? (
-                    <div style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
-                      LOADING…
-                    </div>
-                  ) : cmsAssets.length === 0 ? (
-                    <div style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
-                      NO ASSETS IN CMS
-                    </div>
-                  ) : (
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: '10px' }}>
-                      <thead>
-                        <tr style={{ background: 'var(--bg-inset)', color: 'var(--text-muted)', fontSize: '9px', letterSpacing: '0.1em' }}>
-                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>ASSET TAG</th>
-                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>NAME</th>
-                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>DESCRIPTION</th>
-                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>STATUS</th>
-                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>SITE_ID</th>
-                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>DETAIL</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {cmsAssets.map(asset => (
-                          <tr key={asset.assetId} style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                            <td style={{ padding: '7px 12px', color: p.accent }}>{asset.assetTag}</td>
-                            <td style={{ padding: '7px 12px' }}>{asset.assetName ?? '—'}</td>
-                            <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>{asset.description ?? '—'}</td>
-                            <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>{asset.operationalStatus ?? '—'}</td>
-                            <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>{asset.siteId}</td>
-                            <td style={{ padding: '7px 12px', color: 'var(--text-muted)' }}>
-                              {/* Placeholder is the honest state of a segment-derived
-                                  asset: identification only, until CONSTRUCT supplies
-                                  the nameplate through REG-ASSET. */}
-                              {asset.placeholder ? 'PLACEHOLDER' : 'COMPLETE'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              </section>
-            )}
-
-            {/* ── MMS inventory: what the repository actually holds ─────────── */}
-            {persona === 'MMS' && (
-              <section>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.14em', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span>MMS INVENTORY</span>
-                  <span style={{ background: p.dimBg, color: p.accent, padding: '1px 8px', borderRadius: '3px', fontWeight: 600 }}>
-                    {mmsInventory?.locations.length ?? 0} LIGHT SYSTEMS
-                  </span>
-                  {mmsInventory?.ownerName && (
-                    <span style={{ color: 'var(--text-secondary)', fontSize: '8px', letterSpacing: '0.1em' }}>
-                      OWNER_ID {mmsInventory.ownerId} · {mmsInventory.ownerName.toUpperCase()}
-                    </span>
-                  )}
-                  <span style={{ color: 'var(--text-muted)', fontSize: '8px', letterSpacing: '0.1em', marginLeft: 4 }}>
-                    LIVE — GET /admin/mms/locations
-                  </span>
-                  <button
-                    onClick={() => void refreshMmsInventory()}
-                    disabled={mmsLoading}
-                    style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--border-mid)', borderRadius: '3px', color: 'var(--text-secondary)', cursor: mmsLoading ? 'default' : 'pointer', fontSize: '9px', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', padding: '3px 10px', opacity: mmsLoading ? 0.5 : 1 }}
-                  >
-                    REFRESH
-                  </button>
-                </div>
-                <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: '6px', overflow: 'hidden' }}>
-                  {mmsError ? (
-                    <div style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#ef4444' }}>
-                      {mmsError}
-                    </div>
-                  ) : mmsLoading ? (
-                    <div style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
-                      LOADING…
-                    </div>
-                  ) : !mmsInventory?.resolved ? (
-                    // Unresolved is a registry state, not a failure: no MMS owner
-                    // is related to this twin in ws-CIR, so the inventory cannot be
-                    // scoped and showing all of it would leak another district's.
-                    <div style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.7 }}>
-                      NO MMS OWNER RELATED TO THIS ITWIN
-                      {mmsInventory?.reason && (
-                        <div style={{ fontSize: '9px', marginTop: 4 }}>{mmsInventory.reason}</div>
-                      )}
-                      <div style={{ fontSize: '9px', marginTop: 4 }}>
-                        RELATE IT WITH POST /admin/mms/owners/relate
-                      </div>
-                    </div>
-                  ) : mmsInventory.locations.length === 0 ? (
-                    <div style={{ padding: '14px 16px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
-                      OWNER RESOLVED, NO INVENTORY ROWS
-                    </div>
-                  ) : (
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: '10px' }}>
-                      <thead>
-                        <tr style={{ background: 'var(--bg-inset)', color: 'var(--text-muted)', fontSize: '9px', letterSpacing: '0.1em' }}>
-                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>LIGHT SYSTEM NAME</th>
-                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>CLASS</th>
-                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>STATUS</th>
-                          <th style={{ textAlign: 'left', padding: '7px 12px', fontWeight: 500 }}>OWNER</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {mmsInventory.locations.map(loc => {
-                          const open = expandedLightSystem === loc.lightSystemId
-
-                          return (
-                            <Fragment key={loc.lightSystemId}>
-                              <tr style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                                <td style={{ padding: '7px 12px' }}>
-                                  {/* The name carries the navigation: LIGHT_SYSTEM_ID is MMS's
-                                      internal key, so it is kept out of the grid and surfaced
-                                      in the detail instead, where it is wanted for reference
-                                      rather than scanning. */}
-                                  <button
-                                    onClick={() => setExpandedLightSystem(open ? null : loc.lightSystemId)}
-                                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: p.accent, textAlign: 'left', textDecoration: 'underline', textUnderlineOffset: '2px' }}
-                                  >
-                                    {loc.lightSystemName}
-                                  </button>
-                                </td>
-                                <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>
-                                  <CodedValue name={loc.classCode} id={loc.classCodeId} />
-                                </td>
-                                <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>
-                                  <CodedValue name={loc.status} id={loc.statusId} />
-                                </td>
-                                <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>
-                                  <CodedValue name={loc.ownerId === null ? null : loc.owner} id={loc.ownerId} />
-                                </td>
-                              </tr>
-                              {open && (
-                                <tr style={{ background: 'var(--bg-inset)' }}>
-                                  <td colSpan={4} style={{ padding: '10px 12px', color: 'var(--text-secondary)', fontSize: '9px', letterSpacing: '0.06em' }}>
-                                    LIGHT_SYSTEM_ID {loc.lightSystemId}
-                                    <span style={{ color: 'var(--text-muted)' }}> · MMS INTERNAL KEY</span>
-                                  </td>
-                                </tr>
-                              )}
-                            </Fragment>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              </section>
-            )}
 
             {/* ── REG-LOCATION stewardship queue: real sandbox data ───────── */}
             {showStewardship && (
@@ -3309,7 +3089,7 @@ function Workspace({ user }: { user: CurrentUser }) {
             {showSegments && (
               <section>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.14em', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span>BIC SEGMENTS</span>
+                  <span>IMODEL ELEMENTS</span>
                   <span style={{ background: p.dimBg, color: p.accent, padding: '1px 8px', borderRadius: '3px', fontWeight: 600 }}>
                     {visibleSegments.length} OF {engSegments.length}
                   </span>

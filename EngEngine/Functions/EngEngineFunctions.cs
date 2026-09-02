@@ -157,7 +157,85 @@ public sealed class EngEngineFunctions(
         return new OkObjectResult(report);
     }
 
+    /// <summary>
+    /// Receives an iModels.namedVersionCreated.v1 event.
+    ///
+    /// This is the low-latency path: ENG posts here the moment a marker commits,
+    /// rather than the engine waiting up to a poll interval to notice. It does
+    /// not replace <see cref="EngEnginePoll"/>, which stays as the backstop --
+    /// a notification that is lost in flight is lost forever, whereas a poller
+    /// that is behind catches up on its next pass. Both converge because the
+    /// published-marker set is keyed by VersionGuid, so whichever arrives second
+    /// finds the work already done.
+    ///
+    /// The event is treated as a nudge, not as data. It names a marker, and the
+    /// engine then drains normally: trusting the payload's own copy of the
+    /// marker would let a stale redelivery contradict ENG, and draining only the
+    /// named marker would strand any earlier one whose notification was lost.
+    /// </summary>
+    [Function("EngEngineNamedVersionCreated")]
+    public async Task<IActionResult> EngEngineNamedVersionCreated(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "events/named-version-created")] HttpRequest req,
+        CancellationToken ct)
+    {
+        NamedVersionCreatedEvent? received;
+
+        try
+        {
+            received = await JsonSerializer.DeserializeAsync<NamedVersionCreatedEvent>(
+                req.Body, EventJson, ct);
+        }
+        catch (JsonException ex)
+        {
+            return new BadRequestObjectResult(new { detail = $"Malformed event: {ex.Message}" });
+        }
+
+        if (received is null || received.IModelId == Guid.Empty)
+        {
+            return new BadRequestObjectResult(new { detail = "The event carried no iModelId." });
+        }
+
+        // This engine serves one iModel by design -- draining another project's
+        // model would publish its design onto this channel. An event for a model
+        // this engine does not serve is acknowledged and ignored: it is a
+        // correctly delivered notification that simply is not ours, and
+        // answering with a failure would make the sender retry forever.
+        if (received.IModelId != _options.IModelId)
+        {
+            logger.LogInformation(
+                "Ignoring {EventType} for iModel {IModelId:D}; this engine serves {Served:D}.",
+                received.EventType ?? "iModels.namedVersionCreated.v1",
+                received.IModelId, _options.IModelId);
+
+            return new OkObjectResult(new { accepted = false, reason = "Different iModel." });
+        }
+
+        logger.LogInformation(
+            "Received {EventType} for named version {Version} in iModel {IModelId:D}.",
+            received.EventType ?? "iModels.namedVersionCreated.v1",
+            received.NamedVersionId, received.IModelId);
+
+        var report = await publisher.DrainAsync(ct);
+
+        // 200 even when the drain reported errors. The event was received and
+        // understood; a transient ENG or ISBM failure is not a malformed
+        // notification, and the poll will retry regardless.
+        return new OkObjectResult(report);
+    }
+
     private static readonly JsonSerializerOptions EventJson = new(JsonSerializerDefaults.Web);
+
+    /// <summary>
+    /// ENG's namedVersionCreated payload, reduced to what the engine acts on.
+    ///
+    /// Only the identity is read. The event also carries the marker's name and
+    /// changeset position, but the engine deliberately re-reads those from ENG:
+    /// the payload is a nudge, and the record is the truth.
+    /// </summary>
+    private sealed record NamedVersionCreatedEvent(
+        [property: JsonPropertyName("namedVersionId")] long NamedVersionId,
+        [property: JsonPropertyName("iModelId")] Guid IModelId,
+        [property: JsonPropertyName("eventType")] string? EventType);
 
     /// <summary>
     /// The platform's iTwinCreated payload, reduced to what the engine acts on.

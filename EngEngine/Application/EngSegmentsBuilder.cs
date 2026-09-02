@@ -40,6 +40,15 @@ namespace EngEngine.Application;
 /// Together with Segment.UUID -- the FederationGuid, which is the CIRID -- these
 /// are what let a downstream system register ENG's key against the federated
 /// identity and navigate back to the exact element.
+///
+/// Separately from that key, the owning iTwin travels as Segment.RegistrationSite:
+///
+///   iTwinId -> RegistrationSite.UUID
+///
+/// It is not part of ENG's key and does not help resolve an element. It says which
+/// plant the element belongs to, which is what a receiver scopes by. REG-LOCATION
+/// has no concept of an iModel and takes segments from every model under a twin
+/// equally, so the twin is the only part of this it can file against.
 /// </summary>
 public sealed class EngSegmentsBuilder(IOptions<EngEngineOptions> options)
 {
@@ -55,6 +64,7 @@ public sealed class EngSegmentsBuilder(IOptions<EngEngineOptions> options)
     public XElement Build(
         EngNamedVersion marker,
         IReadOnlyList<EngElement> elements,
+        Guid iTwinId,
         string correlationId)
     {
         var bod = new SyncSegments(ActionCodes.Replace);
@@ -88,9 +98,40 @@ public sealed class EngSegmentsBuilder(IOptions<EngEngineOptions> options)
             ShortName = _options.SourceId
         };
 
+        // The iTwin that owns the iModel, as the site every segment was
+        // registered against. This answers a different question from InfoSource
+        // above: InfoSource says which model produced the element, the site says
+        // which plant it belongs to. A receiver needs both -- REG-LOCATION scopes
+        // by twin and has no concept of an iModel, while ENG cannot resolve an
+        // element without the model.
+        //
+        // The twin id is used directly rather than derived, matching the site
+        // SyncSites registers: minting a second identity for the same plant is
+        // precisely what stops a receiver recognising it as one thing.
+        //
+        // Null when the twin is unknown, which leaves the segment unscoped rather
+        // than scoped to something invented.
+        var registrationSite = iTwinId == Guid.Empty
+            ? null
+            : new Site
+            {
+                UUID = iTwinId,
+
+                // The twin's record id in ENG: enough for a receiver to come back
+                // and ask about it. Its own InfoSource, not the iModel's -- a twin
+                // is not an element of the model it contains, and reusing that one
+                // would say the two ids are keys within the same source.
+                IDInInfoSource = iTwinId.ToString(),
+                InfoSource = new InfoSource
+                {
+                    UUID = CcomUuid.ForInfoSource(_options.SourceId),
+                    ShortName = _options.SourceId
+                }
+            };
+
         foreach (var element in elements)
         {
-            bod.With(BuildSegment(element, infoSource));
+            bod.With(BuildSegment(element, infoSource, registrationSite));
         }
 
         // The root element rather than the document: ISBM carries message content
@@ -119,7 +160,7 @@ public sealed class EngSegmentsBuilder(IOptions<EngEngineOptions> options)
     public static bool IsPublishable(EngElement element) =>
         element.FederationGuid is not null;
 
-    private Segment BuildSegment(EngElement element, InfoSource infoSource)
+    private Segment BuildSegment(EngElement element, InfoSource infoSource, Site? registrationSite)
     {
         var federationId = element.FederationGuid
             ?? throw new InvalidOperationException(
@@ -138,6 +179,7 @@ public sealed class EngSegmentsBuilder(IOptions<EngEngineOptions> options)
             IDInInfoSource = element.ECInstanceId.ToString(),
 
             InfoSource = infoSource,
+            RegistrationSite = registrationSite,
             ShortName = element.CodeValue,
             FullName = element.UserLabel ?? element.DisplayName,
             Description = element.DisplayName ?? element.UserLabel

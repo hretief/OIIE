@@ -143,6 +143,13 @@ USING
     (@EngSchemaId, N'CabinetFeederPillar', N'Cabinet | Feeder Pillar',         NULL, N'Sealed'),
     (@EngSchemaId, N'Cantilever',          N'Structures | Cantilever',         NULL, N'Sealed'),
     (@EngSchemaId, N'Controller',          N'Traffic Signal | Controller',     NULL, N'Sealed'),
+
+    /* Deliberately 'None' rather than 'Sealed'. Equipment is a general
+       classification rather than one specific product, so it is instantiable
+       AND still available as a base for a more specific class later. Sealing
+       it would force the next specialisation to be a sibling instead. */
+    (@EngSchemaId, N'Equipment',           N'Equipment',                       N'General ENG equipment item', N'None'),
+
     (@EngSchemaId, N'Gantry',              N'Structures | Gantry',             NULL, N'Sealed'),
     (@EngSchemaId, N'LightingBracket',     N'Lighting | Bracket',              NULL, N'Sealed'),
     (@EngSchemaId, N'LightingColumn',      N'Lighting | Column',               NULL, N'Sealed'),

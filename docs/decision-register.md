@@ -1322,4 +1322,102 @@ one person able to notice the table is wrong.
 - Revisions from ENG do not yet update anything, because matching is GUID-only and first
   proposal wins.
 
+---
+
+## DR-022 — The sandbox database is removed, and its messaging tables are deleted rather than migrated
+
+**Status:** Decided
+**Date:** 2026-08-14
+**Context:** `oiie-sandbox` carries a dedicated SQL database. The requirement is to remove it. The
+first proposal was to move the messaging tables to Azure blob/table storage and keep everything
+else working. Investigation showed that proposal to be both unnecessary and unsafe, so it is
+recorded here alongside the decision that replaced it.
+
+### The database holds three unrelated things
+
+Treating it as one asset is what made the original question hard to answer. It is three:
+
+| | Content | Disposition |
+|---|---|---|
+| Emulated participant data | ENG/REG tags, elements, classes, property values | **Remove** — providers are authoritative |
+| Messaging machinery | `Outbox`, `IdentityMap`, `IsbmSessions`, `CirExchanges`, `PendingWork` | **Remove** — engines own it |
+| Scenario run state | `ScenarioRun`, `ScenarioStepRun`, `AssertionResult` | **Remove** — runner retired |
+
+CMS and MMS schemas are **retained** until their provider adapters exist, so the database does not
+disappear in this pass. "No sandbox database" is reached only after that later work.
+
+### Why blob/table storage was rejected
+
+`EngService.PublishAsync` commits the domain change and the outbox row in a single
+`SaveChangesAsync`. The comment above it states the intent plainly: *"Domain change and publication
+intent commit together, so ISBM being briefly unavailable cannot lose the operator's work."* Three
+things land atomically — tags flipping to `Published`, the named version flipping to `Published`,
+and the outbox row that carries them.
+
+Azure Table Storage cannot enlist in a SQL transaction. Splitting the outbox out of SQL converts
+that one commit into two independent writes and reintroduces precisely the failure the design
+removed: SQL commits, the table write fails, and ENG shows a tag as published that **never
+travels**. REG-LOCATION's queue stays empty with no error anywhere. That is worse than a visible
+outage because it usually works and fails occasionally, in front of an audience.
+
+The outbox is also not a document store. The dispatcher queries by state
+(`State == Pending && Attempts < MaxAttempts`, ordered by `CreatedAt`) and mutates rows in place.
+Blob storage cannot serve that without a scan.
+
+### Why the question turned out to be moot
+
+The atomicity problem only matters if the sandbox must publish. It does not — the deployed engines
+already do, and they do it without an outbox:
+
+- **`EngEngine.EngPublicationService`** opens its own ISBM session and posts publications, driven by
+  a **watermark** (`EngEngineStateStore`) rather than an outbox. It reads markers newer than the
+  watermark from `EngProvider` and advances it oldest-first, on the stated grounds that *"behind
+  costs a re-read; ahead loses a handover."* A watermark drain derives what to publish by reading
+  the provider, so it needs no shared transaction with the domain data. Same guarantee, no table.
+- **`RegLocationEngine.SegmentIngestionService`** opens a cached ISBM subscription and files
+  proposals into `RegLocationProvider`, removing a publication only after every segment in it is
+  filed, with a GUID check making redelivery harmless (DR-021).
+- **`RegLocationProvider.HttpApprovalNotifier`** POSTs the approval fact onward.
+
+The sandbox `OutboxDispatcher` and `InboxPump` are therefore duplicates of machinery that already
+runs in the deployed engines. They are **deleted, not migrated**, and no storage-migration work is
+required.
+
+### The scenario runner is retired
+
+`sc01-design-release.yaml` and `ScenarioRunner` are an automated regression test: they drive the
+exchange headlessly and assert, including the negative assertions that prove the stewardship gate
+does not leak to MMS. That is not the demonstration being built. The demo is interactive — a person
+authors a segment in ENG, cuts a named version, and watches the tag arrive in REG-LOCATION's
+stewardship queue. Transfer is evidenced by the tag appearing in the queue; no message-level view is
+provided.
+
+Retiring the runner is what permits `SandboxDbContext` to go, since run, step and assertion state
+exist only to serve it.
+
+### Consequences
+
+- **A federation guid is now a demo prerequisite, not a detail.** `EngPublicationService` publishes
+  only elements passing `EngSegmentsBuilder.IsPublishable`, which requires a `FederationGuid`.
+  Unfederated elements are skipped with a warning, and a marker containing none is recorded as
+  published and never retried. An operator can therefore author a segment, cut a version, see the
+  engine report success, and get nothing at REG-LOCATION — indistinguishable from a broken
+  integration. The authoring path must supply a `FederationGuid`: `ElementUpsert` accepts one but
+  ENG never invents it, and DR-019 already names the sandbox ENG UI as the sanctioned path for
+  brownfield adoption, so the UI supplying it is the intended design rather than a workaround.
+- The engines are timer-driven, so the demo depends on a tick. `RegLocationEngine` exposes
+  `POST engine/ingest` to drain on demand, which the interactive flow should use rather than
+  waiting.
+- Losing the runner also loses the negative assertions. Nothing will automatically prove the
+  stewardship gate has not leaked to MMS; that guarantee becomes a matter of inspection.
+- `ScenarioRunId` is a column on `OutboxItem` and threads through the run timeline and identity
+  lineage services, so removing scenario state reaches further than those three services alone.
+- Test fallout is small. Most of the sandbox suite tests BOD construction and mapping logic
+  (`CcomBodTests`, `EngSegmentsBuilderTests`, `IncomingSegmentMapperTests`, `KnownGoodBodTests`,
+  `PropertyToleranceTests`, `ClassificationResolverTests`, `RegLocationSegmentsBuilderTests`) and is
+  unaffected, because that logic is not what is being removed. Only `ScenarioOnFailureTests` and
+  `ScenarioStepReferenceTests` retire with the runner, and `SchemaIsolationTests` and
+  `ContextOwnershipTests` need review against the reduced schema set.
+- The sandbox keeps a database until CMS and MMS are migrated. Recorded as open.
+
 

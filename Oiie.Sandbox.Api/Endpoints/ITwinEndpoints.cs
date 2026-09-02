@@ -76,6 +76,54 @@ public sealed class EngEngineClient(
     private readonly string? _cmsBaseUrl =
         Trimmed(configuration["Sandbox:CmsProviderBaseUrl"]);
 
+    // The provider and engine are separate Functions hosts with separate host
+    // keys. A single default header on the HttpClient can only ever satisfy one
+    // of them, so the key travels with the request instead. Each falls back to
+    // the shared Sandbox:EngFunctionsKey for deployments where one key does
+    // cover both.
+    private readonly string? _providerKey =
+        Trimmed(configuration["Providers:Eng:Key"])
+        ?? Trimmed(configuration["Sandbox:EngFunctionsKey"]);
+
+    private readonly string? _engineKey =
+        Trimmed(configuration["Sandbox:EngEngineKey"])
+        ?? Trimmed(configuration["Sandbox:EngFunctionsKey"]);
+
+    private readonly string? _regLocationKey =
+        Trimmed(configuration["Providers:RegLocation:Key"])
+        ?? Trimmed(configuration["Sandbox:EngFunctionsKey"]);
+
+    private readonly string? _mmsKey =
+        Trimmed(configuration["Providers:Mms:Key"])
+        ?? Trimmed(configuration["Sandbox:EngFunctionsKey"]);
+
+    private readonly string? _cmsKey =
+        Trimmed(configuration["Providers:Cms:Key"])
+        ?? Trimmed(configuration["Sandbox:EngFunctionsKey"]);
+
+    /// <summary>
+    /// Sends a request carrying the key for the host being addressed, rather
+    /// than the one key the client was constructed with.
+    /// </summary>
+    private Task<HttpResponseMessage> SendAsync(
+        HttpMethod method, string url, string? key, object? body, CancellationToken ct)
+    {
+        var message = new HttpRequestMessage(method, url);
+
+        if (!string.IsNullOrWhiteSpace(key))
+        {
+            message.Headers.Remove("x-functions-key");
+            message.Headers.Add("x-functions-key", key);
+        }
+
+        if (body is not null)
+        {
+            message.Content = JsonContent.Create(body, body.GetType());
+        }
+
+        return http.SendAsync(message, ct);
+    }
+
     /// <summary>Whether the bootstrap can run at all.</summary>
     public bool IsConfigured => _providerBaseUrl is not null && _engineBaseUrl is not null;
 
@@ -108,13 +156,13 @@ public sealed class EngEngineClient(
     {
         var problems = new List<string>();
 
-        var targets = new List<(string Label, string? Url)>
+        var targets = new List<(string Label, string? Url, string? Key)>
         {
-            ("ENG provider", _providerBaseUrl is null ? null : $"{_providerBaseUrl}/eng/reset"),
-            ("ENG engine", _engineBaseUrl is null ? null : $"{_engineBaseUrl}/engine/reset"),
-            ("REG-LOCATION provider", _regLocationBaseUrl is null ? null : $"{_regLocationBaseUrl}/reglocation/reset"),
-            ("MMS provider", _mmsBaseUrl is null ? null : $"{_mmsBaseUrl}/mms/reset"),
-            ("CMS provider", _cmsBaseUrl is null ? null : $"{_cmsBaseUrl}/cms/reset"),
+            ("ENG provider", _providerBaseUrl is null ? null : $"{_providerBaseUrl}/eng/reset", _providerKey),
+            ("ENG engine", _engineBaseUrl is null ? null : $"{_engineBaseUrl}/engine/reset", _engineKey),
+            ("REG-LOCATION provider", _regLocationBaseUrl is null ? null : $"{_regLocationBaseUrl}/reglocation/reset", _regLocationKey),
+            ("MMS provider", _mmsBaseUrl is null ? null : $"{_mmsBaseUrl}/mms/reset", _mmsKey),
+            ("CMS provider", _cmsBaseUrl is null ? null : $"{_cmsBaseUrl}/cms/reset", _cmsKey),
         };
 
         if (!IsConfigured)
@@ -123,7 +171,7 @@ public sealed class EngEngineClient(
                          "so ENG's own data was left as it was.");
         }
 
-        foreach (var (label, url) in targets)
+        foreach (var (label, url, key) in targets)
         {
             if (url is null)
             {
@@ -132,7 +180,7 @@ public sealed class EngEngineClient(
 
             try
             {
-                var response = await http.PostAsync(url, null, ct);
+                var response = await SendAsync(HttpMethod.Post, url, key, null, ct);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -174,8 +222,10 @@ public sealed class EngEngineClient(
             // The provider names the twin's code itself when one is not supplied,
             // falling back through number and display name, so nothing is
             // invented here for a column the platform never carried.
-            var upsert = await http.PostAsJsonAsync(
+            var upsert = await SendAsync(
+                HttpMethod.Post,
                 $"{_providerBaseUrl}/itwins",
+                _providerKey,
                 new
                 {
                     iTwinId = request.ITwinId,
@@ -199,8 +249,10 @@ public sealed class EngEngineClient(
                        Excerpt(await upsert.Content.ReadAsStringAsync(ct));
             }
 
-            var announce = await http.PostAsJsonAsync(
+            var announce = await SendAsync(
+                HttpMethod.Post,
                 $"{_engineBaseUrl}/bootstrap/itwin-created",
+                _engineKey,
                 new ITwinCreatedEvent(request.ITwinId),
                 ct);
 
@@ -244,8 +296,17 @@ public sealed class EngEngineClient(
     {
         if (_providerBaseUrl is null) return [];
 
-        var models = await http.GetFromJsonAsync<List<EngIModelSummary>>(
-            $"{_providerBaseUrl}/imodels?iTwinId={iTwinId:D}", ct);
+        var response = await SendAsync(
+            HttpMethod.Get,
+            $"{_providerBaseUrl}/imodels?iTwinId={iTwinId:D}",
+            _providerKey,
+            null,
+            ct);
+
+        response.EnsureSuccessStatusCode();
+
+        var models = await response.Content
+            .ReadFromJsonAsync<List<EngIModelSummary>>(ct);
 
         return models ?? [];
     }
@@ -267,8 +328,10 @@ public sealed class EngEngineClient(
 
         try
         {
-            var response = await http.PostAsJsonAsync(
+            var response = await SendAsync(
+                HttpMethod.Post,
                 $"{_providerBaseUrl}/imodels",
+                _providerKey,
                 new { iModelId, iTwinId, code, description },
                 ct);
 

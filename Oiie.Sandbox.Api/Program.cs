@@ -1,6 +1,7 @@
 using Azure.Identity;
 using Oiie.Sandbox.Api.Endpoints;
 using Oiie.Sandbox.Api.Middleware;
+using Oiie.Sandbox.Api.Providers;
 using Oiie.Sandbox.Api.Services;
 using SimHost.Application;
 using SimHost.Application.Classification;
@@ -21,11 +22,15 @@ builder.Configuration.AddSandboxKeyVault(credential);
 // --- Engine ----------------------------------------------------------------
 builder.Services.AddSandboxCore(builder.Configuration, builder.Environment, credential);
 
-// Only this host runs the pumps. The Blazor UI composes the same engine so it can
-// read and drive participants directly, but if it also drained the ISBM sessions the
-// two processes would settle each other's messages and delivery would stop being
-// deterministic.
-builder.Services.AddSandboxMessagePumps();
+// The sandbox no longer moves messages. EngEngine publishes from a watermark over
+// EngProvider, and RegLocationEngine drains the subscription and files proposals, so
+// a pump here would be a second mover competing for the same ISBM sessions rather
+// than a participant doing its own integration (DR-022).
+//
+// The cost is that MMS outbound goes dormant: MmsWorkOrderService still enqueues to
+// its outbox and nothing drains it. Accepted deliberately -- the ENG to REG-LOCATION
+// handover this demonstrates never reaches MMS -- and it lifts when MMS gets a
+// provider and engine of its own.
 
 // --- ENG Functions apps ----------------------------------------------------
 //
@@ -55,6 +60,68 @@ builder.Services.AddHttpClient<EngEngineClient>((sp, http) =>
 // Channel provisioning is shared by the admin endpoint and the startup hook
 // below, so it is registered rather than written inline in either.
 builder.Services.AddScoped<IsbmChannelProvisioner>();
+
+// --- Provider read-through -------------------------------------------------
+//
+// The ENG and REG-LOCATION panels read the deployed customer-system emulators
+// rather than the sandbox's own participants, when those apps are configured.
+//
+// A backend-for-frontend rather than letting the React app call them directly:
+// the provider apps authenticate with a function key, and a key in a browser
+// bundle is a key anyone with devtools can lift and replay against a customer
+// system. Holding it here keeps the app same-origin and the key server-side.
+//
+// Absent configuration falls back to the sandbox participants, so a fresh clone
+// with no Azure access still runs every panel.
+var providerOptions = builder.Configuration
+    .GetSection(ProviderOptions.SectionName).Get<ProviderOptions>() ?? new ProviderOptions();
+
+builder.Services.AddHttpClient<EngProviderClient>((sp, http) =>
+    ConfigureProvider(http, providerOptions.Eng));
+
+builder.Services.AddHttpClient<RegLocationProviderClient>((sp, http) =>
+    ConfigureProvider(http, providerOptions.RegLocation));
+
+if (providerOptions.Eng.IsConfigured)
+{
+    builder.Services.AddScoped<IEngSource, ProviderEngSource>();
+}
+else
+{
+    builder.Services.AddScoped<IEngSource, SandboxEngSource>();
+}
+
+if (providerOptions.RegLocation.IsConfigured)
+{
+    builder.Services.AddScoped<IRegLocationSource, ProviderRegLocationSource>();
+}
+else
+{
+    builder.Services.AddScoped<IRegLocationSource, SandboxRegLocationSource>();
+}
+
+static void ConfigureProvider(HttpClient http, ProviderEndpointOptions options)
+{
+    if (!options.IsConfigured)
+    {
+        // Registered anyway so the typed client can always be resolved, but
+        // left without a base address: nothing will inject it, because the
+        // sandbox-backed source is the one in the container.
+        return;
+    }
+
+    // Trailing slash matters. Without it, a relative route replaces the last
+    // path segment and /api is silently dropped from every call.
+    var baseUrl = options.BaseUrl!.TrimEnd('/') + "/";
+
+    http.BaseAddress = new Uri(baseUrl);
+    http.DefaultRequestHeaders.Add("x-functions-key", options.Key);
+
+    // Shorter than the engine client's 60 seconds: these are reads against a
+    // database, not a leg that opens an ISBM session. Long enough to absorb a
+    // cold start on a Basic plan, which is the realistic worst case.
+    http.Timeout = TimeSpan.FromSeconds(30);
+}
 
 // --- Telemetry -------------------------------------------------------------
 builder.Services.AddApplicationInsightsTelemetry();

@@ -228,7 +228,11 @@ public sealed class RegLocationEngineFunctions(
             inboundChannelUri = _options.InboundChannelUriFor(_options.ITwinFederationId),
             inboundTopics = _options.InboundTopics,
             inboundItemId = _options.InboundItemId,
-            inboundScopeId = _options.InboundScopeId,
+
+            // Named as a fallback so a reader of this status does not take it
+            // for the scope inbound segments actually land in: a segment that
+            // names a registration site is filed against that site's scope.
+            inboundFallbackScopeId = _options.InboundScopeId,
             inboundRevision = _options.InboundRevision,
             inboundClassMap = _options.InboundClassMap,
             inboundFallbackClassId = _options.InboundFallbackClassId,

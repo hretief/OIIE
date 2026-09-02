@@ -20,6 +20,15 @@ public sealed class IngestionReport
     /// <summary>Segments that could not become a proposal.</summary>
     public int Rejected { get; set; }
 
+    /// <summary>
+    /// Segments whose registration site REG-LOCATION holds no scope for.
+    ///
+    /// Counted apart from <see cref="Rejected"/> because the remedy is different:
+    /// these are waiting on a SyncSites that has not arrived, not on anyone
+    /// fixing the message.
+    /// </summary>
+    public int SiteUnknown { get; set; }
+
     /// <summary>Messages left on the channel because handling them failed.</summary>
     public int Failed { get; set; }
 
@@ -50,6 +59,15 @@ public sealed class SegmentIngestionService(
     private readonly RegLocationEngineOptions _options = options.Value;
 
     /// <summary>
+    /// Registration site GUID to REG-LOCATION scope, for the current drain only.
+    ///
+    /// Cleared at the start of each drain rather than held: a site that had no
+    /// scope on one pass may well have one on the next, which is precisely the
+    /// case a deferred segment is waiting for.
+    /// </summary>
+    private readonly Dictionary<Guid, int?> _scopeCache = [];
+
+    /// <summary>
     /// The subscription session, cached across polls.
     ///
     /// Reused because a session is the broker's record of what this consumer has
@@ -63,6 +81,11 @@ public sealed class SegmentIngestionService(
     public async Task<IngestionReport> DrainAsync(CancellationToken ct)
     {
         var report = new IngestionReport();
+
+        // Scope resolutions do not survive the drain. A deferred segment is
+        // waiting for a scope to appear, and a cached miss held across polls
+        // would make it wait forever.
+        _scopeCache.Clear();
 
         if (_options.ITwinFederationId == Guid.Empty)
         {
@@ -194,6 +217,39 @@ public sealed class SegmentIngestionService(
 
             var request = result.Request!;
 
+            // The scope comes from the site the sender named, not from engine
+            // configuration. A configured scope would be a second opinion about
+            // where a location belongs, and the two can disagree: this engine
+            // serves every iModel under every twin it subscribes to, so a single
+            // configured value would collect several plants' locations into one.
+            //
+            // Looked up and never created. SyncSites is what establishes a scope,
+            // and creating one here would race it -- both legs would mint a scope
+            // for the same twin and the plant would end up with two.
+            if (result.SiteGuid is { } siteGuid)
+            {
+                var scopeId = await ResolveScopeAsync(siteGuid, ct);
+
+                if (scopeId is null)
+                {
+                    report.SiteUnknown++;
+
+                    // Left unproposed rather than filed somewhere plausible. The
+                    // message stays on the channel, so once the site is ingested
+                    // the next drain files these against the right scope.
+                    logger.LogWarning(
+                        "Segment '{Name}' names site {SiteGuid}, which REG-LOCATION has " +
+                        "no scope for; deferred until the site is ingested [{CorrelationId}].",
+                        segment.ShortName ?? segment.IDInInfoSource ?? "(unnamed)",
+                        siteGuid,
+                        envelope.BodId);
+
+                    continue;
+                }
+
+                request = request with { ScopeId = scopeId.Value };
+            }
+
             // The registry is asked, rather than engine state consulted. First
             // proposal wins: a location the registry already holds is left
             // exactly as it is, whatever state it is in. That is what makes a
@@ -222,5 +278,29 @@ public sealed class SegmentIngestionService(
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// The scope REG-LOCATION holds for a registration site, or null if it holds
+    /// none.
+    ///
+    /// Cached for the life of the drain because every segment in a publication
+    /// carries the same site: without it, a marker of two hundred elements would
+    /// ask the registry the same question two hundred times.
+    /// </summary>
+    private async Task<int?> ResolveScopeAsync(Guid siteGuid, CancellationToken ct)
+    {
+        if (_scopeCache.TryGetValue(siteGuid, out var cached))
+        {
+            return cached;
+        }
+
+        var scope = await regLocation.FindScopeByGuidAsync(siteGuid, ct);
+
+        // The miss is cached too. A site that is absent now stays absent for the
+        // rest of this drain, and re-asking would not change the answer.
+        _scopeCache[siteGuid] = scope?.ScopeId;
+
+        return scope?.ScopeId;
     }
 }

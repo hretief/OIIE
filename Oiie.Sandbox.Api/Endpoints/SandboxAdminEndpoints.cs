@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Oiie.Ccom;
 using Oiie.Ccom.Oagis;
 using Oiie.Isbm.Client;
+using Oiie.Sandbox.Api.Providers;
 using Oiie.Sandbox.Api.Services;
 using SimHost.Application;
 using SimHost.Application.Bods;
@@ -1977,21 +1978,23 @@ app.MapGet("/admin/cms/owners", async (
 // decided rows too, so a steward can see what was approved beside what is still
 // outstanding rather than watching rows vanish on approval.
 app.MapGet("/admin/reg-location/stewardship", async (
-    RegLocationService service, string? twin, string? state, CancellationToken ct) =>
+    IRegLocationSource source, string? twin, string? state, CancellationToken ct) =>
 {
-    SimHost.Domain.RegLocation.StewardshipState? filter;
+    bool includeDecided;
 
     if (string.IsNullOrWhiteSpace(state))
     {
-        filter = SimHost.Domain.RegLocation.StewardshipState.Proposed;
+        includeDecided = false;
     }
     else if (string.Equals(state, "all", StringComparison.OrdinalIgnoreCase))
     {
-        filter = null;
+        includeDecided = true;
     }
     else if (Enum.TryParse<SimHost.Domain.RegLocation.StewardshipState>(state, true, out var parsed))
     {
-        filter = parsed;
+        // Anything other than the working queue needs the decided rows loaded
+        // before it can be narrowed to the state asked for.
+        includeDecided = parsed != SimHost.Domain.RegLocation.StewardshipState.Proposed;
     }
     else
     {
@@ -2004,35 +2007,53 @@ app.MapGet("/admin/reg-location/stewardship", async (
         });
     }
 
-    var queue = await service.GetQueueAsync(twin, filter, ct);
+    var queue = await source.GetQueueAsync(twin, includeDecided, ct);
 
-    return Results.Ok(queue.Select(s => new
+    // A specific decided state was asked for, so the superset loaded above is
+    // narrowed here rather than in each source.
+    if (!string.IsNullOrWhiteSpace(state)
+        && !string.Equals(state, "all", StringComparison.OrdinalIgnoreCase))
     {
-        s.Id,
-        s.SourceParticipant,
-        s.SourceIdentifier,
-        s.ProposedName,
-        s.RequestedClassKey,
-        s.BoundClassKey,
-        s.ClassDegraded,
-        s.PropertiesMapped,
-        s.PropertiesUnmapped,
-        state = s.State.ToString(),
-        s.CreatedAt,
+        queue = queue
+            .Where(s => string.Equals(s.State, state, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
 
-        // Returned so the caller can tell which twin a row belongs to. Without it a
-        // filtered and an unfiltered queue are indistinguishable in the response.
-        assertedContext = s.ContextSourceId + ":" + s.ContextIdInSource,
-        s.ContextIdInSource
-    }));
+    return Results.Ok(new
+    {
+        count = queue.Count,
+        providerBacked = source.IsProviderBacked,
+
+        // So the UI can hide an action it would only be refused for.
+        canReject = source.CanReject,
+
+        items = queue
+    });
 });
 
 // REG-LOCATION's release event: approval admits proposals to the authoritative
 // model, assigns registry identifiers, and republishes.
 app.MapPost("/admin/reg-location/approve", async (
-    RegLocationService service, ParticipantRegistry registry,
+    IRegLocationSource source, RegLocationService service, ParticipantRegistry registry,
     ApproveRequest? request, CancellationToken ct) =>
 {
+    // Provider-backed approval records the decision in the registry and stops
+    // there. Nothing is published from here: REG-LOCATION notifies its engine,
+    // and the engine carries the approval onto a channel. A caller watching for
+    // a downstream effect is therefore watching the engine, and will see nothing
+    // if it is not deployed and subscribed.
+    if (source.IsProviderBacked)
+    {
+        var approved = await source.ApproveAsync(request?.ProposalIds, ct);
+
+        return Results.Ok(new
+        {
+            approved,
+            published = false,
+            note = "Recorded in REG-LOCATION. Publication is the engine's, not the registry's."
+        });
+    }
+
     var publisher = registry.Get(RegLocationService.ParticipantId).Config.Channels
         .FirstOrDefault(c => c.Role == ChannelRole.Publisher)
         ?? throw new InvalidOperationException("REG-LOCATION has no publisher channel configured.");
@@ -2047,8 +2068,24 @@ app.MapPost("/admin/reg-location/approve", async (
 });
 
 app.MapPost("/admin/reg-location/reject", async (
-    RegLocationService service, RejectRequest request, CancellationToken ct) =>
-    Results.Ok(await service.RejectAllAsync(request.Reason, "steward", ct)));
+    IRegLocationSource source, RegLocationService service,
+    RejectRequest request, CancellationToken ct) =>
+{
+    // The registry defines a Rejected state but exposes no route that reaches
+    // it. Answering 501 rather than accepting the request and doing nothing:
+    // a steward who believes they refused a tag, and finds it approved later,
+    // is worse off than one told plainly that refusal is unavailable here.
+    if (!source.CanReject)
+    {
+        return Results.Problem(
+            title: "Rejection is not available against REG-LOCATION.",
+            detail: "The registry exposes only an approve route. Refusing a proposal "
+                  + "would have to be modelled there before it can be offered here.",
+            statusCode: StatusCodes.Status501NotImplemented);
+    }
+
+    return Results.Ok(await service.RejectAllAsync(request.Reason, "steward", ct));
+});
 
 app.MapGet("/admin/reg-location/locations", async (
     IParticipantDbContextFactory factory, string? twin, CancellationToken ct) =>
@@ -2131,6 +2168,70 @@ app.MapGet("/admin/{participantId}/class-catalog", (
             isAspect = c.Kind == ClassKind.Aspect
         };
     }));
+});
+
+// The classes ENG itself can store an element against.
+//
+// Deliberately not the same list as /class-catalog above. That one answers
+// "what can this participant bind and validate" from the Sandbox's own
+// reference data (rdl:*, with properties, requirement levels and narrowing
+// rules). This one answers "what can an element actually be created on" from
+// ENG's EC metadata (ENG.*), and is the only list whose keys resolve to an
+// ECClassId the provider will accept on a write.
+//
+// Merging the two would be worse than keeping both: ENG models no ECProperty,
+// so a merged list could not say what a class requires, and the per-participant
+// asymmetry the Sandbox exists to demonstrate would collapse into one shared
+// vocabulary.
+//
+// Shaped like the catalog above so the same picker can render either without
+// knowing which it was given.
+app.MapGet("/admin/eng/element-class-catalog", async (
+    IEngSource source, EngProviderClient client, CancellationToken ct) =>
+{
+    // Only answerable when the deployed ENG app is configured. Without it the
+    // client has no address, and the alternative to saying so is a 500 that
+    // looks like a fault rather than a clone with no Azure access.
+    if (!source.IsProviderBacked)
+    {
+        return Results.Problem(
+            title: "ENG is not configured.",
+            detail: "These are the deployed ENG app's own classes, so there are none " +
+                    "to list when the sandbox is backing the ENG panel. The " +
+                    "participant class catalog applies instead.",
+            statusCode: StatusCodes.Status404NotFound);
+    }
+
+    var classes = await client.GetClassesAsync(ct);
+
+    return Results.Ok(classes
+        // Abstract classes are filtered out by the provider already, but an
+        // element cannot be created on one and a picker should not offer it.
+        .Where(c => !string.Equals(c.ClassModifier, "Abstract", StringComparison.OrdinalIgnoreCase))
+        .OrderBy(c => c.FullyQualifiedName, StringComparer.OrdinalIgnoreCase)
+        .Select(c => new
+        {
+            // The fully qualified name is the key, because that is what round
+            // trips: an element read back reports FullyQualifiedECClassName,
+            // and a picker whose value did not match it would show a stored
+            // class as "not in reference data".
+            key = c.FullyQualifiedName,
+            name = c.DisplayLabel ?? c.ClassName,
+
+            // The id the write path needs. Carried so the caller does not have
+            // to resolve the name a second time.
+            ecClassId = c.ECClassId,
+            kind = "Taxonomy",
+            appliesTo = "Segment",
+
+            // ENG's inheritance is not walked here. The chain drives indentation
+            // only, and a flat list is honest about what this endpoint knows.
+            chain = new[] { c.FullyQualifiedName },
+
+            // ENG has no aspect concept: ClassModifier controls instantiability,
+            // not whether a class applies alongside a taxonomy.
+            isAspect = false
+        }));
 });
 
 app.MapGet("/admin/{participantId}/classes", (
@@ -2438,8 +2539,8 @@ app.MapGet("/admin/scenarios/runs/{runId:guid}", async (
 // The twins ENG holds designs for. Registering one is optional: naming an unknown
 // twin on a write creates it, because refusing would make callers perform a
 // two-step ceremony to say something they already said.
-app.MapGet("/admin/eng/twins", async (EngService eng, CancellationToken ct) =>
-    Results.Ok(await eng.ListTwinsAsync(ct)));
+app.MapGet("/admin/eng/twins", async (IEngSource source, CancellationToken ct) =>
+    Results.Ok(await source.ListTwinsAsync(ct)));
 
 app.MapPost("/admin/eng/twins", async (
     EngService eng, RegisterTwinRequest request, CancellationToken ct) =>
@@ -2585,15 +2686,22 @@ static Guid? ResolveTwin(Guid? fromBody, HttpRequest http)
 // ENG's tags, scoped to one twin. Without the scope this would report every plant's
 // design as though it were one model, which is the confusion the twin exists to end.
 app.MapGet("/admin/eng/tags", async (
-    EngService eng, HttpRequest http, Guid? iTwinId, CancellationToken ct) =>
+    IEngSource source, HttpRequest http, Guid? iTwinId, CancellationToken ct) =>
 {
     var twin = ResolveTwin(iTwinId, http) ?? EngService.DefaultTwinId;
-    var tags = await eng.ListTagsAsync(twin, ct);
+    var tags = await source.ListSegmentsAsync(twin, ct);
 
     return Results.Ok(new
     {
         iTwinId = twin,
         count = tags.Count,
+
+        // Which system answered. When ENG is the source several columns are
+        // necessarily empty -- it holds no instrument attributes and no maturity
+        // -- and without this flag a viewer cannot tell an empty column from a
+        // missing one.
+        providerBacked = source.IsProviderBacked,
+
         tags = tags.Select(t => new
         {
             t.Id,
@@ -2607,43 +2715,66 @@ app.MapGet("/admin/eng/tags", async (
             t.RangeMaximum,
             t.ControlAction,
             t.PidReference,
-            maturity = t.Maturity.ToString(),
-            t.PublishedInVersionId,
+            t.Maturity,
+            t.PublishedInVersion,
             t.UpdatedAt
         })
     });
 });
 
+// Authored through IEngSource, the same source GET above reads.
+//
+// Previously this wrote the sandbox participant directly while the GET read
+// whichever source was configured. With the ENG provider configured those were
+// two different databases, so a segment saved here returned 200 and then never
+// appeared in the list. Both now go to one place by construction.
 app.MapPost("/admin/eng/tags", async (
-    EngService eng, HttpRequest http, AddTagRequest request, CancellationToken ct) =>
+    IEngSource source, HttpRequest http, AddTagRequest request, CancellationToken ct) =>
 {
+    var twin = ResolveTwin(request.ITwinId, http) ?? EngService.DefaultTwinId;
+
     try
     {
-        var tag = await eng.AddTagAsync(
-            request.TagNumber, request.ServiceDescription, request.UnitNumber, request.ClassKey,
-            request.RangeMinimum, request.RangeMaximum, request.ControlAction, request.CodePrefix,
-            ResolveTwin(request.ITwinId, http), request.FederationId, request.IModelId, ct);
+        var segment = await source.AddSegmentAsync(twin, new NewSegment(
+            request.TagNumber, request.ServiceDescription, request.UnitNumber,
+            request.ClassKey, request.RangeMinimum, request.RangeMaximum,
+            request.ControlAction, request.CodePrefix,
+            request.FederationId, request.IModelId, request.ElementId), ct);
 
         // The identity is returned because in the allocation case the caller did not
         // choose either value and has no other way to learn what it was given. The twin
         // is returned for the same reason: it may have come from a header or a default.
         return Results.Ok(new
         {
-            tag.Id,
-            tag.TagNumber,
-            federationId = tag.FederationId,
-            iTwinId = tag.ITwinId,
-            iModelId = tag.IModelId,
-            maturity = tag.Maturity.ToString()
+            segment.TagNumber,
+            federationId = segment.FederationId,
+            iTwinId = segment.ITwinId,
+            iModelId = segment.IModelId,
+            maturity = segment.Maturity,
+
+            // Which system now holds it. Without this a viewer cannot tell an
+            // element authored in ENG from one authored in the sandbox's
+            // rehearsal of ENG, and only one of those is a customer record.
+            providerBacked = source.IsProviderBacked
         });
     }
     catch (InvalidOperationException ex)
     {
-        // A federation id already in use. 409 rather than 400: the request is
-        // well-formed and the user did nothing malformed -- they pasted a real
-        // identifier that happens to belong to something else, and the state of the
-        // twin is what refuses it.
+        // A federation id already in use, a class the source does not hold, or a
+        // missing iModel. 409 rather than 400: the request is well-formed and the
+        // user did nothing malformed -- they named something real that the state
+        // of the twin refuses.
         return Results.Conflict(new { error = ex.Message });
+    }
+    catch (ProviderUnavailableException ex)
+    {
+        // Distinguished from the refusal above: nothing was decided, so this is
+        // worth retrying, and telling the user their element was rejected would
+        // be false.
+        return Results.Problem(
+            title: "ENG is unavailable.",
+            detail: ex.Message,
+            statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 });
 
@@ -2660,20 +2791,34 @@ app.MapPost("/admin/eng/tags", async (
 app.MapGet("/admin/eng/federation-id/suggest", (ITagIdentityService identities) =>
     Results.Ok(new { federationId = identities.Mint() }));
 
-// The release event. Only a passing validation gate writes outbox rows.
+// The release act, routed through the same source the ENG panel reads.
+//
+// Provider-backed this creates a marker in ENG and publishes nothing: EngEngine
+// carries the handover onto ISBM off its own poll, so the release happens
+// asynchronously from the click that caused it. Sandbox-backed it keeps the
+// original behaviour, gate and outbox row together, because nothing polls that
+// store on its behalf.
 app.MapPost("/admin/eng/promote", async (
-    EngService eng, ParticipantRegistry registry, HttpRequest http,
+    IEngSource source, HttpRequest http,
     PromoteRequest request, CancellationToken ct) =>
 {
-    var publisher = registry.Get("eng").Config.Channels
-        .FirstOrDefault(c => c.Role == ChannelRole.Publisher)
-        ?? throw new InvalidOperationException("ENG has no publisher channel configured.");
+    var result = await source.PromoteAsync(
+        ResolveTwin(request.ITwinId, http) ?? EngService.DefaultTwinId, request.Name, ct);
 
-    var result = await eng.PromoteAsync(
-        request.Name, publisher.ChannelUri, publisher.Topics.FirstOrDefault(),
-        ResolveTwin(request.ITwinId, http), ct);
+    // Reshaped to the names the panel already binds to. The wire contract
+    // predates the source split and changing it here would break the UI for a
+    // rename that buys nothing.
+    var body = new
+    {
+        released = result.Released,
+        namedVersionId = result.NamedVersionId,
+        name = result.Name,
+        tagCount = result.SegmentCount,
+        markerCount = result.MarkerCount,
+        findings = result.Findings,
+    };
 
-    return result.Released ? Results.Ok(result) : Results.UnprocessableEntity(result);
+    return result.Released ? Results.Ok(body) : Results.UnprocessableEntity(body);
 });
 
 // The message archive, which is what makes a round trip observable without a UI.
@@ -2905,9 +3050,16 @@ internal sealed record AddTagRequest(
     Guid? FederationId = null,
     /// <summary>
     /// The iModel the element's data comes from. Supplied by the picker when
-    /// authoring; omitted when editing, which retains the existing source.
+    /// authoring; on an edit it is the element's own model, since the upsert
+    /// is scoped by model.
     /// </summary>
-    Guid? IModelId = null);
+    Guid? IModelId = null,
+    /// <summary>
+    /// ENG's ECInstanceId, sent only when editing. Absent means "create":
+    /// ENG matches an existing element by this id, so an edit that omitted it
+    /// would insert a second element and collide on the code.
+    /// </summary>
+    long? ElementId = null);
 
 internal sealed record RegisterTwinRequest(
     Guid ITwinId,

@@ -1,0 +1,27 @@
+meta {
+  name: ENG - list EC classes
+  type: http
+  seq: 27
+}
+
+get {
+  url: {{engBaseUrl}}/api/classes
+  body: none
+  auth: none
+}
+
+headers {
+  x-functions-key: {{engFunctionKey}}
+}
+
+docs {
+  The class catalog the ENG panel's ECCLASS dropdown is populated from, read
+  straight from EngProvider rather than through the Sandbox.
+
+  The key travels as a header, not as a `code=` query parameter. Both authenticate,
+  but the provider's own routes read `code` as a filter — GetTags does exactly that —
+  so a key in that position is ambiguous at best and silently filters at worst.
+  It also keeps the secret out of the URL, and out of this file: set engBaseUrl and
+  engFunctionKey in an environment, which is where values that must not be committed
+  belong.
+}

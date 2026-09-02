@@ -12,6 +12,22 @@ public sealed class EngOptions
     /// customer system would have its schema managed elsewhere.
     /// </summary>
     public bool AutoCreateSchema { get; set; } = true;
+
+    /// <summary>
+    /// Where to announce a new named version, or empty to announce nowhere.
+    ///
+    /// Empty by default so ENG stays usable standalone: a missing URL means
+    /// nobody asked to be told, not that something is misconfigured.
+    /// </summary>
+    public string? NamedVersionNotificationUrl { get; set; }
+
+    /// <summary>
+    /// Function key for the notification URL, sent as x-functions-key.
+    ///
+    /// Separate from the URL because the receiver's auth is the receiver's
+    /// concern; a listener that needs no key simply leaves this empty.
+    /// </summary>
+    public string? NamedVersionNotificationKey { get; set; }
 }
 
 /// <summary>

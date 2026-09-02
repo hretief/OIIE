@@ -4,6 +4,102 @@ Pending work carried between sessions. Decisions belong in
 [decision-register.md](decision-register.md); this file is only for things not
 yet done.
 
+## Rename the sandbox's ENG "tag" vocabulary to "element"
+
+**Status:** not started. Raised 2026-09 while routing element authoring through
+the ENG provider.
+
+ENG has no tags. `EngFunctions` says so explicitly — *"There is no /tags route
+either. An element is what an engineer calls a tag, so a second route for it
+would be a second name for one thing"* — and the schema holds `dbo.Element`. The
+UI is also already correct: it says "segment" throughout, and `api.ts` notes the
+wire types are the odd ones out.
+
+The wrong name is confined to the layer between them:
+
+- `/admin/eng/tags` (GET and POST) in `SandboxAdminEndpoints`
+- `listTags` / `createTag` / `Tag` / `NewTag` / `CreatedTag` / `TagList` in
+  `WorkflowOrchestration/src/api.ts`
+- `EngService.AddTagAsync` / `ListTagsAsync` and the `Tag` entity in
+  `Oiie.Sandbox.Core`, plus the sandbox's `eng.Tag` table
+
+Mostly mechanical, but not purely cosmetic: three names for one concept is why
+the save-to-one-store, read-from-another defect took so long to see. Renaming
+the route is a breaking change to any saved scenario that posts to it, so sweep
+`Scenarios/` at the same time.
+
+Note the sandbox participant's own `eng.Tag` table may keep the name if the
+Sandbox is modelling a system that genuinely calls them tags — the decision to
+make is whether the Sandbox is rehearsing ENG (rename) or standing in for a
+process-industry tag register (keep, and rename only the API surface).
+
+## Decide whether vocabulary translation belongs in the participant engines
+
+**Status:** open question, not yet a plan. Raised 2026-09.
+
+Related to the item above, and the more interesting half of it. The UI currently
+talks to the Sandbox in one vocabulary and the Sandbox translates to each
+participant's own — but that translation is spread across the admin endpoints
+and the provider adapters rather than living anywhere nameable.
+
+If the UI is meant to be talking to a semantic-layer abstraction that resolves
+into local participant vocabulary, then this logic belongs in the participant
+engines, not in the UI and not in the Sandbox API. That would also make the
+`rdl:*` versus `ENG.*` split above a translation concern rather than a
+two-stores concern, and might dissolve it.
+
+Worth settling before the ENG schema work, since it changes where that work
+lands.
+
+## Remove the unconfigured-provider fallback
+
+**Status:** not started. Raised 2026-09.
+
+`ProviderEndpointOptions.IsConfigured` lets the Sandbox serve the ENG and
+REG-LOCATION panels from its own participants when no provider URL and key are
+set, so a clone with no Azure access still runs every panel.
+
+Judged unnecessary overhead: the sandbox is not expected to run without secrets.
+The cost is that every ENG path has two implementations to keep in step, which is
+what allowed authoring to write one store while the list read another. Removing
+it means deleting the `SandboxEngSource` / `SandboxRegLocationSource` branch in
+`Program.cs` and failing loudly at startup when configuration is absent.
+
+Check first whether any test or scenario depends on the fallback binding.
+
+## Extend the ENG schema so it can own classification
+
+**Status:** not started. Deferred deliberately 2026-09; rationale in
+[2026-09-eng-classes-two-stores.md](decision-records/2026-09-eng-classes-two-stores.md).
+
+Classification currently lives in two stores. The ENG panel's `CLASS KEY`
+dropdown reads the Sandbox participant DB (`rdl:*`, from `classes.yaml`), while
+ENG elements are classified against `acme-db-eng-dev.dbo.ECClass` (`ENG.*`). The
+intent is for ENG to become the system of record, with the Sandbox seeded from
+it at day zero.
+
+It cannot be done yet: `dbo.ECClass` holds a name, a schema and an inheritance
+edge, and `schema.sql` notes that *"ECProperty is not modelled"*. Three things
+the Sandbox model provides have nowhere to live in ENG — the `Aspect` vs
+`Taxonomy` distinction (`ClassModifier` is not the same concept), `ClassProperty`
+requirement levels with min/max bounds, and the §6.5.4 narrowing rules.
+
+**Prerequisites, in order:**
+
+- Add property and aspect tables to `EngProvider/Infrastructure/Sql/schema.sql`,
+  with the element-to-property path going through the element's assigned
+  `ECClassId`.
+- Extend `ENG_BOOTSTRAP.SQL` and `SqlEngDesignStore` to carry them.
+- Rename `rdl:*` to `ENG.*` across `PersonalityPacks`, `ClassificationResolverTests`,
+  `CcomAttributeMapper` and REG-LOCATION — cross-cutting, and the main cost.
+- Reverse the flow: have `ClassFixtureLoader` (or a replacement) read from the
+  ENG provider rather than from YAML.
+
+**Do not** simply repoint the dropdown at `/api/classes` as an interim step. The
+per-participant asymmetry is load-bearing — REG-LOCATION holds fewer classes than
+ENG on purpose, and giving every participant ENG's full vocabulary removes the
+degraded-binding and unbound-proposal behaviour the sandbox exists to show.
+
 ## Verify CIR interaction against the FederationGuid guideline
 
 **Status:** partly done 2026-08-20. Rules 1, 2, 3, 5, 6, 7, 9 resolved; rules 4
@@ -61,6 +157,14 @@ is what it found and what remains.
 - **No BOD is validated against `CCOM.xsd`.** The schemas are in `schemas/ccom/`.
   A schema-validity assertion would have caught the guideline's invented shape
   immediately, and would guard every future BOD change.
+- **CIR writes are invisible when the step before them fails.** `acme-db-cir-dev`
+  was empty for some time and read as a wiring or wrong-database problem; the
+  database and connection string were correct all along. Site registration in CIR
+  is step 11 of `SiteIngestionService`, and the run was aborting at step 7, so
+  nothing ever reached CIR. The ingest report said only `failed: 1` — the actual
+  SQL error was in the provider's telemetry, one hop away. Worth making the
+  report carry the failure reason rather than a count, since the natural reading
+  of an empty registry is that the registry is misconfigured.
 
 ## ENG spine tables leak into every participant schema
 
@@ -485,8 +589,8 @@ come back off once each schema is settled.
 
 ## Finish wiring RegLocationEngine into a running SC01
 
-**Status:** updated 2026-09-01. Both legs now exist, build and are unit-tested;
-nothing has been run end to end yet.
+**Status:** updated 2026-09-02. Both legs are deployed and the inbound leg has
+now been run end to end against live Azure, including site registration and CIR.
 
 `RegLocationEngine` carries both directions of SC01. Inbound, it subscribes to
 ENG's channel, unpacks `SyncSegments` and files each segment as a `Proposed` tag
@@ -495,11 +599,13 @@ notifies the engine, the engine reads the tag back, publishes `SyncSegments` to
 ISBM and registers the entry in CIR. See DR-020 for why the gate sits in the
 provider rather than the engine.
 
+Since verified live: SyncSites publishes from ENGEngine, `SiteIngestionService`
+creates the scope, item and serial, links the scope's context to the serial, and
+registers the site in CIR under category `ITWIN-SITE`. Segments file against the
+scope resolved from `RegistrationSite.UUID` rather than a static fallback.
+
 What remains:
 
-- **Nothing has been deployed or run.** No Function app exists for the engine,
-  and the deploy scripts have not been extended. The whole path is unexercised
-  outside unit tests.
 - **The ENG-class-to-`class_id` map is guesswork.** `InboundClassMap` seeds
   `Functional:FunctionalComponentElement` to `1001` (`rdl:FunctionalLocation`),
   but nobody has confirmed that is the intended correspondence. It has to be
@@ -510,7 +616,9 @@ What remains:
 - **An unmapped class silently lands on the fallback.** Logged at warning and
   filed under `InboundFallbackClassId` rather than rejected, so a wrong mapping
   table produces plausible-looking tags of the wrong class rather than an error.
-  A steward is the only thing that would catch it.
+  A steward is the only thing that would catch it. Live runs are hitting this
+  constantly — every segment so far has logged the fallback warning, so the map
+  is not merely unconfirmed, it is unused.
 - **`CreateTagRequest.State` still defaults to `Approved` in the provider.** The
   inbound leg passes `Proposed` explicitly, so it is correct today, but the safe
   behaviour depends on every future caller remembering. The default should
@@ -532,6 +640,8 @@ What remains:
   registers on the ECSchema path is unverified, and if the two disagree the
   CIRIDs will not converge — which is the one thing the FederationGuid guideline
   exists to guarantee. Related to rules 4 and 8 above.
+- **The outbound leg is still unexercised.** Approve → publish → CIR has not been
+  run live; only the inbound direction has.
 - **No integration test crosses the boundary.** The unit tests pin the mapping
   and the publish gate, but nothing exercises publish → subscribe → propose →
   approve → publish. That test needs a live provider and broker, so it belongs
@@ -539,3 +649,135 @@ What remains:
 - **`SegmentIngestionService` itself is untested.** Session reuse, the
   remove-after-success ordering, and the stop-on-failure behaviour are exercised
   by nothing — the same gap `EngPublicationService.DrainAsync` has.
+- **Engine option defaults are not validated against the provider's schema.**
+  Two defaults in `RegLocationEngineOptions` were silently wrong until a live run
+  hit them: `SiteItemType` was `"Site"` against a `CHAR(1)` column, and
+  `SiteTrnId` was `1` when bootstrap seeds only `trn_id 0`. Both surfaced as a
+  bare `failed: 1` in the ingest report with the real cause only in the
+  provider's exception telemetry. See the CIR item below.
+
+## Remove the sandbox database (CMS and MMS remain)
+
+**Status:** planned, not started. See DR-022 for the decision and reasoning.
+
+The sandbox database holds three unrelated things, and DR-022 removes all three: emulated
+participant data, messaging machinery, and scenario run state. The messaging tables are **deleted
+rather than migrated to blob/table storage**, because `EngEngine` and `RegLocationEngine` already
+publish and ingest without an outbox.
+
+Staged so the demo works at every checkpoint:
+
+1. Build the interactive ENG → REG-LOCATION flow while the current system still runs.
+2. ~~Drop `AddSandboxMessagePumps()` from the API host.~~ **Done.** The pumps no longer run; build
+   and the 128 sandbox tests pass without them. `AddSandboxMessagePumps` is retained but uncalled,
+   so restoring it is a one-line change if the engines turn out not to cover something.
+   **Consequence now live:** `MmsWorkOrderService` still enqueues to its outbox and nothing drains
+   it, so MMS outbound is dormant. Accepted — the ENG → REG-LOCATION handover never reaches MMS —
+   and it lifts when MMS gets a provider and engine of its own.
+3. Delete `OutboxDispatcher`, `InboxPump`, and the messaging tables.
+4. Retire `ScenarioRunner`, the scenario YAML, `SandboxDbContext`, the `/admin/scenarios*` routes,
+   the `AdminKeyMiddleware` entries and the `Program.cs` bootstrap.
+5. Remove the emulated ENG and REG-LOCATION schemas.
+
+## Panel isolation: one panel, one provider
+
+**Status:** decided, not started.
+
+The demo represents each participant as a customer system with its own API surface, so a panel
+should reach its own provider and nothing else. `SandboxAdminEndpoints.cs` is currently a single
+~2400-line admin surface shared by every panel, including cross-participant reads, which lets a
+panel see what its customer system would have no way of knowing.
+
+Splitting it is not cosmetic: the point being demonstrated is loose coupling, and a shared endpoint
+file quietly contradicts it. Blocked behind nothing, but larger than it looks — the reads need
+attributing to a participant before they can be separated.
+
+
+**What remains after all of it:** CMS and MMS are still DB-backed, deferred by decision. So the
+sandbox still has a database when this work is done — the footprint is reduced, not eliminated, and
+"no sandbox database" needs the CMS and MMS provider adapters first.
+
+Two things to carry into the work:
+
+- **The interactive flow must mint a `FederationGuid`.** `EngPublicationService` publishes only
+  elements that have one, and skips the rest with a warning; a marker containing none is recorded
+  as published and never retried. An operator can otherwise author a segment, cut a version, see
+  success, and get nothing at REG-LOCATION. `ElementUpsert` accepts the guid but ENG never invents
+  it, and rule 1 above already names the sandbox ENG UI as the sanctioned path for supplying it.
+- **Retiring the runner loses the negative assertions.** Nothing will automatically prove the
+  stewardship gate has not leaked to MMS; that becomes a matter of inspection.
+
+## Decide how a segment arriving before its site is handled
+
+**Status:** open question, not yet a plan. Raised 2026-09 while wiring
+`RegistrationSite` through SyncSegments.
+
+Settled already: a location cannot be registered into a site the participant does
+not hold. `SegmentIngestionService` looks a scope up by the sender's
+`RegistrationSite.UUID` and never creates one — `SiteIngestionService` is what
+establishes a scope, and creating one on both legs would mint two scopes for a
+plant that has one. Filing into a fallback scope is worse still: it succeeds
+visibly and collects several plants into one, which no later correction can
+separate.
+
+What is *not* settled is what happens next. Today the segment is counted as
+`SiteUnknown`, logged, and its message is left on the channel so a later drain
+files it once the site arrives. That is safe but open-ended:
+
+- **Nothing guarantees the site ever arrives.** SyncSites is a separate
+  publication on a separate leg. If it is never sent, the segments retry forever
+  and the only symptom is a counter nobody is watching.
+- **The channel is not a queue with a dead letter.** A message that can never
+  succeed is indistinguishable from one that has not succeeded *yet*, and the
+  engine has no notion of "tried long enough".
+- **Ordering is not guaranteed and probably should not be.** Requiring SyncSites
+  to precede SyncSegments would couple two independent publications; the
+  alternative is for the receiver to tolerate either order indefinitely, which is
+  what it does now by accident rather than by decision.
+
+Candidates, none chosen: have REG-LOCATION expose pending-site segments so a
+steward can see them; have the engine request the site from ENG on a miss (which
+makes the inbound leg a client of the sender, a real change to the shape of the
+thing); or accept the current retry and add an alarm on `SiteUnknown` so the
+condition is at least visible.
+
+Worth settling alongside the SyncSites leg, since whichever way it goes the two
+legs stop being fully independent.
+
+## Trigger SyncSites from ENG rather than by hand
+
+**Status:** open question blocking a small implementation. Raised 2026-09 after
+fixing the two option defaults that were stopping site ingest.
+
+An element reaching REG-LOCATION is already event-driven end to end: creating a
+named version in ENGProvider fires `INamedVersionNotifier`, which posts to
+ENGEngine's `engine/events/named-version-created`, which publishes SyncSegments.
+Choosing an iTwin should work the same way, and the receiving half already does
+— `EngEngineFunctions` has `bootstrap/itwin-created` taking an `ITwinCreatedEvent`,
+and it publishes SyncSites when called.
+
+The missing piece is only the emit. Nothing in ENGProvider's iTwin write path
+notifies anyone, so today SyncSites is published by hand or waits for the timer.
+The work is to generalise `INamedVersionNotifier` into an event notifier with a
+second method (or add a sibling), emit post-commit from the iTwin route exactly
+where `CreateNamedVersion` emits, and add `ITwinNotificationUrl` /
+`ITwinNotificationKey` beside the named-version pair. The timer stays as the
+backstop for the same reason it does on the element leg.
+
+**The question to settle first:** what counts as the trigger. An iTwin with no
+site type is skipped by the publisher — `PROBE-7` is skipped today for exactly
+this reason — so if the event fires the instant a twin is picked, and its type is
+assigned afterwards in the UI, the event fires while the twin is still
+unpublishable and the poller quietly does the real work. The two options:
+
+- **On insert.** Simplest, and honest about what happened: a twin was added. But
+  the normal case for an untyped twin then depends on the backstop, which is the
+  thing the trigger exists to avoid relying on.
+- **On becoming publishable** — insert *or* the assignment of a site type. More
+  code, and the emit is no longer a single call site, but the event then means
+  "this twin can be published", which is what the receiver actually needs.
+
+Leaning toward the second. Note also that a naive emit on every upsert would
+republish on each UI refresh, so whichever is chosen must fire on the transition,
+not on every write.
+

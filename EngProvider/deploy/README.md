@@ -186,9 +186,18 @@ iTwins. The schema creates structure, not content.
 
 To get a usable model, apply [`ENG_BOOTSTRAP.SQL`](../../docs/DDL/ENG_BOOTSTRAP.SQL)
 against the database. It is idempotent, so a second run inserts nothing. It
-seeds one iTwin, one iModel, the BisCore/Functional/ENG schemas, 30 EC classes,
+seeds one iTwin, one iModel, the BisCore/Functional/ENG schemas, the EC classes,
 and a root element in an open `Initial` draft version. `/api/classes` returning
-26 concrete ENG classes confirms it applied.
+28 concrete classes confirms it applied.
+
+`ENG.Equipment` must be among them. Elements carry their classification as an
+`ECClassId`, so a missing class is not a cosmetic gap: it makes the elements
+that reference it unclassifiable, and the properties planned against that class
+have nothing to attach to.
+
+This is a **manual** step. The app's startup bootstrap creates the schema only —
+structure, not content — so a freshly provisioned ENG database serves an empty
+`/api/classes` until this script is run.
 
 The schema ships with this project. `EngProvider.csproj` embeds
 [`Infrastructure/Sql/schema.sql`](../Infrastructure/Sql/schema.sql) as a
