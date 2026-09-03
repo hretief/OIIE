@@ -851,3 +851,38 @@ Leaning toward the second. Note also that a naive emit on every upsert would
 republish on each UI refresh, so whichever is chosen must fire on the transition,
 not on every write.
 
+## Service Bus entity names are opaque against the channel convention
+
+Raised 2026-09 while diagnosing orphaned subscriptions.
+
+The ISBM channel URI convention in
+[isbm-channel-naming-convention.md](ISBM%20Channels/isbm-channel-naming-convention.md)
+is followed correctly: engines derive `/{enterprise}/{federation-id}/{domain}/{type}`
+from options rather than from pasted configuration. The gap is one layer below.
+
+`EntityNaming` maps each channel URI onto a Service Bus entity by SHA-256, so
+`/acme/enterprise/sites/publication` becomes the topic `pub-e1eee839f3560dac`,
+and a durable subscriber id becomes `sub-{hash}`. The hash is necessary — entity
+names cannot contain `/` and are length-limited, so the URI cannot be used
+verbatim — and it is stable, which is what matters functionally.
+
+What it is not is legible. The mapping is one-way, so nobody reading the Service
+Bus namespace can tell which channel a topic serves without recomputing the hash
+by hand. That is exactly what had to be done to diagnose the orphaned
+subscriptions, and it turned a five-minute question into a much longer one. It
+will be worse for anyone who was not present when the convention was written.
+
+Two cheap improvements, neither yet done:
+
+- **Stamp the channel URI into the entity's `UserMetadata`** when
+  `EnsureTopicAsync` / `EnsureQueueAsync` create it. The broker already accepts
+  arbitrary metadata, and `BootstrapChannelsAsync` sets the readable name on the
+  ISBM channel description for the same reason — the namespace becomes
+  self-describing at no runtime cost.
+- **Document the mapping in the naming-convention document.** It currently stops
+  at the ISBM layer, so the first person to open the Service Bus namespace hits
+  the same confusion. A short section naming the three prefixes (`pub-`, `req-`,
+  `resp-`, plus `sub-` for durable subscribers) and the hash rule would close it.
+
+Neither changes behaviour, so this is operability rather than correctness.
+
