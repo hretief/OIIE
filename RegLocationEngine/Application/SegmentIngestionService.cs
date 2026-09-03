@@ -102,7 +102,15 @@ public sealed class SegmentIngestionService(
         }
 
         var channelUri = _options.InboundChannelUriFor(_options.ITwinFederationId);
-        _sessionId ??= await isbm.OpenSubscriptionSessionAsync(channelUri, _options.InboundTopics, ct);
+
+        // Scoped to the iTwin as well as the role, because this channel is
+        // per-iTwin: a single 'segments' id would collide across twins and let
+        // two engines consume each other's messages. Same durability argument as
+        // the sites leg -- the id must survive a restart or the backlog is
+        // abandoned with the subscription.
+        _sessionId ??= await isbm.OpenSubscriptionSessionAsync(
+            channelUri, _options.InboundTopics, ct,
+            subscriberId: $"{_options.SourceId}:segments:{_options.ITwinFederationId:D}");
 
         while (report.MessagesRead < _options.MaxMessagesPerPoll)
         {

@@ -94,6 +94,22 @@ public sealed record RegScope(
     bool IsEnabled,
     int UsageCount);
 
+/// <summary>
+/// What a cascaded scope delete removed.
+///
+/// ItemsDeleted is load-bearing rather than informational: it is the Provider's
+/// answer to whether the site type was still in use, and the engine reads it to
+/// decide whether the matching SITE-TYPE entry may be cancelled. Asking CIR to
+/// drop a type another site still references would leave that site with an
+/// identity no consumer can resolve.
+/// </summary>
+public sealed record ScopeCascadeResult(
+    int ScopeId,
+    int TagsDeleted,
+    int SerialsDeleted,
+    int ItemsDeleted,
+    int ScopesDeleted);
+
 public sealed record RegItem(
     int ItemId,
     int NamespaceId,

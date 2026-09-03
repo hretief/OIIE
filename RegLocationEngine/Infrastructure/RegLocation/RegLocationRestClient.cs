@@ -57,6 +57,17 @@ public interface IRegLocationClient
     Task<RegScope> CreateScopeAsync(CreateScopeRequest request, CancellationToken ct);
 
     /// <summary>
+    /// Removes a scope and everything registered inside it, or null if there was
+    /// no such scope.
+    /// </summary>
+    /// <remarks>
+    /// Null rather than an exception for an absent scope, because a redelivered
+    /// site deletion necessarily finds the scope the first delivery removed. The
+    /// caller treats that as already-done.
+    /// </remarks>
+    Task<ScopeCascadeResult?> DeleteScopeCascadeAsync(int scopeId, CancellationToken ct);
+
+    /// <summary>
     /// Links a scope to the object whose context it represents.
     /// </summary>
     Task SetScopeContextAsync(int scopeId, SetScopeContextRequest request, CancellationToken ct);
@@ -186,6 +197,30 @@ public sealed class RegLocationRestClient(HttpClient http) : IRegLocationClient
     public async Task<RegScope> CreateScopeAsync(CreateScopeRequest request, CancellationToken ct) =>
         await PostAsync<CreateScopeRequest, RegScope>(
             "scopes", request, $"scope '{request.Name}'", ct);
+
+    public async Task<ScopeCascadeResult?> DeleteScopeCascadeAsync(int scopeId, CancellationToken ct)
+    {
+        using var response = await http.DeleteAsync($"scopes/{scopeId}/cascade", ct);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+
+            // A 409 reaches here when the cascade could not empty the scope. It
+            // is deliberately not softened into null: the scope still exists, and
+            // reporting it as already-gone would let the caller carry on and
+            // delete the channels of a site that is still registered.
+            throw new RegLocationClientException(
+                $"REG-LOCATION returned {(int)response.StatusCode} deleting scope '{scopeId}': {body}");
+        }
+
+        return await response.Content.ReadFromJsonAsync<ScopeCascadeResult>(Json, ct)
+            ?? throw new RegLocationClientException(
+                $"REG-LOCATION deleted scope '{scopeId}' but returned no body.");
+    }
 
     public async Task SetScopeContextAsync(
         int scopeId, SetScopeContextRequest request, CancellationToken ct)
