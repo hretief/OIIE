@@ -24,8 +24,22 @@ public class EngSitesBuilderTests
     private static readonly Guid SiteTypeUuid = Guid.Parse("33333333-3333-3333-3333-333333333333");
 
     private static EngITwin Twin() =>
-        new(ITwinId, "9100", null, DateTime.UtcNow, "9100 - District 1",
-            "9100", "Thing", "Asset", "Asset");
+        new(ITwinId,
+            CreatedUtc: DateTime.UtcNow,
+            Class: "Thing",
+            SubClass: "Asset",
+
+            // The twin's own free-text copy of the boundary name. Deliberately
+            // different from the type row below: the published name must come
+            // from the row that owns it, and identical values would not show
+            // which one was used.
+            Type: "district (as typed)",
+
+            DisplayName: "9100 - District 1",
+            Number: "9100",
+            Status: "active",
+            ITwinTypeId: SiteTypeUuid,
+            ITwinTypeNumber: "District");
 
     [Fact]
     public void Sync_sites_carries_the_plural_noun_the_receiving_legs_match_on()
@@ -37,7 +51,7 @@ public class EngSitesBuilderTests
         }));
 
         var envelope = BodEnvelope.Parse(
-            builder.Build(Twin(), SiteTypeUuid, "corr-1").ToString());
+            builder.Build(Twin(), "corr-1").ToString());
 
         Assert.Equal("Sync", envelope.Verb);
 
@@ -57,7 +71,7 @@ public class EngSitesBuilderTests
         }));
 
         var envelope = BodEnvelope.Parse(
-            builder.Build(Twin(), SiteTypeUuid, "corr-2").ToString());
+            builder.Build(Twin(), "corr-2").ToString());
 
         var site = envelope.NounsAs(e => new Oiie.Ccom.Types.Site(e)).Single();
 
@@ -65,5 +79,35 @@ public class EngSitesBuilderTests
         // If these two ever diverge, REG-LOCATION creates a scope under one guid
         // and then defers every segment that names the other.
         Assert.Equal(ITwinId, site.UUID);
+    }
+
+    [Fact]
+    public void The_site_type_is_labelled_by_boundary_not_by_lifecycle()
+    {
+        var builder = new EngSitesBuilder(Options.Create(new EngEngineOptions
+        {
+            SourceId = "ENG",
+            LogicalId = "ENG"
+        }));
+
+        var envelope = BodEnvelope.Parse(
+            builder.Build(Twin(), "corr-3").ToString());
+
+        var site = envelope.NounsAs(e => new Oiie.Ccom.Types.Site(e)).Single();
+
+        // From dbo.iTwinType.Number, not the twin's free-text Type column. The
+        // twin carries 'district (as typed)'; publishing that would let the
+        // unguarded copy drift into the BOD and disagree with the UUID below.
+        Assert.Equal("District", site.Type!.ShortName);
+
+        // The sample carries no label for the boundary, and ENG has no source
+        // for one, so nothing is invented here.
+        Assert.Null(site.Type!.FullName);
+
+        // The stored boundary id, carried through rather than derived from the
+        // name: that is what keeps a renamed boundary from reclassifying the
+        // sites already published under it.
+        Assert.Equal(SiteTypeUuid, site.Type!.UUID);
+        Assert.Equal(SiteTypeUuid.ToString(), site.Type!.IDInInfoSource);
     }
 }
