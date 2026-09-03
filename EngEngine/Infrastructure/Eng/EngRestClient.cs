@@ -28,17 +28,6 @@ public interface IEngClient
     Task<IReadOnlyList<EngITwin>> GetITwinsAsync(CancellationToken ct);
 
     /// <summary>
-    /// The stable UUID for a site type. ENG mints it on first request and
-    /// returns the same value thereafter.
-    ///
-    /// The engine asks rather than decides, because the answer has to outlive
-    /// any one engine process: a UUID invented here would differ on the next
-    /// deployment, and REG-LOCATION would then hold two site types that are
-    /// really one.
-    /// </summary>
-    Task<Guid> ResolveSiteTypeUuidAsync(string typeName, CancellationToken ct);
-
-    /// <summary>
     /// Markers in an iModel changed at or after <paramref name="modifiedSince"/>,
     /// oldest first.
     /// </summary>
@@ -88,29 +77,6 @@ public sealed class EngRestClient(HttpClient http) : IEngClient
 
     public async Task<IReadOnlyList<EngITwin>> GetITwinsAsync(CancellationToken ct) =>
         await GetListAsync<EngITwin>("itwins", ct);
-
-    public async Task<Guid> ResolveSiteTypeUuidAsync(string typeName, CancellationToken ct)
-    {
-        var url = $"itwin-types/{Uri.EscapeDataString(typeName)}";
-
-        using var response = await http.PostAsync(url, content: null, ct);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var body = await response.Content.ReadAsStringAsync(ct);
-
-            throw new EngClientException(
-                $"ENG returned {(int)response.StatusCode} for '{url}': {body}");
-        }
-
-        var resolved = await response.Content.ReadFromJsonAsync<SiteTypeResolution>(Json, ct);
-
-        return resolved is null || resolved.TypeUuid == Guid.Empty
-            ? throw new EngClientException($"ENG returned no UUID for site type '{typeName}'.")
-            : resolved.TypeUuid;
-    }
-
-    private sealed record SiteTypeResolution(string TypeName, Guid TypeUuid);
 
     public async Task<IReadOnlyList<EngNamedVersion>> GetNamedVersionsAsync(
         Guid iModelId, DateTime? modifiedSince, CancellationToken ct)

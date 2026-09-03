@@ -4,20 +4,48 @@ namespace EngEngine.Application;
 /// An iTwin as the engine reads it back from ENG.
 ///
 /// This is the site context a design belongs to, and it is what SyncSites
-/// carries. The platform-sourced fields are nullable because ENG stores what
-/// it was told: a twin registered from a sparse payload has a code and little
-/// else, and the builder decides what that is enough to publish.
+/// carries. The fields mirror the iTwin platform contract, which is what ENG
+/// now stores; they are nullable because ENG stores what it was told, and a
+/// twin registered from a sparse payload may carry little beyond its id. The
+/// builder decides what that is enough to publish.
 /// </summary>
 public sealed record EngITwin(
     Guid ITwinId,
-    string Code,
-    string? Description,
     DateTime CreatedUtc,
-    string? DisplayName,
-    string? Number,
-    string? TwinClass,
-    string? SubClass,
-    string? TwinType);
+    string? Class = null,
+    string? SubClass = null,
+    string? Type = null,
+    string? DisplayName = null,
+    string? Number = null,
+    string? Status = null,
+    Guid? ParentITwinId = null,
+    string? Description = null,
+
+    /// <summary>
+    /// The stored identity of the twin's boundary, carried straight through to
+    /// Site.Type.UUID. Null means the twin has no boundary yet and is skipped
+    /// by the publisher.
+    /// </summary>
+    Guid? ITwinTypeId = null,
+
+    /// <summary>
+    /// The boundary's name as ENG holds it on the type row, published as
+    /// Site.Type.ShortName. Sourced from the same row as ITwinTypeId so the two
+    /// halves of the published Type cannot disagree.
+    /// </summary>
+    string? ITwinTypeNumber = null)
+{
+    /// <summary>
+    /// A short handle for the twin, for logs and for naming it in one string.
+    /// Mirrors the provider's derivation: the engineering number first, then the
+    /// display name, and the id as a last resort so this is never blank.
+    /// </summary>
+    public string Handle =>
+        FirstNonBlank(Number, DisplayName) ?? ITwinId.ToString();
+
+    private static string? FirstNonBlank(params string?[] values) =>
+        Array.Find(values, v => !string.IsNullOrWhiteSpace(v));
+}
 
 /// <summary>
 /// A model, and the iTwin it belongs to.

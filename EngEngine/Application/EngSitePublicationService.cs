@@ -86,18 +86,12 @@ public sealed class EngSitePublicationService(
         {
             if (!EngSitesBuilder.IsPublishable(twin))
             {
-                skipped.Add($"{twin.Code}: has no site type.");
+                skipped.Add($"{twin.Handle}: has no site type.");
                 continue;
             }
 
             try
             {
-                // Resolved before the session is opened, because this is the
-                // step that can legitimately fail on a twin and it should not
-                // open a session against the broker to then send nothing.
-                var typeUuid = await eng.ResolveSiteTypeUuidAsync(
-                    EngSitesBuilder.TypeNameOf(twin), ct);
-
                 // Opened lazily, and not closed afterwards: the client caches
                 // publication sessions per channel and reuses them across runs,
                 // as the marker drain does. Closing here would discard a session
@@ -106,7 +100,7 @@ public sealed class EngSitePublicationService(
                     _options.SitesChannelUri, ct);
 
                 var correlationId = Guid.NewGuid().ToString();
-                var content = builder.Build(twin, typeUuid, correlationId);
+                var content = builder.Build(twin, correlationId);
 
                 var messageId = await isbm.PostPublicationAsync(
                     sessionId,
@@ -118,15 +112,15 @@ public sealed class EngSitePublicationService(
 
                 logger.LogInformation(
                     "Published site '{Site}' ({ITwinId:D}) as {MessageId} [{CorrelationId}].",
-                    twin.Code, twin.ITwinId, messageId, correlationId);
+                    twin.Handle, twin.ITwinId, messageId, correlationId);
             }
             catch (Exception ex)
             {
                 // Recorded and carried on, unlike the marker drain. There is no
                 // watermark to corrupt here, and one unpublishable twin should
                 // not hold back the rest of a bootstrap.
-                logger.LogError(ex, "Publishing site '{Site}' failed.", twin.Code);
-                errors.Add($"{twin.Code}: {ex.Message}");
+                logger.LogError(ex, "Publishing site '{Site}' failed.", twin.Handle);
+                errors.Add($"{twin.Handle}: {ex.Message}");
             }
         }
 
@@ -137,6 +131,59 @@ public sealed class EngSitePublicationService(
             Errors = errors,
             Skipped = skipped
         };
+    }
+
+    /// <summary>
+    /// Announces that an iTwin has been deleted.
+    /// </summary>
+    /// <remarks>
+    /// Takes an id rather than a twin, and deliberately does not check ENG for
+    /// it. By the time this is called the row is already gone -- the provider
+    /// delete is the system of record and runs first -- so a lookup here could
+    /// only fail. That ordering is what makes the announcement truthful: ENG has
+    /// really stopped holding the twin before anyone is told it has.
+    ///
+    /// The consequence is that this cannot validate the id, so the caller must.
+    /// The sandbox endpoint does, by publishing only after a 204 from the
+    /// provider.
+    /// </remarks>
+    public async Task<EngSitePublicationReport> PublishDeleteAsync(
+        Guid iTwinId, CancellationToken ct = default)
+    {
+        if (!_options.Enabled)
+        {
+            logger.LogDebug("EngEngine is disabled.");
+            return new EngSitePublicationReport();
+        }
+
+        if (string.IsNullOrWhiteSpace(_options.Enterprise))
+            return Failed("EngEngine__Enterprise is not configured.");
+
+        try
+        {
+            var sessionId = await isbm.OpenPublicationSessionAsync(
+                _options.SitesChannelUri, ct);
+
+            var correlationId = Guid.NewGuid().ToString();
+            var content = builder.BuildDelete(iTwinId, correlationId);
+
+            var messageId = await isbm.PostPublicationAsync(
+                sessionId,
+                content,
+                _options.SitesTopics,
+                ct: ct);
+
+            logger.LogInformation(
+                "Published deletion of iTwin {ITwinId:D} as {MessageId} [{CorrelationId}].",
+                iTwinId, messageId, correlationId);
+
+            return new EngSitePublicationReport { SitesSeen = 1, SitesPublished = 1 };
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Publishing deletion of iTwin {ITwinId:D} failed.", iTwinId);
+            return new EngSitePublicationReport { SitesSeen = 1, Errors = [ex.Message] };
+        }
     }
 
     private static EngSitePublicationReport Failed(string error) => new() { Errors = [error] };

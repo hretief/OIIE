@@ -250,6 +250,56 @@ public sealed class EngEngineFunctions(
         [property: JsonPropertyName("eventType")] string? EventType);
 
     /// <summary>
+    /// Receives an iTwins.iTwinDeleted.v1 event.
+    ///
+    /// The mirror of <see cref="EngEngineITwinCreated"/>, and shaped to the same
+    /// payload so a live webhook would bind here unchanged. In the sandbox it is
+    /// posted by the admin endpoint after ENG has removed the twin.
+    ///
+    /// Unlike the created handler this cannot read the twin back for its detail,
+    /// because there is deliberately no twin left to read. That is why the delete
+    /// BOD carries the UUID alone: it is the only thing still true.
+    /// </summary>
+    [Function("EngEngineITwinDeleted")]
+    public async Task<IActionResult> EngEngineITwinDeleted(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "bootstrap/itwin-deleted")] HttpRequest req,
+        CancellationToken ct)
+    {
+        ITwinDeletedEvent? received;
+
+        try
+        {
+            received = await JsonSerializer.DeserializeAsync<ITwinDeletedEvent>(
+                req.Body, EventJson, ct);
+        }
+        catch (JsonException ex)
+        {
+            return new BadRequestObjectResult(new { detail = $"Malformed event: {ex.Message}" });
+        }
+
+        if (received is null || received.ITwinId == Guid.Empty)
+        {
+            return new BadRequestObjectResult(new { detail = "The event carried no iTwinId." });
+        }
+
+        logger.LogInformation(
+            "Received {EventType} for iTwin {ITwinId:D}.",
+            received.EventType ?? "iTwins.iTwinDeleted.v1", received.ITwinId);
+
+        var report = await sitePublisher.PublishDeleteAsync(received.ITwinId, ct);
+
+        // 200 even when publication failed, matching the created handler: the
+        // event was received and understood, and answering with a failure would
+        // make the platform redeliver an event that fails the same way.
+        return new OkObjectResult(report);
+    }
+
+    /// <summary>The platform's iTwinDeleted payload, reduced to what the engine acts on.</summary>
+    private sealed record ITwinDeletedEvent(
+        [property: JsonPropertyName("iTwinId")] Guid ITwinId,
+        [property: JsonPropertyName("eventType")] string? EventType);
+
+    /// <summary>
     /// Forgets the watermark and every published marker.
     ///
     /// Called by the Sandbox's day zero, after ENG's own tables are dropped. The

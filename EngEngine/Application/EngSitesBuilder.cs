@@ -19,8 +19,8 @@ namespace EngEngine.Application;
 /// The mapping is small because an iTwin is small. What matters is not the
 /// number of fields but which of them are identities:
 ///
-///   iTwinId  -> Site.UUID       the federation id, and the CIRID downstream
-///   type     -> Site.Type.UUID  minted once per type string and reused
+///   iTwinId      -> Site.UUID       the federation id, and the CIRID downstream
+///   iTwinTypeId  -> Site.Type.UUID  the stored identity of the boundary
 ///
 /// Site.UUID is passed through untouched. It is the platform's own federation
 /// identifier, the receiver will register REG-LOCATION's Scope and Serial
@@ -28,10 +28,15 @@ namespace EngEngine.Application;
 /// whole workflow rests on.
 ///
 /// Site.Type.UUID is different: the platform gives a type as a bare string with
-/// no identifier attached, so somebody has to mint one. ENG does, once, and
-/// remembers it -- see GetOrCreateITwinTypeUuidAsync. Minting per publication
-/// would give the second Highway project a different 'Highway' from the first,
-/// and REG-LOCATION would hold two item rows nothing could tell apart.
+/// no identifier attached, so ENG keeps the identity in dbo.iTwinType and the
+/// twin references it. Both the id and the name are read from that row -- not
+/// from the twin's own free-text Type column, which holds a second copy of the
+/// name that nothing keeps in step -- so the two halves of the published Type
+/// cannot disagree.
+///
+/// Storing it rather than deriving it from the string is what makes the
+/// identity survive a rename: correcting a boundary's spelling leaves the UUID
+/// alone, so nothing already published to REG-LOCATION reclassifies.
 /// </summary>
 public sealed class EngSitesBuilder(IOptions<EngEngineOptions> options)
 {
@@ -45,7 +50,7 @@ public sealed class EngSitesBuilder(IOptions<EngEngineOptions> options)
     /// the scope it created the first time instead of making a second one. The
     /// spec's idempotency rule is stated in the verb.
     /// </summary>
-    public XElement Build(EngITwin twin, Guid siteTypeUuid, string correlationId)
+    public XElement Build(EngITwin twin, string correlationId)
     {
         var bod = new SyncSites(ActionCodes.Replace);
 
@@ -55,12 +60,56 @@ public sealed class EngSitesBuilder(IOptions<EngEngineOptions> options)
             LogicalID = _options.LogicalId,
             ComponentID = "EngEngine",
 
-            // The twin's own code, so a receiver reading the envelope can say
+            // Names the flow this envelope belongs to, per the sample.
+            TaskID = "Site Creation",
+
+            // The twin's own handle, so a receiver reading the envelope can say
             // which site this concerns without parsing the noun.
-            ReferenceID = twin.Code
+            ReferenceID = twin.Handle
         };
 
-        bod.With(BuildSite(twin, siteTypeUuid));
+        bod.With(BuildSite(twin));
+
+        return bod.CreateDocument().Root
+            ?? throw new InvalidOperationException("SyncSites serialised to an empty document.");
+    }
+
+    /// <summary>
+    /// Builds the publication announcing that an iTwin no longer exists.
+    /// </summary>
+    /// <remarks>
+    /// Still a Sync BOD, with actionCode Delete on the ActionExpression, rather
+    /// than a DeleteSites root. That looks like the weaker choice and is not.
+    /// OAGIS derives the noun by stripping the verb from the root name, so a
+    /// root of SyncSites carrying a Delete verb parses to the noun 'SyncSites'
+    /// and matches no handler; the receiver would skip it as an unrecognised BOD
+    /// and report success having done nothing. Keeping the Sync/Sites pair
+    /// intact and varying the action code is both what the action code is for
+    /// and the only form the envelope parser can actually read.
+    ///
+    /// Carries the UUID alone. Everything else on a Site is naming, and naming
+    /// the receiver already holds -- it keys on the UUID, so any other value
+    /// here could only agree or be wrong. Sending the twin's last known name
+    /// with its deletion invites a receiver to match on it and delete by name.
+    /// </remarks>
+    public XElement BuildDelete(Guid iTwinId, string correlationId)
+    {
+        var bod = new SyncSites(ActionCodes.Delete);
+
+        bod.ApplicationArea.BODID = correlationId;
+        bod.ApplicationArea.Sender = new Sender
+        {
+            LogicalID = _options.LogicalId,
+            ComponentID = "EngEngine",
+            TaskID = "Site Deletion",
+            ReferenceID = iTwinId.ToString()
+        };
+
+        bod.With(new Site
+        {
+            UUID = iTwinId,
+            IDInInfoSource = iTwinId.ToString()
+        });
 
         return bod.CreateDocument().Root
             ?? throw new InvalidOperationException("SyncSites serialised to an empty document.");
@@ -69,92 +118,60 @@ public sealed class EngSitesBuilder(IOptions<EngEngineOptions> options)
     /// <summary>
     /// Whether a twin can be published at all.
     ///
-    /// It needs a type. Everything else the site carries is naming, and naming
-    /// can be thin -- a site with no description is still a site. The type is
-    /// not naming: REG-LOCATION creates an Item from it, and the Serial that
-    /// represents this iTwin hangs off that Item. A twin published without one
-    /// would ask the receiver to invent a classification, and an invented
+    /// It needs a boundary. Everything else the site carries is naming, and
+    /// naming can be thin -- a site with no description is still a site. The
+    /// type is not naming: REG-LOCATION creates an Item from it, and the Serial
+    /// that represents this iTwin hangs off that Item. A twin published without
+    /// one would ask the receiver to invent a classification, and an invented
     /// classification is one every later twin has to be reconciled against.
+    ///
+    /// The id is what is checked rather than the name, because the id is what
+    /// Site.Type.UUID carries. A twin with a name but no id would serialise a
+    /// site type with an empty identity.
     /// </summary>
     public static bool IsPublishable(EngITwin twin) =>
-        !string.IsNullOrWhiteSpace(twin.TwinType);
+        twin.ITwinTypeId is not null;
 
-    /// <summary>
-    /// The type string a site's identity is minted from.
-    ///
-    /// Exposed so the caller can resolve the UUID before building, since that
-    /// resolution is a database write and does not belong inside a mapper.
-    /// </summary>
-    public static string TypeNameOf(EngITwin twin) =>
-        twin.TwinType ?? throw new InvalidOperationException(
-            $"iTwin {twin.ITwinId} has no type and cannot be published.");
-
-    private Site BuildSite(EngITwin twin, Guid siteTypeUuid)
+    private Site BuildSite(EngITwin twin)
     {
-        // The platform's displayName is the human-readable name; Code is what
-        // the provider stored, which for a twin registered from a platform
-        // payload is the project number. Falling back keeps a sparsely
-        // registered twin publishable under something a person can read.
-        var displayName = FirstNonBlank(twin.DisplayName, twin.Code);
-
         return new Site
         {
             // The federation id, unaltered. This becomes the CIRID, and the
             // Scope, Item and Serial the receiver creates all hang off it.
             UUID = twin.ITwinId,
 
-            // ENG's own handle on the twin, registered against the federation
-            // id above, so a receiver can come back and ask about it.
+            // The same id again, per the sample: ENG identifies the twin to
+            // itself by its federation id, so there is no second key to give.
             IDInInfoSource = twin.ITwinId.ToString(),
 
-            InfoSource = new InfoSource
-            {
-                UUID = CcomUuid.ForInfoSource(_options.SourceId),
-                ShortName = _options.SourceId
-            },
-
-            ShortName = displayName,
-
-            // Name and number together, per the spec's Step 3 mapping. The
-            // number alone is not readable and the name alone is not unique --
-            // two corridors may both be called Main Street.
-            FullName = Join(displayName, twin.Number),
+            // The engineering number, per the sample. Falls back through the
+            // handle so a twin registered without a number still names itself
+            // rather than going out blank -- receivers key their scope code on
+            // this.
+            ShortName = FirstNonBlank(twin.Number, twin.Handle),
 
             Description = twin.Description,
 
             Type = new SegmentType
             {
-                // Minted by ENG and reused, not derived from the type string:
-                // deriving it would make the identity a function of the
-                // spelling, so correcting a type name would silently
-                // reclassify every site already published under it.
-                UUID = siteTypeUuid,
+                // The stored identity of the boundary, not derived from its
+                // name: renaming a boundary must not reclassify the sites
+                // already published under it.
+                UUID = twin.ITwinTypeId!.Value,
 
-                IDInInfoSource = twin.TwinType,
+                // The id rather than the name, per the sample. This is how a
+                // receiver refers the boundary back to ENG, and the id is the
+                // half of the row that does not move.
+                IDInInfoSource = twin.ITwinTypeId!.Value.ToString(),
 
-                // The type is ENG's vocabulary rather than an RDL key, so it is
-                // sourced as ENG. Claiming a reference library would tell a
-                // receiver it can look 'Highway' up somewhere that has never
-                // heard of it.
-                InfoSource = new InfoSource
-                {
-                    UUID = CcomUuid.ForInfoSource(_options.SourceId),
-                    ShortName = _options.SourceId
-                },
-
-                ShortName = twin.TwinType,
-                FullName = Join(twin.TwinType, twin.SubClass)
+                // The name from the type row, not the twin's free-text Type
+                // column. Both carry it, but only the type row is unique and
+                // only it moves on a rename, so sourcing the name here keeps it
+                // agreeing with the UUID above.
+                ShortName = twin.ITwinTypeNumber
             }
         };
     }
-
-    // An em dash, matching the spec: 'US Route 202 — HWYUSR202'. When the
-    // second part is absent the separator goes with it, rather than leaving a
-    // dangling dash in a name a person reads.
-    private static string? Join(string? first, string? second) =>
-        string.IsNullOrWhiteSpace(second) ? first
-        : string.IsNullOrWhiteSpace(first) ? second
-        : $"{first} — {second}";
 
     private static string? FirstNonBlank(params string?[] candidates) =>
         candidates.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c));
