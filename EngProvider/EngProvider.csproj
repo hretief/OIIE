@@ -75,5 +75,6 @@
       The companion to schema.sql, applied only by an explicit reset. Kept as a
       separate resource so that nothing which runs at startup can reach it.
     -->
+    <EmbeddedResource Include="Infrastructure\Sql\drop.sql" LogicalName="EngProvider.Infrastructure.Sql.drop.sql" />
   </ItemGroup>
 </Project>

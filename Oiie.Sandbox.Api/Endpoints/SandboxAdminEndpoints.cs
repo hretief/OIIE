@@ -266,6 +266,12 @@ app.MapPost("/admin/reset", async (
 // alone. This one deletes them too, because the point is to clear queues and
 // sessions that have outlived their usefulness — including a provider's own.
 //
+// It also drops the CIR registry the engines write into. Identity is the one
+// thing that used to survive a reset, and because CIR entries key on the integer
+// ids REG-LOCATION restarts from 1, a surviving registry collided with the first
+// sites created afterwards -- a greenfield run failing on a duplicate that
+// belonged to the previous one.
+//
 // That has a consequence the caller must act on: deleting a channel destroys every
 // session on it, including sessions held by systems that are not this one. Those
 // systems will keep polling dead session ids until they are told to re-open, and a
@@ -471,8 +477,8 @@ app.MapPost("/admin/reset/day-zero", async (
 
     await refresher.RefreshAllAsync(ct);
 
-    // 4. The external systems: ENG's database, the engine's watermark, and the
-    //    REG-LOCATION, MMS and CMS databases.
+    // 4. The external systems: the CIR registry, ENG's database, the engine's
+    //    watermark, and the REG-LOCATION, MMS and CMS databases.
     //
     // Separate from the participant schemas above because none of these are
     // sandbox participants: each is a Functions host with its own database,
@@ -480,7 +486,15 @@ app.MapPost("/admin/reset/day-zero", async (
     // added through the UI outlives every reset, and the next demo starts with
     // the previous one's twins, locations and assets already present -- which is
     // exactly the state a greenfield walkthrough is meant to rule out.
-    var providerProblems = await engine.ResetAsync(ct);
+    //
+    // CIR goes first, before the databases whose rows it identifies. Identity
+    // outliving its data is the harmful order: CIR entries key on integer ids
+    // that the reset restarts from 1, so a registry left populated collides with
+    // the first sites created afterwards. The reverse -- rows briefly without
+    // identity -- is repaired by the next registration.
+    var providerProblems = new List<string>(await engine.ResetCirAsync(ct));
+
+    providerProblems.AddRange(await engine.ResetAsync(ct));
 
     var foreignRebuilt = rebuilt
         .Where(r => r.GetType().GetProperty("ours")?.GetValue(r) is false)
@@ -503,9 +517,9 @@ app.MapPost("/admin/reset/day-zero", async (
             "a session the broker no longer knows about.");
 
         actionRequired.Add(
-            "The CIR registry's own data is NOT cleared by this call — entries registered " +
-            "earlier still carry their CIRIDs. Call POST /admin/cir/registry/delete for a " +
-            "true day zero, then re-register.");
+            "The participants' own CIR registry is NOT cleared by this call -- only the " +
+            "registry the engines write to. If entries were registered through a scenario " +
+            "rather than by an engine, call POST /admin/cir/registry/delete as well.");
     }
 
     if (removed.Count > 0)

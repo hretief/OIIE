@@ -116,6 +116,28 @@ public sealed class EngEngineClient(
     private readonly string? _cmsBaseUrl =
         Trimmed(configuration["Sandbox:CmsProviderBaseUrl"]);
 
+    /// <summary>
+    /// The CIR the engines register in, which is not necessarily the one the
+    /// sandbox participants use.
+    /// </summary>
+    /// <remarks>
+    /// Configured separately because the two are genuinely different
+    /// deployments today: the personality packs point at their own CIR with the
+    /// registry OIIE-SANDBOX, while the engines write to whatever
+    /// RegLocationEngine__CirBaseUrl names, under a registry taken from their
+    /// Enterprise setting. Clearing one does not clear the other, and it is the
+    /// engine-written entries that break the next run.
+    /// </remarks>
+    private readonly string? _cirBaseUrl =
+        Trimmed(configuration["Sandbox:CirProviderBaseUrl"]);
+
+    /// <summary>
+    /// The registry the engines write into -- the enterprise id, not a
+    /// per-participant value.
+    /// </summary>
+    private readonly string? _cirRegistryId =
+        Trimmed(configuration["Sandbox:CirRegistryId"]);
+
     // The provider and engine are separate Functions hosts with separate host
     // keys. A single default header on the HttpClient can only ever satisfy one
     // of them, so the key travels with the request instead. Each falls back to
@@ -139,6 +161,10 @@ public sealed class EngEngineClient(
 
     private readonly string? _cmsKey =
         Trimmed(configuration["Providers:Cms:Key"])
+        ?? Trimmed(configuration["Sandbox:EngFunctionsKey"]);
+
+    private readonly string? _cirKey =
+        Trimmed(configuration["Providers:Cir:Key"])
         ?? Trimmed(configuration["Sandbox:EngFunctionsKey"]);
 
     /// <summary>
@@ -236,6 +262,66 @@ public sealed class EngEngineClient(
         }
 
         return problems;
+    }
+
+    /// <summary>
+    /// Drops the registry the engines register identities in.
+    /// </summary>
+    /// <remarks>
+    /// Over the CIR provider's REST surface rather than an ISBM CancelRegistry
+    /// BOD. Day zero deletes channels and destroys the sessions on them, so the
+    /// bus is at its least trustworthy exactly when this runs -- and
+    /// CancelRegistry declares no response, so a delete that never arrived would
+    /// be indistinguishable from one that worked.
+    ///
+    /// This matters more than tidiness. ITWIN-SITE entries key on the integer
+    /// scopeId, and day zero rebuilds REG-LOCATION so ids restart at 1. A
+    /// registry left populated therefore collides with the first sites created
+    /// after the reset, and the failure surfaces as a duplicate-entry conflict
+    /// on a greenfield run -- which reads as a bug in registration rather than
+    /// as leftover state.
+    ///
+    /// Deleting the registry takes its categories with it. That is correct here:
+    /// the next registration recreates both, and a category surviving without
+    /// its entries would describe a shape nothing occupies.
+    /// </remarks>
+    public async Task<IReadOnlyList<string>> ResetCirAsync(CancellationToken ct)
+    {
+        if (_cirBaseUrl is null || string.IsNullOrWhiteSpace(_cirRegistryId))
+        {
+            // Skipped rather than reported, as an unconfigured provider is in
+            // ResetAsync: running part of the stack is normal, and a warning for
+            // a host nobody deployed would bury the failures that matter.
+            return [];
+        }
+
+        try
+        {
+            var response = await SendAsync(
+                HttpMethod.Delete,
+                $"{_cirBaseUrl}/registries/{Uri.EscapeDataString(_cirRegistryId)}",
+                _cirKey,
+                body: null,
+                ct);
+
+            // Already absent is the desired end state, not a failure. A
+            // greenfield environment has no registry to drop.
+            if (response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return [];
+            }
+
+            return [$"CIR refused to drop registry '{_cirRegistryId}' " +
+                    $"({(int)response.StatusCode}): " +
+                    Excerpt(await response.Content.ReadAsStringAsync(ct))];
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            logger.LogWarning(ex, "Dropping CIR registry {RegistryId} failed.", _cirRegistryId);
+
+            return [$"Could not reach the CIR provider to drop registry " +
+                    $"'{_cirRegistryId}': {ex.Message}"];
+        }
     }
 
 
