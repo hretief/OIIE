@@ -40,6 +40,21 @@ public sealed record RegScope(
     bool IsEnabled,
     int UsageCount);
 
+/// <summary>
+/// What a cascaded scope delete removed.
+///
+/// Reported rather than returning a bare 204 because the counts are the only
+/// evidence the caller has of how much the request actually destroyed, and a
+/// cascade that silently took more than expected is worth being able to see
+/// after the fact.
+/// </summary>
+public sealed record ScopeCascadeResult(
+    int ScopeId,
+    int TagsDeleted,
+    int SerialsDeleted,
+    int ItemsDeleted,
+    int ScopesDeleted);
+
 /// <summary>A classification group.</summary>
 public sealed record RegClassGroup(int GroupId);
 

@@ -68,6 +68,21 @@ public interface IRegLocationStore
 
     Task<bool> DeleteScopeAsync(int scopeId, CancellationToken ct);
 
+    /// <summary>
+    /// Deletes a scope together with everything registered inside it, and any
+    /// scopes descended from it.
+    ///
+    /// Separate from <see cref="DeleteScopeAsync"/> rather than a flag on it,
+    /// because the two answer different questions. The plain delete asks "is
+    /// this scope empty?" and refusing is the useful answer when it is not.
+    /// This one asks to remove the site and all its contents, which is a
+    /// deliberate act and should have to be spelled out.
+    ///
+    /// Returns null when the scope does not exist, so the caller can tell an
+    /// absent scope from one that was deleted and contained nothing.
+    /// </summary>
+    Task<ScopeCascadeResult?> DeleteScopeCascadeAsync(int scopeId, CancellationToken ct);
+
     // ---- Catalogue --------------------------------------------------------
 
     Task<IReadOnlyList<RegNamespace>> GetNamespacesAsync(CancellationToken ct);

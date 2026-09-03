@@ -679,7 +679,14 @@ BEGIN
         SELECT 1
         FROM deleted AS d
         WHERE EXISTS (SELECT 1 FROM dbo.objects AS o
-                      WHERE o.scope_id = d.scope_id)
+                      WHERE o.scope_id = d.scope_id
+                        -- A scope's own registry row is scoped to itself (see
+                        -- CreateScopeAsync), so counting it here made the guard
+                        -- unsatisfiable: every scope always had at least one
+                        -- objects row pointing at it -- its own -- and no scope
+                        -- established by ingestion could ever be deleted. It is
+                        -- reaped by the DELETE below, so it is not a leftover.
+                        AND NOT (o.object_id = d.scope_id AND o.object_type = 227))
           AND NOT EXISTS (SELECT 1 FROM dbo.scopes AS s
                           WHERE s.scope_id = d.scope_id)
     )

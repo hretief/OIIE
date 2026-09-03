@@ -208,6 +208,166 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
         }
     }
 
+    /// <summary>
+    /// Deletes a scope and everything registered inside it.
+    ///
+    /// Modelled on ccp_del_site: work inwards from the leaves, deleting each
+    /// kind of child in dependency order, and only then the scope itself. The
+    /// ordering is not arbitrary -- tags reference items, serials reference
+    /// items, so items cannot go first -- and child scopes are handled before
+    /// their parent because scopes.parent_id is a real foreign key.
+    ///
+    /// Set-based rather than the cursor the stored procedure uses. There is no
+    /// per-row procedure to call here, so the loop that ccp_del_site needs in
+    /// order to invoke ebp_del_task and friends has nothing to do.
+    ///
+    /// Only domain rows are deleted; the AFTER DELETE triggers reap the
+    /// matching dbo.objects rows.
+    /// </summary>
+    public async Task<ScopeCascadeResult?> DeleteScopeCascadeAsync(int scopeId, CancellationToken ct)
+    {
+        await using var cn = await OpenAsync(ct);
+        await using var tx = (SqlTransaction)await cn.BeginTransactionAsync(ct);
+
+        try
+        {
+            if (!await ScopeExistsAsync(cn, tx, scopeId, ct))
+            {
+                await tx.RollbackAsync(ct);
+                return null;
+            }
+
+            var result = await DeleteScopeTreeAsync(cn, tx, scopeId, ct);
+            await tx.CommitAsync(ct);
+            return result;
+        }
+        catch (SqlException ex) when (IsConstraintViolation(ex))
+        {
+            await tx.RollbackAsync(ct);
+            throw Translate(ex);
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
+    }
+
+    private static async Task<bool> ScopeExistsAsync(
+        SqlConnection cn, SqlTransaction tx, int scopeId, CancellationToken ct)
+    {
+        await using var cmd = new SqlCommand(
+            "SELECT 1 FROM dbo.scopes WHERE scope_id = @id;", cn, tx);
+        cmd.Parameters.AddWithValue("@id", scopeId);
+        return await cmd.ExecuteScalarAsync(ct) is not null;
+    }
+
+    private static async Task<ScopeCascadeResult> DeleteScopeTreeAsync(
+        SqlConnection cn, SqlTransaction tx, int scopeId, CancellationToken ct)
+    {
+        var total = new ScopeCascadeResult(scopeId, 0, 0, 0, 0);
+
+        // Depth first. A child scope must be gone before its parent, or
+        // FK_scopes_parent rejects the delete.
+        foreach (var childId in await ChildScopeIdsAsync(cn, tx, scopeId, ct))
+        {
+            var child = await DeleteScopeTreeAsync(cn, tx, childId, ct);
+            total = total with
+            {
+                TagsDeleted    = total.TagsDeleted + child.TagsDeleted,
+                SerialsDeleted = total.SerialsDeleted + child.SerialsDeleted,
+                ItemsDeleted   = total.ItemsDeleted + child.ItemsDeleted,
+                ScopesDeleted  = total.ScopesDeleted + child.ScopesDeleted,
+            };
+        }
+
+        // Clear the scope's context pointer before touching its children.
+        // SyncSites links a scope to the Serial it represents, and
+        // FK_scopes_context_object means that pointer outlives nothing: deleting
+        // the serial while scopes.object_id still names it is a 547.
+        await using (var cmd = new SqlCommand("""
+            UPDATE dbo.scopes
+            SET object_id = NULL, object_type = NULL
+            WHERE scope_id = @scope;
+            """, cn, tx))
+        {
+            cmd.Parameters.AddWithValue("@scope", scopeId);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        // Tags first: they reference items, and nothing references them.
+        var tags = await DeleteInScopeAsync(cn, tx,
+            """
+            DELETE t
+            FROM dbo.tags AS t
+            INNER JOIN dbo.objects AS o
+                ON o.object_id = t.tag_id AND o.object_type = 212
+            WHERE o.scope_id = @scope;
+            """, scopeId, ct);
+
+        // Then serials, which also reference items.
+        var serials = await DeleteInScopeAsync(cn, tx,
+            """
+            DELETE s
+            FROM dbo.item_serial_nos AS s
+            INNER JOIN dbo.objects AS o
+                ON o.object_id = s.serial_id AND o.object_type = 18
+            WHERE o.scope_id = @scope;
+            """, scopeId, ct);
+
+        // Items last of the children, now that their dependants are gone.
+        // Guarded anyway: an item may be shared with a scope that survives,
+        // and deleting it would strand that scope's tags.
+        var items = await DeleteInScopeAsync(cn, tx,
+            """
+            DELETE i
+            FROM dbo.items AS i
+            INNER JOIN dbo.objects AS o
+                ON o.object_id = i.item_id AND o.object_type = 1
+            WHERE o.scope_id = @scope
+              AND NOT EXISTS (SELECT 1 FROM dbo.tags AS t WHERE t.item_id = i.item_id)
+              AND NOT EXISTS (SELECT 1 FROM dbo.item_serial_nos AS s WHERE s.item_id = i.item_id);
+            """, scopeId, ct);
+
+        // Finally the scope. Its own objects row is reaped by
+        // TR_scopes_delete_object.
+        await using (var cmd = new SqlCommand(
+            "DELETE FROM dbo.scopes WHERE scope_id = @scope;", cn, tx))
+        {
+            cmd.Parameters.AddWithValue("@scope", scopeId);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        return total with
+        {
+            TagsDeleted    = total.TagsDeleted + tags,
+            SerialsDeleted = total.SerialsDeleted + serials,
+            ItemsDeleted   = total.ItemsDeleted + items,
+            ScopesDeleted  = total.ScopesDeleted + 1,
+        };
+    }
+
+    private static async Task<IReadOnlyList<int>> ChildScopeIdsAsync(
+        SqlConnection cn, SqlTransaction tx, int scopeId, CancellationToken ct)
+    {
+        await using var cmd = new SqlCommand(
+            "SELECT scope_id FROM dbo.scopes WHERE parent_id = @id;", cn, tx);
+        cmd.Parameters.AddWithValue("@id", scopeId);
+
+        var ids = new List<int>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct)) ids.Add(r.GetInt32(0));
+        return ids;
+    }
+
+    private static async Task<int> DeleteInScopeAsync(
+        SqlConnection cn, SqlTransaction tx, string sql, int scopeId, CancellationToken ct)
+    {
+        await using var cmd = new SqlCommand(sql, cn, tx);
+        cmd.Parameters.AddWithValue("@scope", scopeId);
+        return await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     // ---- Catalogue --------------------------------------------------------
 
     public async Task<IReadOnlyList<RegNamespace>> GetNamespacesAsync(CancellationToken ct)
@@ -891,17 +1051,22 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    // 547 constraint violation, 2601/2627 duplicate key. These mean the caller
-    // asked for something the registry forbids, not that the server broke, so
-    // they are translated rather than allowed to surface as a 500.
+    // 547 constraint violation, 2601/2627 duplicate key, and 50000 for the
+    // RAISERROR the delete triggers use to refuse a row that is still in use.
+    // These mean the caller asked for something the registry forbids, not that
+    // the server broke, so they are translated rather than allowed to surface
+    // as a 500.
     private static bool IsConstraintViolation(SqlException ex) =>
-        ex.Number is 547 or 2601 or 2627;
+        ex.Number is 547 or 2601 or 2627 or 50000;
 
     private static RegistryConflictException Translate(SqlException ex) => new(
         ex.Number switch
         {
             2601 or 2627 => "That would duplicate an existing registry entry. " +
                             "A tag code is unique per item and revision.",
+            // The triggers phrase their own refusal precisely -- which scope,
+            // which reference -- so it beats anything generic said here.
+            50000 => ex.Message,
             _ => "The registry rejected this change because it would break a " +
                  "referential rule. A referenced row may not exist, or the row " +
                  "being deleted may still be in use.",

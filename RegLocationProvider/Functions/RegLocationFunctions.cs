@@ -162,6 +162,28 @@ public sealed class RegLocationFunctions(
                 ? req.CreateResponse(HttpStatusCode.NoContent)
                 : await ProblemAsync(req, HttpStatusCode.NotFound, $"No scope '{scopeId}'.", ct), ct);
 
+    /// <summary>
+    /// Deletes a scope and everything inside it.
+    ///
+    /// A separate route from <see cref="DeleteScope"/> rather than a query flag,
+    /// so that destroying a site's contents cannot happen by accidentally
+    /// omitting a parameter. The plain delete stays the safe default and still
+    /// refuses while the scope holds anything.
+    /// </summary>
+    [Function("DeleteScopeCascade")]
+    public async Task<HttpResponseData> DeleteScopeCascade(
+        [HttpTrigger(AuthorizationLevel.Function, "delete", Route = "scopes/{scopeId:int}/cascade")] HttpRequestData req,
+        int scopeId,
+        CancellationToken ct)
+        => await WriteGuardedAsync(req, async () =>
+        {
+            var result = await store.DeleteScopeCascadeAsync(scopeId, ct);
+
+            return result is null
+                ? await ProblemAsync(req, HttpStatusCode.NotFound, $"No scope '{scopeId}'.", ct)
+                : await OkAsync(req, result, ct);
+        }, ct);
+
     // ---- Catalogue --------------------------------------------------------
 
     /// <summary>
