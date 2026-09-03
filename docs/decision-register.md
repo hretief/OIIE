@@ -1474,3 +1474,52 @@ both exist, and neither requires a security token.
   on this one; what mattered is which broker they live on.
 - `cir-func-44p2f3n6` and `isbm-func-44p2f3n6dv7p4`, and the legacy `cir`
   database, are now unreferenced by this repository and can be deleted.
+
+
+## DR-024 — Sandbox App Service renamed to the resource standard; Blazor UI removed
+
+**Context:** `oiie-sandbox-{env}` was the last App Service outside the `acme-*`
+convention, alongside a retired Blazor UI site (`oiie-simhost-{env}`) that was
+still running and still declared in Bicep. `main.bicep` and `NAMING.md` both
+carried a comment saying the old API name was load-bearing — that
+`Isbm__ListenerBaseUrl`, the CIR's configuration and every script holding a
+sandbox URL depended on it.
+
+**Decision:** Rename to `acme-api-sandbox-{env}`, derive databases as
+`acme-db-sandbox-{env}`, and delete the Blazor UI site and its template
+resource.
+
+**Why the longer name:** `docs/azure-resource-naming-guidance.md` defines
+`<account>-<resource-type>-<system>-<environment>`. The shorter
+`acme-sandbox-dev` would have been the only name in the estate missing the
+resource-type segment, which reads as conforming and parses as something else.
+
+**The load-bearing claim was false.** No deployed function app holds a sandbox
+URL. The only setting carrying one is the API's own `Isbm__ListenerBaseUrl`,
+which Bicep derives from the app name and which therefore followed the rename.
+Checking took one query; the comment had been discouraging the rename for
+months.
+
+**Consequences:**
+
+- The `Database naming` conflict `NAMING.md` recorded against the master
+  standard is closed.
+- The Blazor sites were deleted from Azure **before** the `uiApp` resource was
+  removed from the template. Incremental-mode Bicep does not delete resources
+  it stops declaring, so the reverse order would have orphaned a running site
+  with live Key Vault and Storage role assignments. The `-DeleteLegacyUi` switch
+  that existed for this is removed with it.
+- The App Service plan stays dedicated, as `acme-plan-sandbox-{env}`. Sharing
+  `acme-plan-dev` satisfies the standard's one-plan-per-environment rule and is
+  impossible: it is a Windows `functionapp` plan and this is a Linux App
+  Service. Azure rejects that with *"The parameter LinuxFxVersion has an invalid
+  value"*, naming the site's own setting rather than the plan. The guidance now
+  states the rule is one plan per environment **per operating system**.
+- Storage required no change. `acmestoragedev01` was already live and already
+  matches the documented storage exception; `mndotsandbox` survived only in
+  deploy-script examples, and is now the parameter default so the value is
+  expressed once.
+
+**Out of scope:** `acme-sql-server` and the `mndot` Key Vault. Both are shared
+with resources outside this solution, and neither can be renamed in place —
+Azure requires create-and-migrate for both.
