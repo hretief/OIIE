@@ -326,8 +326,15 @@ steps are outside the Sandbox.
 5. POST {sandbox}/admin/reset
       only if step 1 reported channel errors
 
-0. (only on a freshly provisioned ENG database)
+0. (after EVERY day zero, and on a freshly provisioned ENG database)
       Apply docs/DDL/ENG_BOOTSTRAP.SQL against acme-db-eng-dev.
+      This used to be a one-off. It is not any more: day zero resets the
+      ENG provider by dropping and recreating its schema, and the EC
+      classes live only in this script -- nothing in the runtime applies
+      it. Skip it and dbo.ECClass is empty, so GET /classes returns [],
+      the ENG panel's class dropdown is blank, and authoring an element
+      fails on a foreign key rather than on anything that names the
+      cause.
       Step 1 does NOT touch the ENG provider database -- it rebuilds the
       Sandbox participant tables only. The two are separate stores:
         - Sandbox participant DB  rdl:* classes, from PersonalityPacks

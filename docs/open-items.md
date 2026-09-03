@@ -929,3 +929,42 @@ nothing but a repeated read.
 Until it is done, a day zero must be followed by restarting
 `acme-engn-reglocation-dev` and `acme-engn-eng-dev`, or the first ingest after
 the reset will 500.
+
+## Day zero wipes ENG's EC classes and nothing restores them
+
+Raised 2026-09 during a manual test: `GET /classes` returned `[]` on the ENG
+provider.
+
+Day zero resets ENG by running `drop.sql` then `schema.sql`. `schema.sql` seeds
+`dbo.iTwinType` but not `dbo.ECClass` — the EC schemas, classes and inheritance
+live in `docs/DDL/ENG_BOOTSTRAP.SQL`, which nothing in the runtime applies. Only
+`EngHostFixture` does, for the E2E tests.
+
+The RUNBOOK described applying it as a one-off "only on a freshly provisioned
+ENG database". That was true when the ENG database was provisioned once; day
+zero now freshly provisions it on every run, so the manual step is required
+every time and the documentation did not say so. It does now.
+
+The failure is quiet in the way that matters. `GET /classes` returns `200` with
+an empty array rather than an error, so the ENG panel's class dropdown is simply
+blank and authoring an element fails later on `FK_Element_ECClass` — an error
+naming a constraint rather than the absent seed.
+
+Options, in preference order:
+
+- **Embed the EC seed in `EngProvider`'s `schema.sql`.** EC classes are
+  reference data the provider cannot function without, not demo content, so the
+  argument for keeping them outside the schema is weak. `ResetAsync` already
+  runs `schema.sql`, so this needs no new call site.
+- **Embed `ENG_BOOTSTRAP.SQL` as a third resource** and have `ResetAsync` apply
+  it after `schema.sql`. Keeps seed data separate from DDL, at the cost of a
+  third embedded resource and an ordering rule.
+- **Add an `/eng/bootstrap` route** day zero calls. Most explicit, but puts the
+  sandbox in charge of a provider's reference data.
+
+Note the script also seeds a demo iTwin (`1111…`), iModel (`2222…`) and a root
+Element. Those are **not** wanted on every reset — twins should arrive through
+the UI or SyncSites — so whichever option is taken must seed the EC half only.
+The EC-only extract is lines 83-273 of the script.
+
+Applied manually for now.
