@@ -83,14 +83,23 @@ public interface IEngDesignStore
     Task<EngITwin> UpsertITwinAsync(UpsertITwinRequest request, CancellationToken ct);
 
     /// <summary>
-    /// The stable UUID for a site type, minted on first sight.
-    ///
-    /// Site.Type.UUID must be the same for every iTwin of a given type, or
-    /// REG-LOCATION receives two site types nothing can tell apart. The platform
-    /// supplies only the type string, so the identifier is ENG's to invent and
-    /// then to remember.
+    /// Removes an iTwin, and reports whether there was one to remove.
     /// </summary>
-    Task<Guid> GetOrCreateITwinTypeUuidAsync(string typeName, CancellationToken ct);
+    /// <remarks>
+    /// Refuses rather than cascades when iModels still hang off the twin.
+    /// dbo.iModel carries a foreign key to dbo.iTwin, so the delete would fail
+    /// anyway; refusing deliberately turns that into an answer the caller can
+    /// act on instead of a constraint violation surfacing as a 500.
+    ///
+    /// Cascading is the wrong default here. An iTwin is the container the
+    /// engineering content lives in, and silently discarding a design because
+    /// someone removed its project is not a reversible mistake. The caller
+    /// deletes the iModels first, deliberately, or keeps the twin.
+    ///
+    /// False means no such twin, which the caller should treat as success:
+    /// deleting something already gone is the state that was asked for.
+    /// </remarks>
+    Task<bool> DeleteITwinAsync(Guid iTwinId, CancellationToken ct);
 
     Task<IReadOnlyList<EngIModel>> GetIModelsAsync(Guid? iTwinId, CancellationToken ct);
 
@@ -211,37 +220,76 @@ public interface IEngDesignStore
 /// <summary>
 /// The project or asset an iModel belongs to.
 ///
-/// Everything from DisplayName onward is what the iTwin platform returns from
-/// GET /iTwins/{id} rather than anything ENG derives. All nullable, because a
-/// twin seeded before the sandbox called the platform has none of it.
+/// The fields are named as the iTwin platform names them, because that is where
+/// all of them come from. There is deliberately no ENG-invented code: the
+/// platform has no such field, and synthesising one made the stored value
+/// depend on how complete the payload happened to be.
+///
+/// Everything but the id is nullable. A twin may be registered from a sparse
+/// payload, and inventing a classification for one would put a guess in the
+/// provider that every later twin has to be reconciled against.
 /// </summary>
 public sealed record EngITwin(
     Guid ITwinId,
-    string Code,
-    string? Description,
     DateTime CreatedUtc,
+    string? Class = null,
+    string? SubClass = null,
+    string? Type = null,
     string? DisplayName = null,
     string? Number = null,
-    string? TwinClass = null,
-    string? SubClass = null,
-    string? TwinType = null);
+    string? Status = null,
+    Guid? ParentITwinId = null,
+    string? Description = null,
+
+    /// <summary>
+    /// The boundary this twin is drawn around, as stored in dbo.iTwinType.
+    /// This is what becomes Site.Type.UUID; Type is the name it carries.
+    /// </summary>
+    Guid? ITwinTypeId = null,
+
+    /// <summary>
+    /// The boundary's name, read from dbo.iTwinType rather than from the twin's
+    /// own free-text Type column. Both hold it, but only this one is unique and
+    /// only this one moves when a boundary is renamed, so it is what
+    /// Site.Type.ShortName is published from. Null when the twin has no
+    /// boundary.
+    /// </summary>
+    string? ITwinTypeNumber = null)
+{
+    /// <summary>
+    /// A short handle for the twin, for logs and for anything that needs to name
+    /// it in one string.
+    ///
+    /// Derived rather than stored: this is presentation, and persisting it was
+    /// what made the old Code column drift from the platform. Number first
+    /// because it is the engineering identifier; the id is the last resort, so
+    /// this never returns blank for a twin that exists.
+    /// </summary>
+    public string Handle =>
+        FirstNonBlank(Number, DisplayName) ?? ITwinId.ToString();
+
+    private static string? FirstNonBlank(params string?[] values) =>
+        Array.Find(values, v => !string.IsNullOrWhiteSpace(v));
+}
 
 /// <summary>
 /// Registers an iTwin the sandbox has been told about, or refreshes one it
 /// already knows.
 ///
-/// Keyed on ITwinId rather than Code, because the id is the platform's own
-/// federation identifier and survives a project being renamed.
+/// Keyed on ITwinId rather than any name, because the id is the platform's own
+/// federation identifier and survives a project being renamed or renumbered.
 /// </summary>
 public sealed record UpsertITwinRequest(
     Guid ITwinId,
-    string Code,
-    string? Description = null,
+    string? Class = null,
+    string? SubClass = null,
+    string? Type = null,
     string? DisplayName = null,
     string? Number = null,
-    string? TwinClass = null,
-    string? SubClass = null,
-    string? TwinType = null);
+    string? Status = null,
+    Guid? ParentITwinId = null,
+    string? Description = null,
+    Guid? ITwinTypeId = null);
 
 /// <summary>
 /// A model. CodeValue is unique within one of these, which is what makes a code

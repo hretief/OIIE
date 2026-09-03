@@ -57,28 +57,48 @@ public sealed class SqlEngDesignStore(
 
     // ---- iTwins and iModels ----------------------------------------------
 
+    // Class, Type and Status are reserved words, so they are bracketed here and
+    // in every statement below.
+    //
+    // The boundary's name is read from iTwinType rather than from iTwin.[Type].
+    // Both hold it, but only the iTwinType copy is guarded by a uniqueness
+    // constraint and only it moves when a boundary is renamed; [Type] is the
+    // raw as-received string. Publishing the joined value keeps
+    // Site.Type.ShortName sourced from the same row as Site.Type.UUID.
     private const string ITwinColumns = """
-        iTwinId, Code, Description, CreatedUtc,
-        DisplayName, Number, TwinClass, SubClass, TwinType
+        t.iTwinId, t.CreatedUtc, t.[Class], t.SubClass, t.[Type],
+        t.DisplayName, t.Number, t.[Status], t.ParentITwinId, t.Description,
+        t.iTwinTypeId, ty.Number AS iTwinTypeNumber
+        """;
+
+    private const string ITwinFrom = """
+        FROM dbo.iTwin AS t
+        LEFT JOIN dbo.iTwinType AS ty ON ty.iTwinTypeId = t.iTwinTypeId
         """;
 
     private static EngITwin ReadITwin(SqlDataReader r) => new(
         r.GetGuid(0),
-        r.GetString(1),
+        r.GetDateTime(1),
         r.IsDBNull(2) ? null : r.GetString(2),
-        r.GetDateTime(3),
+        r.IsDBNull(3) ? null : r.GetString(3),
         r.IsDBNull(4) ? null : r.GetString(4),
         r.IsDBNull(5) ? null : r.GetString(5),
         r.IsDBNull(6) ? null : r.GetString(6),
         r.IsDBNull(7) ? null : r.GetString(7),
-        r.IsDBNull(8) ? null : r.GetString(8));
+        r.IsDBNull(8) ? null : r.GetGuid(8),
+        r.IsDBNull(9) ? null : r.GetString(9),
+        r.IsDBNull(10) ? null : r.GetGuid(10),
+        r.IsDBNull(11) ? null : r.GetString(11));
 
     public async Task<IReadOnlyList<EngITwin>> GetITwinsAsync(CancellationToken ct)
     {
+        // Ordered by the engineering identifier, falling back to the display
+        // name, so the listing stays stable now that there is no single code
+        // column to sort on.
         var sql = $"""
             SELECT {ITwinColumns}
-            FROM dbo.iTwin
-            ORDER BY Code;
+            {ITwinFrom}
+            ORDER BY COALESCE(t.Number, t.DisplayName, CONVERT(NVARCHAR(36), t.iTwinId));
             """;
 
         await using var cn = await OpenAsync(ct);
@@ -98,7 +118,7 @@ public sealed class SqlEngDesignStore(
     {
         await using var cn = await OpenAsync(ct);
         await using var cmd = new SqlCommand(
-            $"SELECT {ITwinColumns} FROM dbo.iTwin WHERE iTwinId = @id;", cn);
+            $"SELECT {ITwinColumns} {ITwinFrom} WHERE t.iTwinId = @id;", cn);
         cmd.Parameters.AddWithValue("@id", iTwinId);
 
         await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -114,68 +134,106 @@ public sealed class SqlEngDesignStore(
         //
         // CreatedUtc is deliberately absent from the UPDATE: re-registering a
         // twin the sandbox already knows does not make it new.
+        //
+        // iTwinTypeId is resolved from [Type] when the caller did not supply
+        // one. The platform gives the boundary as a bare string with no id
+        // attached, so the caller usually cannot name the key; matching it
+        // against iTwinType.Number here is what turns the free-text value into
+        // the stored identity that Site.Type.UUID carries. Without this the
+        // column stays null and the engine silently declines to publish the
+        // twin, which is indistinguishable from nothing having happened.
+        //
+        // An unrecognised boundary leaves the reference null rather than
+        // minting a row, so it surfaces as an unpublished twin instead of a
+        // new identity nobody chose. Deciding what should happen instead is
+        // tracked in docs/open-items.md.
         const string sql = """
+            DECLARE @resolvedTypeId UNIQUEIDENTIFIER = @iTwinTypeId;
+
+            IF @resolvedTypeId IS NULL AND @type IS NOT NULL
+                SELECT @resolvedTypeId = iTwinTypeId
+                FROM dbo.iTwinType
+                WHERE Number = @type;
+
             UPDATE dbo.iTwin WITH (UPDLOCK, HOLDLOCK)
-            SET Code = @code,
-                Description = @description,
+            SET [Class] = @class,
+                SubClass = @subClass,
+                [Type] = @type,
                 DisplayName = @displayName,
                 Number = @number,
-                TwinClass = @twinClass,
-                SubClass = @subClass,
-                TwinType = @twinType
+                [Status] = @status,
+                ParentITwinId = @parentITwinId,
+                Description = @description,
+                iTwinTypeId = @resolvedTypeId,
+                ModifiedUtc = SYSUTCDATETIME()
             WHERE iTwinId = @id;
 
             IF @@ROWCOUNT = 0
                 INSERT INTO dbo.iTwin
-                    (iTwinId, Code, Description, DisplayName, Number, TwinClass, SubClass, TwinType)
+                    (iTwinId, [Class], SubClass, [Type], DisplayName, Number,
+                     [Status], ParentITwinId, Description, iTwinTypeId)
                 VALUES
-                    (@id, @code, @description, @displayName, @number, @twinClass, @subClass, @twinType);
+                    (@id, @class, @subClass, @type, @displayName, @number,
+                     @status, @parentITwinId, @description, @resolvedTypeId);
             """;
 
         await using var cn = await OpenAsync(ct);
         await using var cmd = new SqlCommand(sql, cn);
         cmd.Parameters.AddWithValue("@id", request.ITwinId);
-        cmd.Parameters.AddWithValue("@code", request.Code);
-        cmd.Parameters.AddWithValue("@description", (object?)request.Description ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@class", (object?)request.Class ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@subClass", (object?)request.SubClass ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@type", (object?)request.Type ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@displayName", (object?)request.DisplayName ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@number", (object?)request.Number ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@twinClass", (object?)request.TwinClass ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@subClass", (object?)request.SubClass ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@twinType", (object?)request.TwinType ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@status", (object?)request.Status ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@parentITwinId", (object?)request.ParentITwinId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@description", (object?)request.Description ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@iTwinTypeId", (object?)request.ITwinTypeId ?? DBNull.Value);
 
         await cmd.ExecuteNonQueryAsync(ct);
 
         return (await FindITwinAsync(request.ITwinId, ct))!;
     }
 
-    public async Task<Guid> GetOrCreateITwinTypeUuidAsync(string typeName, CancellationToken ct)
+    public async Task<bool> DeleteITwinAsync(Guid iTwinId, CancellationToken ct)
     {
-        // The read takes UPDLOCK/HOLDLOCK so two iTwins of a new type arriving
-        // together cannot each mint a UUID and race to insert it. The second
-        // caller blocks on the range lock and then reads the first one's value,
-        // which is the entire point of storing the mapping.
+        await using var cn = await OpenAsync(ct);
+
+        // The iModel count is taken in the same statement as the delete so the
+        // two cannot disagree. Checking first and deleting after would leave a
+        // window where an iModel is added against a twin already judged empty,
+        // and the delete would then fail on the foreign key with a message that
+        // says nothing useful.
         const string sql = """
-            DECLARE @existing UNIQUEIDENTIFIER;
+            DECLARE @iModels INT;
 
-            SELECT @existing = TypeUuid
-            FROM dbo.iTwinType WITH (UPDLOCK, HOLDLOCK)
-            WHERE TypeName = @name;
+            SELECT @iModels = COUNT(*)
+            FROM dbo.iModel WITH (UPDLOCK, HOLDLOCK)
+            WHERE iTwinId = @id;
 
-            IF @existing IS NULL
-            BEGIN
-                SET @existing = @minted;
-                INSERT INTO dbo.iTwinType (TypeName, TypeUuid) VALUES (@name, @existing);
-            END
+            IF @iModels > 0
+                THROW 50000, 'iModels still reference this iTwin.', 1;
 
-            SELECT @existing;
+            DELETE FROM dbo.iTwin WHERE iTwinId = @id;
+
+            SELECT @@ROWCOUNT;
             """;
 
-        await using var cn = await OpenAsync(ct);
         await using var cmd = new SqlCommand(sql, cn);
-        cmd.Parameters.AddWithValue("@name", typeName);
-        cmd.Parameters.AddWithValue("@minted", Guid.NewGuid());
+        cmd.Parameters.AddWithValue("@id", iTwinId);
 
-        return (Guid)(await cmd.ExecuteScalarAsync(ct))!;
+        try
+        {
+            return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct)) > 0;
+        }
+        catch (SqlException ex) when (ex.Number == 50000)
+        {
+            // Re-thrown as the store's own vocabulary. The route turns this into
+            // a 409, which is the honest answer: the request was understood and
+            // refused, not malformed.
+            throw new InvalidOperationException(
+                $"iTwin {iTwinId:D} still holds iModels. Delete them first.", ex);
+        }
     }
 
     public async Task<IReadOnlyList<EngIModel>> GetIModelsAsync(Guid? iTwinId, CancellationToken ct)

@@ -70,34 +70,109 @@ IF OBJECT_ID('dbo.iTwin', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.iTwin
     (
+        /* The platform's own id, used unaltered as the federation identifier.
+           Every dependent row -- iModel, and through it Element and
+           NamedVersion -- hangs off this, so it is the one column that must
+           never be reissued. */
         iTwinId         UNIQUEIDENTIFIER NOT NULL,
-        Code            NVARCHAR(100) NOT NULL,
-        Description     NVARCHAR(200) NULL,
+
+        /* The classification, named as the platform names it.
+
+           Class and SubClass come from a closed vocabulary (Thing/Endeavor,
+           and Asset/Portfolio/Project/Program/WorkPackage) and together say
+           what kind of thing the twin is in lifecycle terms -- a physical
+           asset, or the endeavour that delivers one.
+
+           Type is a separate axis: it names the boundary of the digital twin
+           -- what the twin is drawn around -- and is free text rather than a
+           closed set. The boundary is whatever the owner says it is: a DOT
+           scopes twins to a District because that is the area it manages,
+           while an operator may scope one to a Plant or a Highway. So the
+           values are not a fixed vocabulary and should not be validated
+           against one.
+
+           It does not refine Class/SubClass; a District can be either an
+           Asset or the Project building it. ENG mints the site type UUID from
+           Type alone, which is why two twins on opposite sides of the
+           lifecycle can still classify as the same kind of site. */
+        [Class]         NVARCHAR(50) NULL,
+        SubClass        NVARCHAR(50) NULL,
+        [Type]          NVARCHAR(100) NULL,
+
+        /* displayName and number are the platform's engineering properties and
+           are required to be unique per subClass. Held nullable here because a
+           twin may be registered from a sparse payload, with the uniqueness
+           enforced by filtered indexes below rather than by NOT NULL. */
+        DisplayName     NVARCHAR(200) NULL,
+        Number          NVARCHAR(100) NULL,
+
+        /* active | inactive | trial. The platform's lifecycle flag. */
+        [Status]        NVARCHAR(20) NULL,
+
+        /* iTwins form parent-child hierarchies (Portfolio > Asset > Project,
+           and so on). Self-referencing rather than a separate edge table
+           because the platform models it as a single parent per twin.
+
+           Deliberately not a FOREIGN KEY: the parent is frequently a twin the
+           sandbox has never been told about, and a constraint would reject the
+           child outright rather than record what the platform actually said. */
+        ParentITwinId   UNIQUEIDENTIFIER NULL,
+
+        /* Not in the published class/subClass documentation but present on the
+           API resource, and the only free-text field the site description can
+           be built from. */
+        Description     NVARCHAR(500) NULL,
+
         CreatedUtc      DATETIME2(7) NOT NULL
             CONSTRAINT DF_iTwin_CreatedUtc DEFAULT SYSUTCDATETIME(),
         ModifiedUtc     DATETIME2(7) NOT NULL
             CONSTRAINT DF_iTwin_ModifiedUtc DEFAULT SYSUTCDATETIME(),
         RowVersion      ROWVERSION NOT NULL,
 
-        CONSTRAINT PK_iTwin PRIMARY KEY (iTwinId),
-        CONSTRAINT UQ_iTwin_Code UNIQUE (Code)
+        CONSTRAINT PK_iTwin PRIMARY KEY (iTwinId)
     );
 END
 GO
 
 /* ============================================================================
-   iTwin platform attributes
+   iTwin migration to the platform contract
 
-   The table above models an iTwin as a code and a description, which is all
-   the seeded projects ever needed. SyncSites needs what the platform actually
-   returns from GET /iTwins/{id}: a display name, a project number, and the
-   class/subClass/type triple that classifies it.
+   An earlier shape modelled an iTwin as a Code plus a description, then bolted
+   the platform's own fields on beside it under invented names (TwinClass,
+   TwinType). Code was ENG's invention: the platform has no such field, so the
+   provider was synthesising one from number, then displayName, then the id.
+   That made the stored value depend on how sparse the payload happened to be.
 
-   Added as guarded ALTERs rather than folded into the CREATE above, so a
-   database that already exists picks them up on the next run. Every column is
-   nullable: rows created before these existed have no values, and inventing a
-   class for them would put a guess in the provider.
+   These steps bring an existing database to the shape declared above. They run
+   in place and preserve iTwinId, because iModel references it and Element and
+   NamedVersion reference iModel in turn -- recreating the table would discard
+   all three.
    ============================================================================ */
+
+/* Rename rather than add-and-copy, so existing values survive without a
+   backfill and without a window where both spellings are live. */
+IF COL_LENGTH('dbo.iTwin', 'TwinClass') IS NOT NULL
+   AND COL_LENGTH('dbo.iTwin', 'Class') IS NULL
+    EXEC sp_rename 'dbo.iTwin.TwinClass', 'Class', 'COLUMN';
+GO
+
+IF COL_LENGTH('dbo.iTwin', 'TwinType') IS NOT NULL
+   AND COL_LENGTH('dbo.iTwin', 'Type') IS NULL
+    EXEC sp_rename 'dbo.iTwin.TwinType', 'Type', 'COLUMN';
+GO
+
+IF COL_LENGTH('dbo.iTwin', 'Class') IS NULL
+    ALTER TABLE dbo.iTwin ADD [Class] NVARCHAR(50) NULL;
+GO
+
+IF COL_LENGTH('dbo.iTwin', 'SubClass') IS NULL
+    ALTER TABLE dbo.iTwin ADD SubClass NVARCHAR(50) NULL;
+GO
+
+IF COL_LENGTH('dbo.iTwin', 'Type') IS NULL
+    ALTER TABLE dbo.iTwin ADD [Type] NVARCHAR(100) NULL;
+GO
+
 IF COL_LENGTH('dbo.iTwin', 'DisplayName') IS NULL
     ALTER TABLE dbo.iTwin ADD DisplayName NVARCHAR(200) NULL;
 GO
@@ -106,50 +181,182 @@ IF COL_LENGTH('dbo.iTwin', 'Number') IS NULL
     ALTER TABLE dbo.iTwin ADD Number NVARCHAR(100) NULL;
 GO
 
-IF COL_LENGTH('dbo.iTwin', 'TwinClass') IS NULL
-    ALTER TABLE dbo.iTwin ADD TwinClass NVARCHAR(50) NULL;
+IF COL_LENGTH('dbo.iTwin', 'Status') IS NULL
+    ALTER TABLE dbo.iTwin ADD [Status] NVARCHAR(20) NULL;
 GO
 
-IF COL_LENGTH('dbo.iTwin', 'SubClass') IS NULL
-    ALTER TABLE dbo.iTwin ADD SubClass NVARCHAR(50) NULL;
+IF COL_LENGTH('dbo.iTwin', 'ParentITwinId') IS NULL
+    ALTER TABLE dbo.iTwin ADD ParentITwinId UNIQUEIDENTIFIER NULL;
 GO
 
-IF COL_LENGTH('dbo.iTwin', 'TwinType') IS NULL
-    ALTER TABLE dbo.iTwin ADD TwinType NVARCHAR(100) NULL;
+/* Description was NVARCHAR(200) when it only ever held seeded text. The
+   platform's is longer; widening is safe, narrowing would not be. */
+IF EXISTS (SELECT 1
+           FROM sys.columns
+           WHERE object_id = OBJECT_ID('dbo.iTwin')
+             AND name = 'Description'
+             AND max_length < 1000)
+    ALTER TABLE dbo.iTwin ALTER COLUMN Description NVARCHAR(500) NULL;
+GO
+
+/* Recover what Code was standing in for before dropping it.
+
+   Code was synthesised as number, else displayName, else the id as text. Only
+   the first two are worth keeping: a Code equal to the id carries nothing the
+   primary key does not already say. So Code seeds Number when Number is empty,
+   and otherwise seeds DisplayName -- never both, or a twin would end up with
+   its number repeated as its name.
+
+   Deferred through EXEC because Code no longer exists in the declared schema,
+   and a direct reference would fail to bind on a database that has already
+   been migrated. */
+IF COL_LENGTH('dbo.iTwin', 'Code') IS NOT NULL
+BEGIN
+    DECLARE @backfill NVARCHAR(MAX) = N'UPDATE dbo.iTwin SET Number = Code WHERE Number IS NULL AND Code IS NOT NULL AND TRY_CONVERT(UNIQUEIDENTIFIER, Code) IS NULL;'
+        + N'UPDATE dbo.iTwin SET DisplayName = Code WHERE DisplayName IS NULL AND Code IS NOT NULL AND Code <> Number AND TRY_CONVERT(UNIQUEIDENTIFIER, Code) IS NULL;';
+    EXEC sys.sp_executesql @backfill;
+END
+GO
+
+/* The unique constraint has to go before the column it covers. */
+IF EXISTS (SELECT 1 FROM sys.objects WHERE name = 'UQ_iTwin_Code' AND parent_object_id = OBJECT_ID('dbo.iTwin'))
+    ALTER TABLE dbo.iTwin DROP CONSTRAINT UQ_iTwin_Code;
+GO
+
+IF COL_LENGTH('dbo.iTwin', 'Code') IS NOT NULL
+BEGIN
+    DECLARE @dropCode NVARCHAR(MAX) = N'ALTER TABLE dbo.iTwin DROP COLUMN Code;';
+    EXEC sys.sp_executesql @dropCode;
+END
+GO
+
+/* ----------------------------------------------------------------------------
+   Uniqueness
+
+   The platform requires displayName and number to be unique within a subClass,
+   so the same constraint is enforced here rather than trusting every write path
+   to have come from the platform.
+
+   Filtered, because the columns are nullable and a plain unique index would
+   treat two unknown numbers as a collision -- which would block registering a
+   second sparsely-described twin.
+
+   Scoped to SubClass and not globally: an Asset and the Project that delivers
+   it legitimately share a number, and a global constraint would reject the
+   Portfolio > Asset > Project hierarchies the contract recommends.
+   ---------------------------------------------------------------------------- */
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_iTwin_SubClass_Number' AND object_id = OBJECT_ID('dbo.iTwin'))
+    CREATE UNIQUE INDEX UX_iTwin_SubClass_Number
+        ON dbo.iTwin (SubClass, Number)
+        WHERE SubClass IS NOT NULL AND Number IS NOT NULL;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_iTwin_SubClass_DisplayName' AND object_id = OBJECT_ID('dbo.iTwin'))
+    CREATE UNIQUE INDEX UX_iTwin_SubClass_DisplayName
+        ON dbo.iTwin (SubClass, DisplayName)
+        WHERE SubClass IS NOT NULL AND DisplayName IS NOT NULL;
+GO
+
+/* Children are looked up by parent when walking a hierarchy. Not unique. */
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_iTwin_ParentITwinId' AND object_id = OBJECT_ID('dbo.iTwin'))
+    CREATE INDEX IX_iTwin_ParentITwinId
+        ON dbo.iTwin (ParentITwinId)
+        WHERE ParentITwinId IS NOT NULL;
 GO
 
 /* ============================================================================
    iTwinType
 
-   The UUID ENG gives a site type, keyed on the type string.
+   The boundary a twin is drawn around, held as a row so it has an identity of
+   its own. Many iTwins reference one type: the FK lives on dbo.iTwin below.
 
-   Site.Type.UUID has to be stable across iTwins: the second Highway project
-   must classify as the same 'Highway' as the first, or REG-LOCATION receives
-   two site types that nothing can tell apart. The platform does not supply an
-   identifier for a type -- 'Highway' arrives as a bare string -- so ENG mints
-   one on first sight and remembers it here.
+   Site.Type.UUID is this table's iTwinTypeId, carried through unchanged. It is
+   stored rather than derived from the name so that the identity survives a
+   rename -- correcting a spelling leaves the UUID alone, and nothing already
+   published to REG-LOCATION reclassifies.
 
-   That memory is the whole point of the table. Deriving the UUID from the
-   type string instead would need no storage, but it would make the identifier
-   a function of the spelling, so correcting a type name would silently
-   reclassify every site already published under it.
+   Number is the name that goes on the wire as Site.Type.ShortName. It is
+   NVARCHAR rather than CHAR because CHAR blank-pads to its full width, and the
+   padding would travel with the value.
    ============================================================================ */
 IF OBJECT_ID('dbo.iTwinType', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.iTwinType
     (
-        TypeName        NVARCHAR(100) NOT NULL,
-        TypeUuid        UNIQUEIDENTIFIER NOT NULL,
+        iTwinTypeId     UNIQUEIDENTIFIER NOT NULL,
+        Number          NVARCHAR(100) NOT NULL,
         CreatedUtc      DATETIME2(7) NOT NULL
             CONSTRAINT DF_iTwinType_CreatedUtc DEFAULT SYSUTCDATETIME(),
 
-        CONSTRAINT PK_iTwinType PRIMARY KEY (TypeName),
+        CONSTRAINT PK_iTwinType PRIMARY KEY (iTwinTypeId),
 
-        -- Two type names sharing a UUID would defeat the reuse this table
-        -- exists to provide, so the mapping is unique in both directions.
-        CONSTRAINT UQ_iTwinType_TypeUuid UNIQUE (TypeUuid)
+        -- Two rows with the same Number would be two identities for one
+        -- boundary, which is the split this table exists to prevent.
+        CONSTRAINT UQ_iTwinType_Number UNIQUE (Number)
     );
 END
+GO
+
+/* Migration from the earlier shape, which keyed on the name and called the
+   identity TypeUuid. Renamed in place rather than recreated so the District
+   identity already published to REG-LOCATION is preserved. */
+IF COL_LENGTH('dbo.iTwinType', 'TypeUuid') IS NOT NULL
+BEGIN
+    IF OBJECT_ID('PK_iTwinType', 'PK') IS NOT NULL
+        ALTER TABLE dbo.iTwinType DROP CONSTRAINT PK_iTwinType;
+
+    IF OBJECT_ID('UQ_iTwinType_TypeUuid', 'UQ') IS NOT NULL
+        ALTER TABLE dbo.iTwinType DROP CONSTRAINT UQ_iTwinType_TypeUuid;
+
+    EXEC sp_rename 'dbo.iTwinType.TypeUuid', 'iTwinTypeId', 'COLUMN';
+    EXEC sp_rename 'dbo.iTwinType.TypeName', 'Number', 'COLUMN';
+
+    ALTER TABLE dbo.iTwinType
+        ADD CONSTRAINT PK_iTwinType PRIMARY KEY (iTwinTypeId);
+
+    ALTER TABLE dbo.iTwinType
+        ADD CONSTRAINT UQ_iTwinType_Number UNIQUE (Number);
+END
+GO
+
+/* 'District' is bootstrapped.
+
+   The iTwin Platform has no UI for Type, so the value cannot be entered at
+   source and is seeded here instead. The UUID is fixed rather than generated
+   so a day-zero reset reproduces it: REG-LOCATION's copy may outlive an ENG
+   rebuild, and a fresh UUID would leave it holding two Districts.
+
+   This sits outside the CREATE TABLE guard on purpose -- the table is only
+   created when absent, but the seed must reapply on every run, including
+   against a database that has the table but lost the row. */
+IF NOT EXISTS (SELECT 1 FROM dbo.iTwinType
+               WHERE iTwinTypeId = '3f2b8c14-6d5e-4a97-9c31-7b0d2e5a4f18')
+   AND NOT EXISTS (SELECT 1 FROM dbo.iTwinType WHERE Number = N'District')
+BEGIN
+    INSERT INTO dbo.iTwinType (iTwinTypeId, Number)
+    VALUES ('3f2b8c14-6d5e-4a97-9c31-7b0d2e5a4f18', N'District');
+END
+GO
+
+/* The reference from iTwin to its boundary.
+
+   Nullable: a twin may be registered before it has a boundary, and
+   EngSitesBuilder.IsPublishable skips exactly those rather than publishing a
+   site with an empty classification. NOT NULL would force every twin to carry
+   one and make an unclassified twin publishable. */
+IF COL_LENGTH('dbo.iTwin', 'iTwinTypeId') IS NULL
+    ALTER TABLE dbo.iTwin ADD iTwinTypeId UNIQUEIDENTIFIER NULL;
+GO
+
+IF OBJECT_ID('FK_iTwin_iTwinType', 'F') IS NULL
+    ALTER TABLE dbo.iTwin
+        ADD CONSTRAINT FK_iTwin_iTwinType
+            FOREIGN KEY (iTwinTypeId) REFERENCES dbo.iTwinType(iTwinTypeId);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_iTwin_iTwinTypeId')
+    CREATE INDEX IX_iTwin_iTwinTypeId ON dbo.iTwin (iTwinTypeId)
+        WHERE iTwinTypeId IS NOT NULL;
 GO
 
 /* ============================================================================
