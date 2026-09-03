@@ -105,7 +105,35 @@ public sealed class ServiceBusMessageBroker : IMessageBroker, IAsyncDisposable
         var receiver = ReceiverFor(session);
         while (true)
         {
-            var recv = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(2), ct);
+            ServiceBusReceivedMessage? recv;
+
+            try
+            {
+                recv = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(2), ct);
+            }
+            catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessagingEntityNotFound)
+            {
+                // The cached receiver outlived its subscription. Receivers are
+                // cached for the life of this singleton, so a subscription
+                // deleted underneath one -- by maintenance, or by a channel
+                // being torn down and recreated -- leaves a handle that throws
+                // on every use. Unhandled, that surfaced as a 500 from a read
+                // that should simply have reported an empty queue, which is what
+                // made the broker look intermittently broken.
+                //
+                // Evicted and recreated once. If the entity is genuinely gone
+                // the retry throws again and the fault is reported honestly,
+                // rather than being retried forever.
+                _log.LogWarning(
+                    "Receiver for session {SessionId} pointed at a missing entity; recreating it.",
+                    session.SessionId);
+
+                EvictReceiver(session);
+                receiver = ReceiverFor(session);
+
+                recv = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(2), ct);
+            }
+
             if (recv is null) return null;                         // empty queue -> caller returns 404
             if (alreadyRemoved.Contains(recv.MessageId))
             {
@@ -144,7 +172,11 @@ public sealed class ServiceBusMessageBroker : IMessageBroker, IAsyncDisposable
             {
                 var topic = EntityNaming.PublicationTopic(session.ChannelUri);
                 await EnsureTopicAsync(topic, ct);
-                await EnsureSubscriptionAsync(topic, session.SessionId, TopicRule(session.Topics), ct);
+                await EnsureSubscriptionAsync(
+                    topic,
+                    EntityNaming.SubscriptionFor(session.SubscriberId, session.SessionId),
+                    TopicRule(session.Topics),
+                    ct);
                 break;
             }
             case SessionType.ConsumerRequest:
@@ -164,6 +196,18 @@ public sealed class ServiceBusMessageBroker : IMessageBroker, IAsyncDisposable
 
     public async Task DeleteSubscriptionAsync(SessionMetadata session, CancellationToken ct = default)
     {
+        // A durable subscriber's subscription outlives the session that opened
+        // it. Deleting it on close would discard the backlog and defeat the
+        // point: the next session for that subscriber must find its unread
+        // messages waiting, not a fresh empty subscription. Closing a session is
+        // a statement about this caller, not about the subscriber's standing
+        // interest in the channel.
+        //
+        // Reaping a durable subscription is therefore a deliberate act, done by
+        // deleting the channel or by maintenance, never a side effect of a
+        // consumer restarting.
+        if (!string.IsNullOrWhiteSpace(session.SubscriberId)) return;
+
         string? topic = session.SessionType switch
         {
             SessionType.Subscription    => EntityNaming.PublicationTopic(session.ChannelUri),
@@ -181,13 +225,7 @@ public sealed class ServiceBusMessageBroker : IMessageBroker, IAsyncDisposable
 
     private ServiceBusReceiver ReceiverFor(SessionMetadata session)
     {
-        var (entity, subscription) = session.SessionType switch
-        {
-            SessionType.Subscription    => (EntityNaming.PublicationTopic(session.ChannelUri), session.SessionId),
-            SessionType.ConsumerRequest => (EntityNaming.ResponseTopic(session.ChannelUri), session.SessionId),
-            SessionType.ProviderRequest => (EntityNaming.RequestQueue(session.ChannelUri), (string?)null),
-            _ => throw new InvalidOperationException("Session type cannot read messages.")
-        };
+        var (entity, subscription) = ReceiveEntityFor(session);
         var key = subscription is null ? entity : $"{entity}/{subscription}";
         return _receivers.GetOrAdd(key, _ =>
         {
@@ -197,6 +235,34 @@ public sealed class ServiceBusMessageBroker : IMessageBroker, IAsyncDisposable
                 : _client.CreateReceiver(entity, subscription, opts);
         });
     }
+
+    /// <summary>
+    /// Drops the cached receiver for a session so the next call builds a new one.
+    /// </summary>
+    private void EvictReceiver(SessionMetadata session)
+    {
+        var (entity, subscription) = ReceiveEntityFor(session);
+        var key = subscription is null ? entity : $"{entity}/{subscription}";
+
+        if (_receivers.TryRemove(key, out var stale))
+        {
+            // Not awaited: the handle is already unusable, and the caller is
+            // mid-read. A failure disposing something known-broken is not worth
+            // propagating over the retry that is about to happen.
+            _ = stale.DisposeAsync().AsTask().ContinueWith(
+                t => _log.LogDebug(t.Exception, "Disposing a stale receiver failed."),
+                TaskContinuationOptions.OnlyOnFaulted);
+        }
+    }
+
+    private static (string Entity, string? Subscription) ReceiveEntityFor(SessionMetadata session) =>
+        session.SessionType switch
+        {
+            SessionType.Subscription    => (EntityNaming.PublicationTopic(session.ChannelUri), EntityNaming.SubscriptionFor(session.SubscriberId, session.SessionId)),
+            SessionType.ConsumerRequest => (EntityNaming.ResponseTopic(session.ChannelUri), session.SessionId),
+            SessionType.ProviderRequest => (EntityNaming.RequestQueue(session.ChannelUri), (string?)null),
+            _ => throw new InvalidOperationException("Session type cannot read messages.")
+        };
 
     private ServiceBusMessage BuildMessage(MessageContent content, IReadOnlyList<string> topics, string? originalMessageId, string? expiry)
     {

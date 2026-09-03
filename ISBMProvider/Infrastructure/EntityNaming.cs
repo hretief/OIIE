@@ -17,6 +17,28 @@ public static class EntityNaming
     /// <summary>Subscription name for a session (GUID). Valid characters, well under 50 chars.</summary>
     public static string Subscription(string sessionId) => sessionId;
 
+    /// <summary>
+    /// Subscription name for a durable subscriber, or for a session when no
+    /// subscriber id was supplied.
+    /// </summary>
+    /// <remarks>
+    /// Hashed rather than used verbatim because a subscriber id is human-chosen
+    /// -- "reglocation-sites" -- and Service Bus constrains subscription names
+    /// to 50 characters and a restricted alphabet. Hashing accepts any id
+    /// without asking callers to know those rules, and is stable, which is the
+    /// entire point: the same id must resolve to the same subscription after a
+    /// restart or the backlog is abandoned.
+    ///
+    /// Prefixed to keep the two kinds distinguishable when reading the
+    /// namespace. A bare GUID is a session-scoped subscription that will be
+    /// orphaned when its process dies; a 'sub-' name is durable and expected to
+    /// outlive any one instance.
+    /// </remarks>
+    public static string SubscriptionFor(string? subscriberId, string sessionId) =>
+        string.IsNullOrWhiteSpace(subscriberId)
+            ? sessionId
+            : "sub-" + Hash(subscriberId);
+
     private static string Hash(string value)
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));

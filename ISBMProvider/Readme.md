@@ -211,7 +211,8 @@ Every port has a real, production-ready implementation:
 | ISBM concept | Azure Service Bus |
 |---|---|
 | Publication channel | Topic `pub-{hash(channelUri)}` |
-| Subscription session | Subscription named by SessionID with SQL rule on `isbm.topics` |
+| Subscription session (durable) | Subscription `sub-{hash(subscriberId)}`, reused across restarts |
+| Subscription session (throwaway) | Subscription named by SessionID, orphaned when the caller goes away |
 | Request channel (requests) | Queue `req-{hash}` (providers compete to read) |
 | Request channel (responses) | Topic `resp-{hash}`, one subscription per consumer session |
 | Expiry (xs:duration) | `ServiceBusMessage.TimeToLive` via `XmlConvert.ToTimeSpan` |
@@ -221,6 +222,33 @@ Every port has a real, production-ready implementation:
 | Large CCOM BOD | Claim-checked to Blob above 192 KB |
 | Notification events | Published to `isbm-notifications` topic on every post |
 | Channel deletion | Removes topics/queues from Service Bus (no orphans) |
+
+### Long-lived consumers must supply a `subscriberId`
+
+`OpenSubscriptionSession` accepts an optional `subscriberId`. Any consumer that
+outlives a single process — an engine, a poller, anything that reopens a session
+after a restart — **must** supply one, and it must be stable across restarts.
+
+Without it the subscription is named after the session id, which is minted per
+open call. A consumer that caches its session id in memory therefore abandons its
+subscription on every restart, redeploy or scale event and creates another. Because
+a topic fans out to every subscription that exists when a message is published, the
+abandoned ones keep receiving copies that nothing will ever read, while the new one
+starts empty and cannot see anything published before it existed.
+
+That failure is silent and looks like broker flakiness: publishers report success,
+consumers read empty, and the message is sitting in an orphaned subscription. In
+this deployment it had produced 18 subscriptions holding 306 undeliverable messages
+before it was diagnosed.
+
+Choose an id that names the *role on the channel*, not the process or instance —
+for example `REG-LOCATION:sites`. Include the iTwin id on per-iTwin channels
+(`REG-LOCATION:segments:{federationId}`) so two engines cannot consume each
+other's messages. Instances sharing one id compete for messages, which is the
+correct behaviour for scale-out: each message is handled once.
+
+Omit it only for a genuinely throwaway reader — a probe that should see nothing
+published before it opened, and whose subscription can be discarded on close.
 
 ## Security model
 

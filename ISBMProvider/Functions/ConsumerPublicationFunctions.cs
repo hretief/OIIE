@@ -37,6 +37,7 @@ public sealed class ConsumerPublicationFunctions(IChannelStore channels, IMessag
         {
             SessionId = sessionId, ChannelUri = uri, SessionType = SessionType.Subscription,
             Topics = body.Topics, ListenerUrl = body.ListenerUrl,
+            SubscriberId = body.SubscriberId,
             ExpirationListenerUrl = body.ExpirationListenerUrl, FilterExpressions = body.FilterExpressions,
             FilterNamespaces = body.FilterNamespaces ?? new Dictionary<string, string>()
         };
@@ -108,5 +109,11 @@ public sealed class ConsumerPublicationFunctions(IChannelStore channels, IMessag
     public sealed record SubscriptionOpen(
         string? ChannelUri, IReadOnlyList<string> Topics, string? ListenerUrl,
         string? ExpirationListenerUrl, IReadOnlyList<string> FilterExpressions,
-        IReadOnlyDictionary<string, string>? FilterNamespaces);
+        IReadOnlyDictionary<string, string>? FilterNamespaces,
+
+        /// <summary>
+        /// Optional stable subscriber identity. Supply it to reuse one durable
+        /// Service Bus subscription across restarts; omit it for a throwaway.
+        /// </summary>
+        string? SubscriberId = null);
 }

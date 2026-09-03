@@ -37,6 +37,37 @@ public sealed class FaultMiddleware : IFunctionsWorkerMiddleware
             await WriteErrorResponseAsync(context, HttpStatusCode.BadRequest,
                 new { fault = "DeserializationError", message = ex.Message, path = ex.Path });
         }
+        catch (Azure.Messaging.ServiceBus.ServiceBusException ex)
+        {
+            // Broker faults were previously unhandled and surfaced as bare 500s
+            // with no body, which is what made a missing subscription look like
+            // the broker was failing at random. Mapped here so the caller is told
+            // what is actually wrong.
+            var log = context.GetLogger<FaultMiddleware>();
+
+            var (status, kind) = ex.Reason switch
+            {
+                Azure.Messaging.ServiceBus.ServiceBusFailureReason.MessagingEntityNotFound
+                    => (HttpStatusCode.NotFound, "ChannelFault"),
+
+                // The message lock expired or was already settled. Retryable by
+                // reading again, and not the caller's mistake.
+                Azure.Messaging.ServiceBus.ServiceBusFailureReason.MessageLockLost or
+                Azure.Messaging.ServiceBus.ServiceBusFailureReason.SessionLockLost
+                    => (HttpStatusCode.Conflict, "SessionFault"),
+
+                Azure.Messaging.ServiceBus.ServiceBusFailureReason.ServiceBusy or
+                Azure.Messaging.ServiceBus.ServiceBusFailureReason.ServiceTimeout
+                    => (HttpStatusCode.ServiceUnavailable, "OperationFault"),
+
+                _ => (HttpStatusCode.InternalServerError, "OperationFault")
+            };
+
+            log.LogError(ex, "Service Bus fault: {Reason}", ex.Reason);
+
+            await WriteErrorResponseAsync(context, status,
+                new { fault = kind, message = ex.Message, reason = ex.Reason.ToString() });
+        }
     }
 
     private static async Task WriteErrorResponseAsync(FunctionContext context, HttpStatusCode status, object body)
