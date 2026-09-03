@@ -1851,8 +1851,9 @@ function TwinCarousel({ twins, activeUuid, onSelect }: {
  * so at the point of choosing is better than letting the add appear to succeed
  * and the publication quietly not happen.
  */
-function AddTwinPicker({ candidates, registered, busy, onAdd, onClose }: {
+function AddTwinPicker({ candidates, candidatesError, registered, busy, onAdd, onClose }: {
   candidates: itwin.ITwinSummary[] | null
+  candidatesError: string | null
   registered: ITwin[]
   busy: boolean
   onAdd: (twin: itwin.ITwinSummary) => void
@@ -1900,8 +1901,13 @@ function AddTwinPicker({ candidates, registered, busy, onAdd, onClose }: {
       </div>
 
       {candidates === null && (
-        <div style={{ padding: '14px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#f87171' }}>
-          Could not reach the iTwin Platform, so there is nothing to choose from.
+        <div style={{ padding: '14px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#f87171', lineHeight: 1.6 }}>
+          Could not list iTwins from the platform, so there is nothing to choose from.
+          {candidatesError && (
+            <div style={{ marginTop: 6, color: 'var(--text-muted)', wordBreak: 'break-word' }}>
+              {candidatesError}
+            </div>
+          )}
         </div>
       )}
 
@@ -1914,9 +1920,11 @@ function AddTwinPicker({ candidates, registered, busy, onAdd, onClose }: {
       )}
 
       {available.map(twin => {
-        // SubClass is the platform's nearest thing to a site type, and it is
-        // what the server falls back to. Shown as the type for that reason.
-        const type = twin.subClass?.trim()
+        // The boundary of the twin. The platform has no UI for it, so it is
+        // normally absent and the same default the add path applies is shown
+        // here -- otherwise the picker would advertise one type and register
+        // another.
+        const type = twin.type?.trim() || 'District'
 
         return (
           <button
@@ -2026,6 +2034,11 @@ function Workspace({ user }: { user: CurrentUser }) {
   // reached. Null and empty differ: one means "nothing to add", the other means
   // "we do not know what there is to add", and the picker says so.
   const [candidates, setCandidates] = useState<itwin.ITwinSummary[] | null>(null)
+  // Why the platform listing failed, when it did. Kept alongside the null
+  // candidates because "could not reach" covers four unrelated causes -- not
+  // signed in, token expired, missing scope, network -- and only the first is
+  // actually about reachability.
+  const [candidatesError, setCandidatesError] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [adding, setAdding] = useState(false)
   // The unfiltered platform count, kept to tell "no asset twins at all" apart
@@ -2159,7 +2172,13 @@ function Workspace({ user }: { user: CurrentUser }) {
     try {
       const [registered, platform] = await Promise.all([
         api.listTwins(signal),
-        itwin.listITwins('Asset', signal).catch(() => null),
+        itwin.listITwins('Asset', signal).then(
+          twins => ({ twins, error: null as string | null }),
+          (err: unknown) => ({
+            twins: null,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        ),
       ])
 
       if (signal?.aborted) return
@@ -2167,8 +2186,9 @@ function Workspace({ user }: { user: CurrentUser }) {
       const mapped = registered.map(engToITwin)
 
       setTwins(mapped)
-      setCandidates(platform)
-      setAssetTwinCount(platform?.length ?? 0)
+      setCandidates(platform.twins)
+      setCandidatesError(platform.error)
+      setAssetTwinCount(platform.twins?.length ?? 0)
 
       // The previously selected twin wins if it is still in the list; otherwise
       // the first, so the app is usable immediately. Left unselected, every
@@ -2218,12 +2238,17 @@ function Workspace({ user }: { user: CurrentUser }) {
         iTwinId: candidate.id,
         displayName: candidate.displayName,
         number: candidate.number,
-        twinClass: candidate.class,
+        class: candidate.class,
         subClass: candidate.subClass,
-        // SubClass is the platform's nearest equivalent to a site type, and it
-        // is what the server falls back to. Sent explicitly so the intent is
-        // visible here rather than only in the endpoint.
-        twinType: candidate.subClass,
+        // Type names the boundary of the twin -- what it is drawn around. The
+        // platform has no UI for it, so it is always absent and this default is
+        // what every twin registers under. 'District' is the boundary a DOT
+        // manages by, which is what this demo models. Note this is not derived
+        // from subClass: that axis says asset versus endeavour, which is a
+        // different question entirely.
+        type: candidate.type ?? 'District',
+        status: candidate.status,
+        parentITwinId: candidate.parentId,
       })
 
       const name = summaryToITwin(candidate).shortName
@@ -2933,6 +2958,7 @@ function Workspace({ user }: { user: CurrentUser }) {
         {pickerOpen && (
           <AddTwinPicker
             candidates={candidates}
+            candidatesError={candidatesError}
             registered={twins}
             busy={adding}
             onAdd={addTwin}

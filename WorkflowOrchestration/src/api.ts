@@ -328,19 +328,23 @@ export function suggestFederationId(signal?: AbortSignal): Promise<{ federationI
 /**
  * A candidate iTwin being brought into the sandbox.
  *
- * The platform's own fields are passed through rather than reduced to a name:
- * the site type is what REG-LOCATION classifies the site by, and it is derived
- * from the twin's class and subClass. Dropping them here would mean the
- * workflow could register a site it cannot classify.
+ * The platform's own fields are passed through rather than reduced to a name.
+ * Type is what REG-LOCATION classifies the site by and names the boundary of
+ * the twin -- District, Plant, Highway -- while class and subClass place the
+ * twin on the lifecycle axis. The two are independent, so both are carried:
+ * dropping either would mean the workflow could register a site it cannot
+ * classify.
  */
 export interface AddITwin {
   iTwinId: string
   displayName?: string | null
   number?: string | null
   description?: string | null
-  twinClass?: string | null
+  class?: string | null
   subClass?: string | null
-  twinType?: string | null
+  type?: string | null
+  status?: string | null
+  parentITwinId?: string | null
 }
 
 /**

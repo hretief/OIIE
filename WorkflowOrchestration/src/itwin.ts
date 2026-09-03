@@ -14,9 +14,11 @@ const BASE = (import.meta.env.VITE_ITWIN_API ?? 'https://api.bentley.com').repla
 /**
  * An iTwin as the platform returns it.
  *
- * Only the fields the context banner needs are modelled. The platform returns
- * a good deal more (dataCenterLocation, parentId, status, ...) and pinning all
- * of it here would mean churn every time the service adds a property.
+ * The fields ENG stores are modelled here, since this is where a twin enters
+ * the sandbox and anything dropped at this point cannot be recovered later
+ * without asking the platform again. The platform returns more still
+ * (dataCenterLocation, authorId, ...) and pinning all of it here would mean
+ * churn every time the service adds a property.
  */
 export interface ITwinSummary {
   id: string
@@ -26,6 +28,20 @@ export interface ITwinSummary {
   number: string | null
   class: string | null
   subClass: string | null
+  /**
+   * The boundary of the digital twin -- what it is drawn around, e.g.
+   * "District", "Plant", "Highway". Owner-defined free text, not a fixed set:
+   * a DOT scopes twins to the District it manages.
+   *
+   * A separate axis from class/subClass rather than a refinement of them: a
+   * District may be either an Asset or the Project delivering it. ENG mints the
+   * site type UUID from this.
+   */
+  type?: string | null
+  /** active | inactive | trial. */
+  status?: string | null
+  /** The twin above this one in the hierarchy, when it has one. */
+  parentId?: string | null
 }
 
 interface FavoritesResponse {
@@ -59,7 +75,12 @@ const ACCEPT = 'application/vnd.bentley.itwin-platform.v1+json'
  */
 const ACCEPT_V2 = 'application/vnd.bentley.itwin-platform.v2+json'
 
-async function request<T>(path: string, signal?: AbortSignal, accept = ACCEPT): Promise<T> {
+async function request<T>(
+  path: string,
+  signal?: AbortSignal,
+  accept = ACCEPT,
+  prefer?: string,
+): Promise<T> {
   const token = auth.accessToken()
   if (!token) throw new Error('Not signed in to Bentley IMS')
 
@@ -70,6 +91,7 @@ async function request<T>(path: string, signal?: AbortSignal, accept = ACCEPT): 
       // The platform expects the raw token prefixed with Bearer; auth.ts stores
       // it without the scheme.
       Authorization: `Bearer ${token}`,
+      ...(prefer ? { Prefer: prefer } : {}),
     },
   })
 
@@ -120,7 +142,13 @@ export async function listITwins(
       $skip: String(page * PAGE_SIZE),
     })
 
-    const body = await request<FavoritesResponse>(`/itwins?${query}`, signal)
+    // The default representation is minimal and omits status and parentId. ENG
+    // stores both, and a twin added through this picker is the only chance to
+    // capture them without asking the platform again. This is a header rather
+    // than a query parameter: the iTwins API rejects the whole request with 422
+    // InvalidParameter if 'resultMode' is passed in the query string.
+    const body = await request<FavoritesResponse>(
+      `/itwins?${query}`, signal, ACCEPT, 'return=representation')
     const found = body.iTwins ?? []
     collected.push(...found)
 
