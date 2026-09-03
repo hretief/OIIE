@@ -886,3 +886,46 @@ Two cheap improvements, neither yet done:
 
 Neither changes behaviour, so this is operability rather than correctness.
 
+
+## Day zero leaves the ingest engines with dead subscriptions
+
+Raised 2026-09, seen three times while verifying day zero.
+
+Day zero deletes and recreates the channels, which destroys the Service Bus
+subscriptions behind them. `RegLocationEngine` caches its session id in a field,
+so the next `ingest-sites` call reaches for a receiver whose subscription no
+longer exists and the drain returns **500 with an empty body**. It recovers only
+when the engine is restarted, and until then the whole SyncSites leg is dead.
+
+The receiver-eviction fix in `ServiceBusMessageBroker.PeekNextAsync` handles the
+case where a *single* entity vanishes: it catches
+`MessagingEntityNotFound`, drops the cached receiver and retries once. It does
+not help here, because the durable subscription was removed wholesale and
+recreating the receiver finds nothing to attach to. The engine is still holding
+a session id the broker has forgotten.
+
+Day zero's response already warns about this for foreign systems — *"Any system
+still holding a session on one will keep polling an id the broker has
+forgotten; restart it or have it re-open"* — but the REG-LOCATION and ENG
+engines are not foreign, they are part of the same estate, and nothing restarts
+them.
+
+Options:
+
+- **Have day zero restart the engines it breaks.** Honest and immediate, but
+  couples the sandbox to a list of Function Apps it otherwise does not manage.
+- **Make the engines re-open on a session fault.** Catch the not-found on read,
+  discard the cached session id, and open a new subscription session. This is the
+  more general fix: a session can also be lost to broker maintenance or a
+  channel deleted by something other than day zero, and the engine should
+  survive that without human intervention.
+- **Have day zero close the engines' sessions before deleting channels.** Only
+  works for sessions it can enumerate, which is why it does not already.
+
+The second is the strongest: it fixes the class rather than the instance, and
+the engine already treats a redelivered message as safe, so re-opening costs
+nothing but a repeated read.
+
+Until it is done, a day zero must be followed by restarting
+`acme-engn-reglocation-dev` and `acme-engn-eng-dev`, or the first ingest after
+the reset will 500.

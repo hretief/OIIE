@@ -173,6 +173,25 @@ and memory, so one app under load affects the others, and the Basic tier has no
 autoscale. That is acceptable for a demo environment and would not be for
 production — the answer there is a larger SKU, not a plan per system.
 
+**One plan per environment *per operating system*.** A plan has an OS, and a
+site cannot run on a plan of the other one. `acme-plan-dev` is a Windows
+`functionapp` plan and carries the Function Apps; the sandbox App Service is
+Linux and therefore needs its own:
+
+```
+<account>-plan-<system>-<environment>
+```
+
+| Examples |
+|---|
+| `acme-plan-sandbox-dev` |
+
+The system code appears only where this split forces it, so a plan name carrying
+one is a signal that something about it is not shared. Pointing a Linux site at
+a Windows plan fails with *"The parameter LinuxFxVersion has an invalid value"*,
+which names the site's own setting and says nothing about the plan — check the
+plan's `kind` before debugging the site.
+
 `acme-plan-dev` runs **B3**. It began at B1, which was adequate for six
 providers but not for ten AlwaysOn sites once the four `engn` apps joined:
 `func azure functionapp publish` began failing with "Timed out waiting for SCM

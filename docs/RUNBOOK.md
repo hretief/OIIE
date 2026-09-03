@@ -47,14 +47,16 @@ The `demo` environment is deployed and verified healthy:
 
 ```
 API : https://oiie-sandbox-demo.azurewebsites.net
-UI  : https://oiie-simhost-demo.azurewebsites.net
 ```
+
+The Blazor operator UI is gone; the API serves the TypeScript UI from its own
+wwwroot. `dev` is `https://acme-api-sandbox-dev.azurewebsites.net` per DR-024.
 
 Redeploy both with:
 
 ```
 cd deploy/sandbox
-.\deploy.ps1 -Environment demo -StorageAccount mndotsandbox
+.\deploy.ps1 -Environment demo
 ```
 
 The script verifies the result rather than just reporting a successful upload — the
@@ -299,7 +301,7 @@ steps are outside the Sandbox.
       default key returns 401 here:
         az functionapp keys list -g <rg> -n <cir-app> --query masterKey -o tsv
 
-3. POST {sandbox}/admin/cir/registry/delete?confirm=OIIE-SANDBOX
+3. POST {sandbox}/admin/cir/registry/delete?confirm=acme
       entries registered earlier keep their CIRIDs otherwise, so a "first"
       registration silently attaches to an identity from a previous run.
       Destroys the registry for every system in it, not just this one, and

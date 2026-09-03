@@ -37,17 +37,18 @@ app is served from its own origin, so without this its calls fail preflight.
 ''')
 param allowedCorsOrigins array = []
 
-// Two sites, one plan.
+// One site, one plan.
 //
-// The API keeps the historic `oiie-sandbox-{env}` name deliberately: it is the
-// value already baked into Isbm__ListenerBaseUrl, the CIR's configuration and
-// anything else holding a sandbox URL. Renaming it would break those silently,
-// whereas the Blazor UI is new as a separate address and can take a new name.
-var apiAppName = 'oiie-sandbox-${environmentName}'
-var uiAppName = 'oiie-simhost-${environmentName}'
-var planName = 'plan-oiie-sandbox-${environmentName}'
-var insightsName = 'appi-oiie-sandbox-${environmentName}'
-var workspaceName = 'log-oiie-sandbox-${environmentName}'
+// The API was `oiie-sandbox-{env}` until 2026-09. That name was kept while other
+// systems were believed to hold it, but no deployed app does: the only setting
+// carrying a sandbox URL is the API's own Isbm__ListenerBaseUrl, which is derived
+// from apiAppName below and therefore follows the rename. Every Azure resource
+// this solution owns is now named acme-*-dev, so a resource that does not match
+// is a resource that does not belong to it.
+var apiAppName = 'acme-api-sandbox-${environmentName}'
+var planName = 'acme-plan-sandbox-${environmentName}'
+var insightsName = 'appi-acme-sandbox-${environmentName}'
+var workspaceName = 'log-acme-sandbox-${environmentName}'
 
 var apiUrl = 'https://${apiAppName}.azurewebsites.net'
 
@@ -82,17 +83,20 @@ resource insights 'Microsoft.Insights/components@2020-02-02' = {
 // ---------------------------------------------------------------------------
 // Hosting
 //
-// Both sites run the same engine assembly and both reach the same database and
-// blob container, so everything below the host boundary is identical. What
-// differs is what each one is allowed to do:
+// One site: the API, which owns /admin and /health and serves the TypeScript UI
+// from its own wwwroot. The Blazor operator UI that used to sit beside it is
+// gone, and with it the single-consumer rule that mattered when two hosts ran
+// the same engine assembly.
 //
-//   API  -- owns /admin and /health, runs the inbox pump and outbox dispatcher.
-//   UI   -- Blazor Server only. Runs NO pumps.
+// A dedicated plan, despite the naming standard's one-plan-per-environment rule.
+// That rule assumes a single OS and the estate has two: acme-plan-dev is
+// kind=functionapp (Windows) and hosts the Function Apps, while this is a Linux
+// App Service. Azure rejects a Linux site on a Windows plan with "The parameter
+// LinuxFxVersion has an invalid value", which names the site's own setting and
+// says nothing about the plan it was pointed at.
 //
-// That single-consumer rule is enforced in code, not here: SimHost/Program.cs
-// calls AddSandboxCore but never AddSandboxMessagePumps. If both hosts pumped,
-// two consumers would race the same ISBM sessions and messages would appear to
-// vanish at random. Do not "helpfully" add the pumps to the UI.
+// The plan is still named to the standard, so it reads as part of the estate
+// rather than as the leftover it replaced.
 // ---------------------------------------------------------------------------
 
 resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
@@ -200,84 +204,12 @@ resource apiApp 'Microsoft.Web/sites@2023-12-01' = {
   }
 }
 
-// ORPHANED: the Blazor operator UI this site hosted has been deleted from the
-// solution. The demo uses the TypeScript UI in WorkflowOrchestration/, which the
-// API serves from its own wwwroot.
-//
-// Left declared deliberately. This template is deployed in Incremental mode, so
-// removing the resource here would NOT delete the Azure site -- it would simply
-// stop managing it, leaving a running app serving a stale SimHost.dll with a
-// Key Vault and Storage role assignment nobody is reviewing. Delete the site
-// explicitly, per environment:
-//
-//   ./deploy/sandbox/deploy.ps1 -Environment <env> -StorageAccount <acct> -DeleteLegacyUi
-//
-// Once that is done for every environment, remove this resource, uiAppName, the
-// two role assignments below, and the three ui* outputs.
-resource uiApp 'Microsoft.Web/sites@2023-12-01' = {
-  name: uiAppName
-  location: location
-  kind: 'app,linux'
-  identity: {
-    // The UI reads participant tables and payload blobs directly through Core,
-    // so it needs the same data-plane identity as the API. It is a separate
-    // principal: two sites cannot share one system-assigned identity.
-    type: 'SystemAssigned'
-  }
-  properties: {
-    serverFarmId: plan.id
-    httpsOnly: true
-    siteConfig: {
-      linuxFxVersion: 'DOTNETCORE|10.0'
-
-      // Explicit for the same reason as the API: the entry assembly should not
-      // depend on what a previous deployment happened to leave behind.
-      appCommandLine: 'dotnet SimHost.dll'
-
-      // No pumps here, so an idle unload costs a slow first request rather than
-      // silently stopping consumption. Left on regardless because a cold Blazor
-      // start is a visibly broken-looking page.
-      alwaysOn: true
-
-      // Blazor Server is a SignalR circuit.
-      webSocketsEnabled: true
-
-      // Sticky sessions: a circuit is bound to the instance that created it.
-      // Harmless on one instance, essential the moment there are two.
-      ftpsState: 'Disabled'
-      minTlsVersion: '1.2'
-      http20Enabled: true
-
-      // Deliberately NOT /health/participants -- that route lives in the API now.
-      // A health probe against a path this site does not serve would fail every
-      // check and take the app out of rotation permanently.
-      healthCheckPath: '/'
-
-      appSettings: concat(sharedAppSettings, [
-        // The UI serves no /admin routes of its own. Its reset and scenario-launch
-        // buttons post to the API, and SandboxApiEndpoint reads this to find it.
-        // Without it the UI falls back to its own base address and those actions
-        // 404 against itself.
-        { name: 'Sandbox__ApiBaseUrl', value: apiUrl }
-
-        // Needed to authenticate those same calls: the API's admin guard applies
-        // regardless of which host is calling.
-        { name: 'Sandbox__AdminKey', value: adminKey }
-      ])
-    }
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Data-plane grants
 //
 // Control-plane and data-plane RBAC are separate in Azure. Owner on the
 // subscription grants neither of these, and the resulting 403 reads like an
 // application bug rather than a missing role.
-//
-// Granted to BOTH sites. The UI is not a thin client -- it reads participant
-// tables and payload blobs through the same Core services the API uses, so it
-// needs the same access. Each site has its own system-assigned principal.
 // ---------------------------------------------------------------------------
 
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
@@ -302,19 +234,6 @@ resource apiKeyVaultGrant 'Microsoft.Authorization/roleAssignments@2022-04-01' =
   }
 }
 
-resource uiKeyVaultGrant 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: keyVault
-  name: guid(keyVault.id, uiApp.id, '4633458b-17de-408a-b874-0445c86b69e6')
-  properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      '4633458b-17de-408a-b874-0445c86b69e6'
-    )
-    principalId: uiApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
 // Storage Blob Data Contributor
 resource apiStorageGrant 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: storage
@@ -325,19 +244,6 @@ resource apiStorageGrant 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
       'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
     )
     principalId: apiApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-resource uiStorageGrant 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: storage
-  name: guid(storage.id, uiApp.id, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
-  properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
-    )
-    principalId: uiApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
 }
@@ -369,9 +275,5 @@ resource allowAzureServices 'Microsoft.Sql/servers/firewallRules@2023-08-01-prev
 output apiAppName string = apiApp.name
 output apiAppUrl string = 'https://${apiApp.properties.defaultHostName}'
 output apiPrincipalId string = apiApp.identity.principalId
-
-output uiAppName string = uiApp.name
-output uiAppUrl string = 'https://${uiApp.properties.defaultHostName}'
-output uiPrincipalId string = uiApp.identity.principalId
 
 output insightsName string = insights.name

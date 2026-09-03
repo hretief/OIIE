@@ -8,7 +8,7 @@
 
     The sandbox is ONE App Service:
 
-      oiie-sandbox-{env}  the API. Owns /admin and /health.
+      acme-api-sandbox-{env}  the API. Owns /admin and /health.
 
     The inbox pump and outbox dispatcher no longer run here: per DR-022 the ENG
     and REG-LOCATION engines own publish and ingest, so the sandbox copies were
@@ -16,9 +16,8 @@
 
     The Blazor operator UI that used to deploy alongside it (oiie-simhost-{env})
     has been removed -- the demo uses the TypeScript UI in WorkflowOrchestration/,
-    which is built into this API's wwwroot. The App Service still exists in Azure
-    and is still declared in infra/sandbox/main.bicep; delete it per environment
-    with -DeleteLegacyUi, then drop the resource from the template.
+    which is built into this API's wwwroot. Both the Azure sites and the Bicep
+    resource are gone as of DR-024.
 
     Assumes deploy/provision.ps1 has already run for this environment: the database,
     schemas, contained users and Key Vault secrets come from there. This script adds
@@ -33,14 +32,10 @@
     immediately after a first deployment is usually that, not a missing grant.
 
 .EXAMPLE
-    .\deploy.ps1 -Environment demo -StorageAccount mndotsandbox
+    .\deploy.ps1 -Environment dev -DatabaseName acme-db-sandbox-dev
 
 .EXAMPLE
-    .\deploy.ps1 -Environment demo -StorageAccount mndotsandbox -SkipInfrastructure
-
-.EXAMPLE
-    # One-off: delete the retired Blazor UI site for this environment.
-    .\deploy.ps1 -Environment demo -StorageAccount mndotsandbox -DeleteLegacyUi
+    .\deploy.ps1 -Environment dev -DatabaseName acme-db-sandbox-dev -SkipInfrastructure
 #>
 
 [CmdletBinding()]
@@ -49,8 +44,11 @@ param(
     [ValidateSet('dev', 'ci', 'demo')]
     [string]$Environment,
 
-    [Parameter(Mandatory)]
-    [string]$StorageAccount,
+    # Defaulted rather than mandatory: there is one storage account for this
+    # solution, and requiring it per invocation only invites the wrong one being
+    # typed. The previous default was carried in the examples rather than the
+    # parameter, which is how mndotsandbox outlived its retirement.
+    [string]$StorageAccount = 'acmestoragedev01',
 
     [string]$ResourceGroup = 'HilmarRetiefRG',
     [string]$KeyVault = 'mndot',
@@ -88,10 +86,8 @@ param(
     # fallback sources for any panel whose provider is NOT configured.
     [switch]$NoDatabase,
 
-    # Overrides the derived database name. The derived names carry the sandbox's
-    # own convention (oiie-sandbox-*), which predates the acme-*-dev grouping the
-    # participant services use. Naming one explicitly keeps a deployment from
-    # being the odd resource out.
+    # Overrides the derived database name, for pointing a deployment at a
+    # database that already exists under a different name.
     [string]$DatabaseName,
 
     [string]$PlanSku = 'B1',
@@ -107,17 +103,7 @@ param(
     [switch]$SkipWeb,
 
     [switch]$SkipInfrastructure,
-    [switch]$SkipVerify,
-
-    # Delete the retired Blazor UI site (oiie-simhost-{env}) and exit.
-    #
-    # Not part of a normal deployment. The Blazor UI was removed from the
-    # solution, but the site is still declared in main.bicep and still running
-    # a stale SimHost.dll with live Key Vault and Storage role assignments.
-    # Incremental-mode Bicep would not delete it, so this is deliberate and
-    # explicit. Run once per environment, then remove the uiApp resource from
-    # main.bicep.
-    [switch]$DeleteLegacyUi
+    [switch]$SkipVerify
 )
 
 $ErrorActionPreference = 'Stop'
@@ -176,13 +162,13 @@ $databaseName = if ($NoDatabase) { '' }
     elseif (-not [string]::IsNullOrWhiteSpace($DatabaseName)) { $DatabaseName }
     else {
         switch ($Environment) {
-            'dev' { "oiie-sandbox-dev-$Alias" }
-            'ci' { 'oiie-sandbox-ci' }
-            'demo' { 'oiie-sandbox-demo' }
+            'dev' { "acme-db-sandbox-dev-$Alias" }
+            'ci' { 'acme-db-sandbox-ci' }
+            'demo' { 'acme-db-sandbox-demo' }
         }
     }
 
-$apiAppName = "oiie-sandbox-$Environment"
+$apiAppName = "acme-api-sandbox-$Environment"
 $isbmBaseUrl = "https://$IsbmApp.azurewebsites.net/api"
 
 Write-Host "Environment : $Environment"
@@ -195,25 +181,6 @@ if ($SubscriptionId) {
     Invoke-Az @('account', 'set', '--subscription', $SubscriptionId) -Because 'Setting subscription'
 }
 
-if ($DeleteLegacyUi) {
-    $legacyUiApp = "oiie-simhost-$Environment"
-
-    Write-Host "Deleting the retired Blazor UI site: $legacyUiApp"
-    Write-Host "The API at $apiAppName is not affected."
-
-    # Deleting the site removes its system-assigned identity, and with it the
-    # Key Vault and Storage role assignments granted to that principal. No
-    # separate cleanup is needed for those.
-    Invoke-Az @(
-        'webapp', 'delete',
-        '--resource-group', $ResourceGroup,
-        '--name', $legacyUiApp
-    ) -Because "Deletion of $legacyUiApp"
-
-    Write-Host "`nDeleted $legacyUiApp." -ForegroundColor Green
-    Write-Host "Once every environment is done, remove the uiApp resource from infra/sandbox/main.bicep."
-    return
-}
 
 # The database must already exist. Deploying an app that cannot reach its database
 # produces a running site that fails on every request, which is worse than a
@@ -300,10 +267,9 @@ if (-not $SkipInfrastructure) {
         '-o', 'json'
     ) -Because 'Infrastructure deployment'
 
-    # Two sites, two system-assigned principals. Both need the Key Vault and
-    # Storage grants, and both wait on the same propagation delay.
+    # One site, one system-assigned principal. It needs the Key Vault and
+    # Storage grants, and waits on the propagation delay.
     Write-Host "  api identity: $($outputs.apiPrincipalId.value)"
-    Write-Host "  ui  identity: $($outputs.uiPrincipalId.value)"
     Write-Host '  role assignments can take a few minutes to propagate'
 }
 

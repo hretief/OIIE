@@ -13,21 +13,22 @@ nothing should be typed by hand twice.
 > - **Environments.** This file defines `dev`, `ci` and `demo`. The master
 >   standard defines only `dev` and `prod`, and has no `prod` sandbox. A name
 >   for the CI and demo environments has not been agreed.
-> - **Database naming.** Sandbox databases are `oiie-sandbox-{env}[-{alias}]`,
->   which predates the `<account>-db-<system>-<environment>` pattern.
 > - **Isolation model.** This file isolates participants by schema inside one
 >   database per environment. The master standard gives each system its own
 >   database, which is what `CmsProvider/deploy/provision-databases.ps1` already
 >   does for CMS. Both models are currently in use and the boundary between them
 >   is not written down anywhere.
+>
+> Resolved 2026-09 (DR-024): database and App Service names now follow the
+> master standard — `acme-db-sandbox-{env}` and `acme-api-sandbox-{env}`.
 
 ## Environments
 
 | Environment | Value of `-Environment` | Database |
 |---|---|---|
-| Per-developer | `dev` | `oiie-sandbox-dev-{alias}` |
-| CI | `ci` | `oiie-sandbox-ci` |
-| Demo | `demo` | `oiie-sandbox-demo` |
+| Per-developer | `dev` | `acme-db-sandbox-dev-{alias}` |
+| CI | `ci` | `acme-db-sandbox-ci` |
+| Demo | `demo` | `acme-db-sandbox-demo` |
 
 Existing shared resources, referenced rather than created:
 
@@ -36,7 +37,12 @@ Existing shared resources, referenced rather than created:
 | Resource group | `HilmarRetiefRG` |
 | SQL server | `acme-sql-server.database.windows.net` |
 | Key Vault | `mndot` |
-| Storage account | (set `-StorageAccount`; blob container created per environment) |
+| App Service plan | `acme-plan-{env}` |
+| Storage account | `acmestoragedev01` |
+
+The SQL server and Key Vault do not match `acme-*-dev`. Both are shared with
+resources outside this solution, and neither can be renamed in place, so they
+are deliberately out of scope.
 
 One server, one database per environment. All three databases coexist on
 `acme-sql-server` and are isolated from each other by being separate databases, and
@@ -145,14 +151,19 @@ The sandbox is **one App Service**.
 
 | Environment | API |
 |---|---|
-| dev | `oiie-sandbox-dev` |
-| CI | `oiie-sandbox-ci` |
-| demo | `oiie-sandbox-demo` |
+| dev | `acme-api-sandbox-dev` |
+| CI | `acme-api-sandbox-ci` |
+| demo | `acme-api-sandbox-demo` |
 
-At `https://{name}.azurewebsites.net`. Plan `plan-oiie-sandbox-{env}`,
-Application Insights `appi-oiie-sandbox-{env}`, workspace `log-oiie-sandbox-{env}`.
+At `https://{name}.azurewebsites.net`. Application Insights
+`appi-acme-sandbox-{env}`, workspace `log-acme-sandbox-{env}`, App Service plan
+`acme-plan-sandbox-{env}`.
 
-| | `oiie-sandbox-{env}` (API) |
+The plan is dedicated rather than the shared `acme-plan-{env}`, because that one
+is a Windows `functionapp` plan and this is a Linux App Service. A plan has an
+OS and a site cannot cross it.
+
+| | `acme-api-sandbox-{env}` |
 |---|---|
 | Project | `Oiie.Sandbox.Api` |
 | Serves | `/admin/*`, `/health/*`, and the TypeScript UI from `wwwroot` |
@@ -161,16 +172,14 @@ Application Insights `appi-oiie-sandbox-{env}`, workspace `log-oiie-sandbox-{env
 | Health probe | `/health/participants` |
 | Audience | scripts, scenarios, the React app |
 
-The API keeps the historic `oiie-sandbox-{env}` name deliberately. That value is
-already baked into `Isbm__ListenerBaseUrl`, the CIR's configuration and every
-script holding a sandbox URL; renaming it would break those silently.
+The API was `oiie-sandbox-{env}` until 2026-09. That name was kept while other
+systems were believed to hold it, but no deployed app did: the only setting
+carrying a sandbox URL was the API's own `Isbm__ListenerBaseUrl`, which is
+derived from the app name and so followed the rename. See DR-024.
 
 **The Blazor UI has been removed.** `oiie-simhost-{env}` used to host it. The
 demo uses the TypeScript UI in `WorkflowOrchestration/`, served by the API from
-its own `wwwroot`. The App Service is still declared in
-`infra/sandbox/main.bicep` so the template keeps managing it until the sites are
-explicitly deleted — see the note on the `uiApp` resource. Nothing publishes to
-it any more.
+its own `wwwroot`. Both the Azure sites and the `uiApp` Bicep resource are gone.
 
 `Always On` is required on the API, not optional: the inbox pump and outbox
 dispatcher are hosted services, and an unloaded app stops consuming in a way that

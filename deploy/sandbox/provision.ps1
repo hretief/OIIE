@@ -33,9 +33,8 @@ param(
 
     [string]$Alias,
 
-    # Overrides the derived database name, matching deploy.ps1. Lets the sandbox
-    # sit in the acme-*-dev grouping rather than under its own oiie-sandbox-*
-    # convention.
+    # Overrides the derived database name, matching deploy.ps1. For pointing a
+    # deployment at a database that already exists under a different name.
     [string]$DatabaseName,
 
     [string]$SubscriptionId,
@@ -99,9 +98,9 @@ function Invoke-Az {
 $databaseName = if (-not [string]::IsNullOrWhiteSpace($DatabaseName)) { $DatabaseName }
     else {
         switch ($Environment) {
-            'dev'  { "oiie-sandbox-dev-$Alias" }
-            'ci'   { 'oiie-sandbox-ci' }
-            'demo' { 'oiie-sandbox-demo' }
+            'dev'  { "acme-db-sandbox-dev-$Alias" }
+            'ci'   { 'acme-db-sandbox-ci' }
+            'demo' { 'acme-db-sandbox-demo' }
         }
     }
 
