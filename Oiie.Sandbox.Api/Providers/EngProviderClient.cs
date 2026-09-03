@@ -16,11 +16,26 @@ namespace Oiie.Sandbox.Api.Providers;
 /// <summary>An iTwin as ENG reports it.</summary>
 public sealed record EngITwinDto(
     Guid ITwinId,
-    string Code,
-    string? Description,
     DateTime CreatedUtc,
-    string? DisplayName,
-    string? Number);
+    string? Class = null,
+    string? SubClass = null,
+    string? Type = null,
+    string? DisplayName = null,
+    string? Number = null,
+    string? Status = null,
+    Guid? ParentITwinId = null,
+    string? Description = null)
+{
+    /// <summary>
+    /// A short handle for the twin. Mirrors the provider's derivation -- the
+    /// engineering number, then the display name, then the id -- so a twin
+    /// always has something identifying to show.
+    /// </summary>
+    public string Handle =>
+        !string.IsNullOrWhiteSpace(Number) ? Number
+        : !string.IsNullOrWhiteSpace(DisplayName) ? DisplayName
+        : ITwinId.ToString();
+}
 
 /// <summary>An iModel as ENG reports it.</summary>
 public sealed record EngIModelDto(

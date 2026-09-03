@@ -2591,6 +2591,25 @@ app.MapPost("/admin/eng/itwins/add", async (
     var code = Blank(request.Number) ?? Blank(request.DisplayName) ?? request.ITwinId.ToString();
     var name = Blank(request.DisplayName) ?? Blank(request.Number) ?? code;
 
+    // The sandbox keeps its own copy of the twin only when it is itself the
+    // system of record. Once an ENG provider is configured the provider holds
+    // it, and writing here as well would need sandbox database credentials the
+    // provider-backed deployment has no reason to carry -- the twin would be
+    // stored twice and the add would fail on the copy that does not matter.
+    if (engine.IsProviderConfigured)
+    {
+        var provided = await channels.EnsureForITwinAsync(request.ITwinId, name, ct);
+        var providedDetail = await engine.BootstrapAsync(request, ct);
+
+        return Results.Ok(new AddITwinResult(
+            request.ITwinId, code, name,
+            Registered: providedDetail is null,
+            Announced: providedDetail is null,
+            Detail: providedDetail,
+            ChannelUri: provided.ChannelUri,
+            ChannelError: provided.Created ? null : provided.Error));
+    }
+
     var twin = await eng.EnsureTwinAsync(
         request.ITwinId, code, name, request.Description, ct);
 
@@ -2614,6 +2633,39 @@ app.MapPost("/admin/eng/itwins/add", async (
 
 static string? Blank(string? value) =>
     string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+// Removes an iTwin and lets the deletion cascade through the ecosystem.
+//
+// The mirror of the add above: ENG drops the twin, the engine announces it as a
+// SyncSites carrying the Delete action code, and the REG-LOCATION engine cancels
+// the site's CIR entries, cascades the scope delete and tears down the per-iTwin
+// channels.
+//
+// Provider-backed only. Without a provider the sandbox is itself the system of
+// record, and there is no Functions host to carry the announcement -- removing
+// the local row would leave every downstream registry holding a site nothing
+// will ever retract. Refusing is the honest answer.
+app.MapDelete("/admin/eng/itwins/{iTwinId:guid}", async (
+    EngEngineClient engine,
+    Guid iTwinId,
+    CancellationToken ct) =>
+{
+    if (!engine.IsProviderConfigured)
+    {
+        return Results.BadRequest(new
+        {
+            error = "No ENG provider is configured, so the deletion cannot be propagated."
+        });
+    }
+
+    var detail = await engine.TeardownAsync(iTwinId, ct);
+
+    return Results.Ok(new DeleteITwinResult(
+        iTwinId,
+        Removed: detail is null,
+        Announced: detail is null,
+        Detail: detail));
+});
 
 // The iModels ENG will accept elements against, for one twin.
 //

@@ -20,10 +20,10 @@ public sealed class ProviderEngSource(EngProviderClient client) : IEngSource
 
         return twins.Select(t => new TwinView(
             t.ITwinId,
-            t.Code,
+            t.Handle,
             // ENG has no Name. DisplayName is the platform's equivalent, and the
-            // code is a better fallback than an empty heading.
-            t.DisplayName ?? t.Code,
+            // handle is a better fallback than an empty heading.
+            t.DisplayName ?? t.Handle,
             t.Description,
             new DateTimeOffset(t.CreatedUtc, TimeSpan.Zero))).ToList();
     }

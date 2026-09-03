@@ -7,20 +7,23 @@ namespace Oiie.Sandbox.Api.Endpoints;
 /// What the UI supplies when it adds an iTwin that already exists on the
 /// platform.
 ///
-/// The classification fields are carried rather than looked up because the
-/// caller has just read them from the platform, and the sandbox has no
-/// credentials of its own to read them again. TwinType in particular matters
-/// downstream: the ENG engine refuses to publish a site whose type it does not
-/// know, since the type is what REG-LOCATION classifies the site by.
+/// The fields are named as the iTwin platform names them. They are carried
+/// rather than looked up because the caller has just read them from the
+/// platform, and the sandbox has no credentials of its own to read them again.
+/// Type in particular matters downstream: the ENG engine refuses to publish a
+/// site whose type it does not know, since the type is what REG-LOCATION
+/// classifies the site by.
 /// </summary>
 public sealed record AddITwinRequest(
     Guid ITwinId,
     string? DisplayName = null,
     string? Number = null,
     string? Description = null,
-    string? TwinClass = null,
+    string? Class = null,
     string? SubClass = null,
-    string? TwinType = null);
+    string? Type = null,
+    string? Status = null,
+    Guid? ParentITwinId = null);
 
 /// <summary>
 /// The outcome of adding an iTwin, reported in two parts.
@@ -46,6 +49,25 @@ public sealed record AddITwinResult(
     string? ChannelError = null);
 
 /// <summary>
+/// The outcome of deleting an iTwin, reported in the same two parts as
+/// <see cref="AddITwinResult"/> and for the same reason.
+///
+/// Removal and announcement fail independently, and the distinction matters more
+/// on the way out than on the way in: a twin removed from ENG but never announced
+/// leaves REG-LOCATION holding a scope, and its CIR entries, for a site that no
+/// longer exists. Re-announcing is the repair, and a caller can only know to
+/// attempt it if the two are reported separately.
+/// </summary>
+public sealed record DeleteITwinResult(
+    Guid ITwinId,
+    /// <summary>True when ENG no longer holds the twin.</summary>
+    bool Removed,
+    /// <summary>True when the SyncSites deletion was triggered.</summary>
+    bool Announced,
+    /// <summary>Why the removal or announcement did not happen, when it did not.</summary>
+    string? Detail = null);
+
+/// <summary>
 /// The sandbox's link to the ENG-side Functions apps.
 ///
 /// The UI talks only to this API, so the two-hop bootstrap -- record the twin
@@ -61,6 +83,24 @@ public sealed record AddITwinResult(
 public sealed class EngEngineClient(
     HttpClient http, IConfiguration configuration, ILogger<EngEngineClient> logger)
 {
+    /// <summary>
+    /// The site type a twin registers under when the platform names none.
+    ///
+    /// Type names the boundary of the digital twin -- what it is drawn around
+    /// -- and the iTwin Platform exposes no way to set it, so in practice it is
+    /// always absent and this is the value every twin in the demo carries.
+    /// "District" is the boundary a DOT manages by, which is what this demo
+    /// models; another owner might scope twins to a Plant or a Highway instead.
+    ///
+    /// SubClass is not used as a fallback: it answers a different question
+    /// (asset versus the endeavour delivering it), so borrowing it would file
+    /// twins under a boundary named "Asset".
+    ///
+    /// ENG mints the site type UUID from this string and reuses it, so a
+    /// constant here is what makes all demo sites classify alike downstream.
+    /// </summary>
+    private const string DefaultSiteType = "District";
+
     private readonly string? _providerBaseUrl =
         Trimmed(configuration["Sandbox:EngProviderBaseUrl"]);
 
@@ -219,9 +259,9 @@ public sealed class EngEngineClient(
 
         try
         {
-            // The provider names the twin's code itself when one is not supplied,
-            // falling back through number and display name, so nothing is
-            // invented here for a column the platform never carried.
+            // Relayed under the platform's own field names, which is what the
+            // provider now stores. There is no code: the platform never carried
+            // one, and the provider no longer invents it.
             var upsert = await SendAsync(
                 HttpMethod.Post,
                 $"{_providerBaseUrl}/itwins",
@@ -229,17 +269,22 @@ public sealed class EngEngineClient(
                 new
                 {
                     iTwinId = request.ITwinId,
-                    code = request.Number ?? request.DisplayName,
                     description = request.Description,
                     displayName = request.DisplayName,
                     number = request.Number,
-                    twinClass = request.TwinClass,
+                    @class = request.Class,
                     subClass = request.SubClass,
 
-                    // The engine will not publish a site with no type. SubClass is
-                    // the platform's nearest equivalent, so it stands in when the
-                    // caller names nothing more specific.
-                    twinType = request.TwinType ?? request.SubClass,
+                    // The engine will not publish a site with no type, and the
+                    // platform has no UI for one, so it is effectively always
+                    // absent. This default is a demo convention shared with the
+                    // UI -- keeping the two in step matters because a different
+                    // fallback here would classify a twin added through the API
+                    // differently from one added in the app.
+                    type = request.Type ?? DefaultSiteType,
+
+                    status = request.Status,
+                    parentITwinId = request.ParentITwinId,
                 },
                 ct);
 
@@ -280,6 +325,71 @@ public sealed class EngEngineClient(
     private sealed record ITwinCreatedEvent(
         [property: JsonPropertyName("iTwinId")] Guid ITwinId,
         [property: JsonPropertyName("eventType")] string EventType = "iTwins.iTwinCreated.v1");
+
+    /// <summary>
+    /// Removes an iTwin from ENG and announces the removal.
+    /// </summary>
+    /// <remarks>
+    /// The mirror of <see cref="BootstrapAsync"/>, and ordered the same way and
+    /// for the same reason: the provider is the system of record, so it goes
+    /// first and the announcement follows. Announcing first would tell the
+    /// ecosystem to tear down a site ENG might then refuse to delete.
+    ///
+    /// A 404 from the provider stops the flow rather than continuing to the
+    /// announcement. Publishing a deletion for a twin ENG never held would ask
+    /// every subscriber to remove something they were never told about, and on a
+    /// reused scope id that is not merely a no-op.
+    /// </remarks>
+    public async Task<string?> TeardownAsync(Guid iTwinId, CancellationToken ct)
+    {
+        if (!IsConfigured)
+        {
+            return "Sandbox:EngProviderBaseUrl and Sandbox:EngEngineBaseUrl are not configured, " +
+                   "so the twin was not removed.";
+        }
+
+        try
+        {
+            var removed = await SendAsync(
+                HttpMethod.Delete,
+                $"{_providerBaseUrl}/itwins/{iTwinId:D}",
+                _providerKey,
+                body: null,
+                ct);
+
+            if (!removed.IsSuccessStatusCode)
+            {
+                return $"ENG provider refused the deletion ({(int)removed.StatusCode}): " +
+                       Excerpt(await removed.Content.ReadAsStringAsync(ct));
+            }
+
+            var announce = await SendAsync(
+                HttpMethod.Post,
+                $"{_engineBaseUrl}/bootstrap/itwin-deleted",
+                _engineKey,
+                new ITwinDeletedEvent(iTwinId),
+                ct);
+
+            if (!announce.IsSuccessStatusCode)
+            {
+                return $"ENG engine refused the event ({(int)announce.StatusCode}): " +
+                       Excerpt(await announce.Content.ReadAsStringAsync(ct));
+            }
+
+            return null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            logger.LogWarning(ex, "Tearing down iTwin {ITwinId:D} through ENG failed.", iTwinId);
+
+            return $"Could not reach the ENG Functions host: {ex.Message}";
+        }
+    }
+
+    /// <summary>The platform's iTwinDeleted notification, shaped as the real webhook is.</summary>
+    private sealed record ITwinDeletedEvent(
+        [property: JsonPropertyName("iTwinId")] Guid ITwinId,
+        [property: JsonPropertyName("eventType")] string EventType = "iTwins.iTwinDeleted.v1");
 
     /// <summary>Whether the provider hop alone can run.</summary>
     public bool IsProviderConfigured => _providerBaseUrl is not null;
