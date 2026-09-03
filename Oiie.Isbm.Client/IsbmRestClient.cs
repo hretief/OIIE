@@ -171,11 +171,12 @@ public sealed class IsbmRestClient(
         OpenSessionAsync(IsbmSessionKind.Publication, channelUri, [], includeFilters: false, ct);
 
     public Task<string> OpenSubscriptionSessionAsync(
-        string channelUri, IReadOnlyList<string> topics, CancellationToken ct = default) =>
+        string channelUri, IReadOnlyList<string> topics, CancellationToken ct = default,
+        string? subscriberId = null) =>
         // Subscription sessions declare filterExpressions and the provider's content
         // filter reads it on every publication. Omitting it leaves the member null
         // rather than empty, which is not the same thing.
-        OpenSessionAsync(IsbmSessionKind.Subscription, channelUri, topics, includeFilters: true, ct);
+        OpenSessionAsync(IsbmSessionKind.Subscription, channelUri, topics, includeFilters: true, ct, subscriberId);
 
     public Task<string> OpenConsumerRequestSessionAsync(string channelUri, CancellationToken ct = default) =>
         OpenSessionAsync(IsbmSessionKind.ConsumerRequest, channelUri, [], includeFilters: false, ct);
@@ -194,7 +195,8 @@ public sealed class IsbmRestClient(
     /// therefore not free.
     /// </summary>
     private Dictionary<string, object?> BuildSessionOpenBody(
-        IsbmSessionKind kind, string channelUri, IReadOnlyList<string> topics, bool includeFilters)
+        IsbmSessionKind kind, string channelUri, IReadOnlyList<string> topics, bool includeFilters,
+        string? subscriberId)
     {
         var body = new Dictionary<string, object?>
         {
@@ -206,6 +208,14 @@ public sealed class IsbmRestClient(
         if (kind is IsbmSessionKind.Subscription or IsbmSessionKind.ProviderRequest)
         {
             body["topics"] = topics;
+        }
+
+        // Only on subscription sessions, and only when supplied: the member does
+        // not exist on the other session-open DTOs, and a provider configured to
+        // disallow unmapped members would reject the whole request.
+        if (kind is IsbmSessionKind.Subscription && subscriberId is { Length: > 0 })
+        {
+            body["subscriberId"] = subscriberId;
         }
 
         if (includeFilters)
@@ -224,10 +234,11 @@ public sealed class IsbmRestClient(
         string channelUri,
         IReadOnlyList<string> topics,
         bool includeFilters,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? subscriberId = null)
     {
         var route = CollectionFor(kind);
-        var body = BuildSessionOpenBody(kind, channelUri, topics, includeFilters);
+        var body = BuildSessionOpenBody(kind, channelUri, topics, includeFilters, subscriberId);
         var json = JsonSerializer.Serialize(body, Json);
 
         // Logged so a shape mismatch is diagnosable from one call rather than by

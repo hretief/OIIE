@@ -113,8 +113,19 @@ public interface IIsbmClient
 
     // --- Publish-subscribe: consumer ---------------------------------------
 
+    /// <summary>
+    /// Opens a subscription session.
+    /// </summary>
+    /// <param name="subscriberId">
+    /// Stable identity of this subscriber, so the same underlying broker
+    /// subscription is reused across restarts and its unread backlog survives.
+    /// Omit only for a throwaway reader that should see nothing published before
+    /// it opened: without it, every restart abandons a subscription that keeps
+    /// accruing messages nobody will read.
+    /// </param>
     Task<string> OpenSubscriptionSessionAsync(
-        string channelUri, IReadOnlyList<string> topics, CancellationToken ct = default);
+        string channelUri, IReadOnlyList<string> topics, CancellationToken ct = default,
+        string? subscriberId = null);
 
     Task<IsbmMessage?> ReadPublicationAsync(string sessionId, CancellationToken ct = default);
 
