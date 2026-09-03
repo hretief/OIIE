@@ -33,7 +33,7 @@ channels:
     useNotifications: false
 
 isbm:
-  baseUrl: https://isbm-func-44p2f3n6dv7p4.azurewebsites.net/api
+  baseUrl: https://acme-api-isbm-dev.azurewebsites.net/api
   tokenSecretName: sandbox-isbm-token-mms
 
 cir:
@@ -46,6 +46,6 @@ cir:
   # provider-request session.
   channelUri: /OIIE/CIR/Request
   requestTopic: ws-CIR
-  baseUrl: https://cir-func-44p2f3n6.azurewebsites.net/api
-  registryId: OIIE-SANDBOX
+  baseUrl: https://acme-api-cir-dev.azurewebsites.net/api
+  registryId: acme
   identityCacheTtl: 00:05:00

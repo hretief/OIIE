@@ -1421,3 +1421,56 @@ exist only to serve it.
 - The sandbox keeps a database until CMS and MMS are migrated. Recorded as open.
 
 
+
+
+## DR-023 — One broker and one registry: the legacy ISBM and CIR pair is retired
+
+**Context:** The sandbox participants and the engines addressed different shared
+infrastructure. The personality packs pointed at `isbm-func-44p2f3n6dv7p4` and
+`cir-func-44p2f3n6` with registry `OIIE-SANDBOX`; every engine used
+`acme-api-isbm-dev` and `acme-api-cir-dev` with registry `acme`. Each half worked,
+so nothing looked broken.
+
+The cost surfaced in day zero. It enumerates channels through the participants'
+ISBM client, so it cleaned the legacy broker and reported success while 22
+per-iTwin channels on the broker the engines actually publish to were left
+untouched. The same split had already forced a workaround on the CIR side: day
+zero drops the `acme` registry through a separately configured REST call, because
+the existing ISBM-based delete addresses the other deployment entirely.
+
+**Decision:** Retire the legacy pair. The personality packs now point at
+`acme-api-isbm-dev` and `acme-api-cir-dev`, and the registry id moves from
+`OIIE-SANDBOX` to `acme`.
+
+**Why:** Any component reasoning about "the" broker or "the" registry addresses
+one of them, and the sandbox is the component that most needs to see both.
+Teaching every teardown, health check and diagnostic to enumerate a set instead
+would leave a place to forget the second in each one. Retiring the duplicate
+removes the class of bug rather than each instance.
+
+The split was historical rather than intended: the `acme-*` resources were
+provisioned for the engine work and the packs were never moved.
+
+**Cost of moving:** None. `docs/RUNBOOK.md` recorded that cutover is free only
+until the legacy registry has issued CIRIDs, and it had issued none — probing it
+for the `Segment`, `Asset` and `FunctionalLocation` categories returned
+`CategoryNotFoundFault` in every case. The target was already prepared:
+`acme-api-cir-dev` listens on `acme-api-isbm-dev` using the same channel URIs,
+both exist, and neither requires a security token.
+
+**Consequences:**
+
+- Day zero now sees the whole estate: 30 channels found, 26 removed, 5 rebuilt.
+  Before, it removed 9 on a broker nothing published to.
+- The cutover exposed a latent bug rather than causing one.
+  `/acme/enterprise/sites/publication` was declared in no personality pack, so
+  day zero deleted it and could not rebuild it, and nothing self-heals it:
+  `BootstrapChannelsAsync` creates only the two per-iTwin channels, and the site
+  publisher assumes this one exists. Every SyncSites publication after a reset
+  would have failed with a 404 naming a channel, which reads as a broker fault.
+  It is now declared as a Publisher binding on the ENG personality.
+- The scenario channels keep their `/OIIE-SANDBOX/...` URIs. Those are the
+  sandbox's own channels, and renaming them is a separate change with no bearing
+  on this one; what mattered is which broker they live on.
+- `cir-func-44p2f3n6` and `isbm-func-44p2f3n6dv7p4`, and the legacy `cir`
+  database, are now unreferenced by this repository and can be deleted.

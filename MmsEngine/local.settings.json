@@ -22,7 +22,7 @@
     "MmsEngine__CirBaseUrl": "http://localhost:7072/api",
     "MmsEngine__CirApiKey": "",
 
-    "Isbm__BaseUrl": "https://isbm-func-44p2f3n6dv7p4.azurewebsites.net/api",
+    "Isbm__BaseUrl": "https://acme-api-isbm-dev.azurewebsites.net/api",
     "Isbm__ApiKey": "",
 
     "MmsEngineSitesIngestSchedule": "0 */2 * * * *"

@@ -35,7 +35,7 @@
     "RegLocationEngine__SiteTrnId": "1",
     "RegLocationEngine__SiteItemType": "Site",
 
-    "Isbm__BaseUrl": "https://isbm-func-44p2f3n6dv7p4.azurewebsites.net/api",
+    "Isbm__BaseUrl": "https://acme-api-isbm-dev.azurewebsites.net/api",
     "Isbm__ApiKey": "",
 
     "RegLocationEngineSweepSchedule": "0 */5 * * * *",

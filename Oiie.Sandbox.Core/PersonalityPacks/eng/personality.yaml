@@ -23,8 +23,27 @@ channels:
       - Segments
     useNotifications: false
 
+  # The enterprise sites channel SyncSites travels on.
+  #
+  # Declared here even though the ENG *engine* publishes to it rather than this
+  # participant, because day zero rebuilds only channels the registry knows
+  # about. Left undeclared it was deleted and never recreated, and since nothing
+  # self-heals it -- the engine's channel bootstrap creates only the two
+  # per-iTwin channels, and the site publisher assumes this one exists -- every
+  # SyncSites publication after a reset failed with 404 until someone recreated
+  # it by hand.
+  #
+  # The literal 'enterprise' sits where a federation id sits on every other
+  # channel, and that is the point: this message is what brings an iTwin context
+  # into being, so it cannot be addressed to one.
+  - channelUri: /acme/enterprise/sites/publication
+    role: Publisher
+    topics:
+      - Sites
+    useNotifications: false
+
 isbm:
-  baseUrl: https://isbm-func-44p2f3n6dv7p4.azurewebsites.net/api
+  baseUrl: https://acme-api-isbm-dev.azurewebsites.net/api
   tokenSecretName: sandbox-isbm-token-eng
 
 cir:
@@ -37,6 +56,6 @@ cir:
   # provider-request session.
   channelUri: /OIIE/CIR/Request
   requestTopic: ws-CIR
-  baseUrl: https://cir-func-44p2f3n6.azurewebsites.net/api
-  registryId: OIIE-SANDBOX
+  baseUrl: https://acme-api-cir-dev.azurewebsites.net/api
+  registryId: acme
   identityCacheTtl: 00:05:00

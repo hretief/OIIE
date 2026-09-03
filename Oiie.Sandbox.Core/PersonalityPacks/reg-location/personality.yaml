@@ -28,7 +28,7 @@ channels:
     useNotifications: false
 
 isbm:
-  baseUrl: https://isbm-func-44p2f3n6dv7p4.azurewebsites.net/api
+  baseUrl: https://acme-api-isbm-dev.azurewebsites.net/api
   tokenSecretName: sandbox-isbm-token-reg-location
 
 cir:
@@ -41,6 +41,14 @@ cir:
   # provider-request session.
   channelUri: /OIIE/CIR/Request
   requestTopic: ws-CIR
-  baseUrl: https://cir-func-44p2f3n6.azurewebsites.net/api
-  registryId: OIIE-SANDBOX
+  baseUrl: https://acme-api-cir-dev.azurewebsites.net/api
+
+  # The same registry the engines write to, deliberately.
+  #
+  # This was OIIE-SANDBOX on a separate CIR deployment, which meant the sandbox
+  # and the engines held two registries neither could see. Day zero cleared one
+  # of them and reported success, and anything reasoning about "the" registry
+  # addressed whichever half it happened to be configured for. Cutting over was
+  # free because the legacy registry had issued no CIRIDs.
+  registryId: acme
   identityCacheTtl: 00:05:00

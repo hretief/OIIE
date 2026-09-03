@@ -205,11 +205,17 @@ Each CIR talks to the ISBM in its own environment, on new empty databases
 (`acme-db-cir-*`) and a new Service Bus (`acme-sb-*`). Nothing is shared with
 the originals.
 
-The original `cir-func-44p2f3n6` and `isbm-func-44p2f3n6dv7p4` are still
-running, still on the legacy `cir` database and the `mndot*` infrastructure,
-and the sandbox still points at them. Cutover is a separate decision; note
-that the new CIR registries are empty, so cutting over is only free while no
-CIRIDs have been issued from the legacy registry.
+The original `cir-func-44p2f3n6` and `isbm-func-44p2f3n6dv7p4` are no longer
+used. Cutover happened 2026-09: the personality packs now point at
+`acme-api-isbm-dev` and `acme-api-cir-dev`, with the registry id moved from
+`OIIE-SANDBOX` to `acme` so the sandbox and the engines share one registry.
+
+It was free because the legacy registry had issued nothing — probing it for
+the `Segment`, `Asset` and `FunctionalLocation` categories returned
+`CategoryNotFoundFault` in every case, so no CIRIDs were lost.
+
+The legacy apps are still running but nothing in this repository addresses
+them. They can be deleted once you are satisfied nothing outside it does.
 
 Deployment steps and traps are in
 [CirProvider/deploy/README.md](../CirProvider/deploy/README.md) and
