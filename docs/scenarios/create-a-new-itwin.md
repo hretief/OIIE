@@ -77,14 +77,46 @@ ENG transforms the iTwin details into a CCOM SyncSites BOD with the following fi
 | `Site.ShortName` | `displayName` | `US Route 202` | Human-readable name |
 | `Site.FullName` | `displayName` + `number` | `US Route 202 — HWYUSR202` | Extended name with project number |
 | `Site.Description` | Generated or from metadata | Free text | |
-| `Site.Type.UUID` | Generated per unique type | `f7e8d9c0-...` | See "Site Type Identity" below |
-| `Site.Type.ShortName` | `type` | `Highway` | The iTwin type classification |
-| `Site.Type.FullName` | `type` + `subClass` | `Highway Project` | Extended classification |
+| `Site.Type.UUID` | `iTwin.iTwinTypeId` | `3f2b8c14-...` | See "Site Type Identity" below |
+| `Site.Type.ShortName` | `type` | `District` | The twin's boundary |
+| `Site.Type.FullName` | Label for the boundary | `A District of the State` | Not composed with `subClass` |
 
-**Site Type Identity:** The `Site.Type.UUID` is generated once per unique type string
-(e.g., "Highway") and reused across all iTwins of that type. ENG maintains a lookup of
-type string → UUID. The first time ENG encounters type "Highway," it generates a UUID and
-registers it in the CIR. The second iTwin of type "Highway" reuses the same UUID.
+**What `type` means:** `type` names the *boundary* of the digital twin — what the
+twin is drawn around. It is owner-defined free text, not a closed vocabulary: a DOT
+scopes twins to a `District` because that is the area it manages, while an operator
+might scope one to a `Plant` or a `Highway`. It is a separate axis from
+`class`/`subClass`, which say where the twin sits on the lifecycle (`Thing`/`Endeavor`
+× `Asset`/`Project`).
+
+`Site.Type.FullName` labels the boundary alone. It is deliberately *not* `type +
+subClass`: a District is the same District whether this twin is the asset or the
+project delivering it, so folding the lifecycle axis into the label would give one
+boundary two names.
+
+**Site Type Identity:** the boundary is a row in `dbo.iTwinType` — `iTwinTypeId`
+and `Number` — and `dbo.iTwin.iTwinTypeId` references it, many twins to one
+boundary. `Site.Type.UUID` is that stored id, carried through unchanged, so the
+second District classifies as the same `District` as the first; otherwise
+REG-LOCATION holds two item rows nothing can tell apart.
+
+The id is **stored rather than derived from the name**. Deriving it would need no
+table, but it would make the identity a function of the spelling: correcting a
+boundary's name would silently reclassify every site already published under the
+old one. Storing it means a rename touches `Number` and leaves `iTwinTypeId`
+alone.
+
+`District` is bootstrapped in `schema.sql` with a fixed id, because the iTwin
+Platform has no UI for `Type` and the value cannot be entered at source. The seed
+is reapplied on every schema run — including against a database that has the table
+but has lost the row — so a day-zero reset reproduces the same identity rather
+than handing REG-LOCATION a second District.
+
+The reference is nullable: a twin registered without a boundary is skipped by the
+publisher rather than published with an empty classification.
+
+> Mapping an arbitrary free-text `type` onto an `iTwinTypeId` is not yet
+> implemented, and is deferred while `District` is the only boundary in play. See
+> [open-items.md](../open-items.md).
 
 ### Step 4: ENG Engine Publishes to ISBM
 

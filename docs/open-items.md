@@ -4,6 +4,76 @@ Pending work carried between sessions. Decisions belong in
 [decision-register.md](decision-register.md); this file is only for things not
 yet done.
 
+## Bridge free-text iTwin `Type` to the normalised `iTwinType` key
+
+**Status:** deferred by decision, not blocked. Raised 2026-09 while giving the
+site type a stored identity.
+
+`dbo.iTwinType` now holds the boundary a twin is drawn around — `iTwinTypeId`
+(the value published as `Site.Type.UUID`) and `Number` (its name) — and
+`dbo.iTwin.iTwinTypeId` references it. Storing the identity rather than deriving
+it from the name is what lets a boundary be renamed without reclassifying every
+site already published under it.
+
+The unresolved half is that `Type` is **free text in the source**. Nothing
+maps an *unrecognised* incoming string onto an `iTwinTypeId`. A string that
+matches `iTwinType.Number` now resolves (see below); one that does not leaves
+the reference null, and a twin with a null boundary is skipped by the publisher.
+This is not
+biting today because the iTwin Platform exposes no UI for `Type`, so the value
+never varies: `District` is bootstrapped in `schema.sql` and every twin in the
+demo carries it. The bridge is unnecessary for as long as that holds.
+
+It stops holding the moment a twin can arrive with a boundary nobody seeded. The
+decision to make then is what an unrecognised string should do:
+
+- **Auto-create** an `iTwinType` row on first sight — permissive, matches the
+  old mint-on-first-sight behaviour, and means a typo silently becomes a second
+  boundary with its own identity.
+- **Reject, or leave the reference null** — the vocabulary stays curated, an
+  unrecognised boundary is visible rather than absorbed, and the twin is skipped
+  by the publisher until someone classifies it.
+
+The second is the stronger position given that the whole point of storing the id
+was identity stability, but it needs somewhere for a human to add a boundary,
+which the demo does not have. Worth settling before ENG ingests twins from
+anywhere other than the sandbox UI.
+
+Note `UQ_iTwinType_Number` already prevents two rows sharing a name, so whichever
+way this goes, the split-identity failure is caught at the database rather than
+discovered downstream in REG-LOCATION.
+
+### `dbo.iTwin.[Type]` duplicates `dbo.iTwinType.Number`
+
+Raised 2026-09 while conforming the SyncSites payload to the sample. **Payload
+half resolved; the column duplication remains.**
+
+The boundary's *name* is stored twice:
+
+- `dbo.iTwin.[Type]` — `NVARCHAR(100)`, the free-text value as it arrived from
+  the platform, kept from before the type table existed.
+- `dbo.iTwinType.Number` — the same name, on the row the twin now references
+  through `iTwinTypeId`.
+
+Nothing keeps the two in step. `UQ_iTwinType_Number` guards the normalised copy
+only, so the denormalised one on the twin can drift from the row it is supposed
+to be naming, and a rename applied to `iTwinType.Number` leaves every
+`iTwin.[Type]` stale.
+
+What has been done: the provider now resolves `iTwinTypeId` by matching
+`[Type]` against `iTwinType.Number` on upsert, and projects that row's `Number`
+onto the twin record as `ITwinTypeNumber`. `EngSitesBuilder` publishes
+`Site.Type.ShortName` from the projection, so all three published `Type`
+elements now come from the same row and cannot disagree. `[Type]` remains as the
+raw as-received string but no longer reaches the wire.
+
+What remains: `[Type]` is still a second home for the name, and it is still the
+input the resolution matches on, so a value that drifts from `iTwinType.Number`
+silently stops resolving and leaves `iTwinTypeId` null. The column should
+probably go once the question above is settled — if unrecognised boundaries are
+rejected, `[Type]` has no remaining job; if they are auto-created, it is the
+value the row gets minted from and has to survive until that row exists.
+
 ## Rename the sandbox's ENG "tag" vocabulary to "element"
 
 **Status:** not started. Raised 2026-09 while routing element authoring through

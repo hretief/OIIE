@@ -44,16 +44,27 @@ GO
 /* ============================================================================
    iTwin and iModel
    ============================================================================ */
-INSERT INTO dbo.iTwin (iTwinId, Code, Description)
+INSERT INTO dbo.iTwin (iTwinId, Class, SubClass, Type, iTwinTypeId, Number, DisplayName, Description)
 SELECT
     b.iTwinId,
+    N'Thing',
+    N'Asset',
+
+    -- The boundary this twin is drawn around, by name and by reference. Both
+    -- are seeded rather than left NULL: EngSitesBuilder.IsPublishable skips a
+    -- twin with no boundary id, so a bootstrapped twin without it is
+    -- registered but silently unpublishable.
+    N'District',
+    (SELECT iTwinTypeId FROM dbo.iTwinType WHERE Number = N'District'),
+
+    N'ENG',
     N'ENG',
     N'Functional location and segment register'
 FROM #BootstrapIds AS b
 WHERE NOT EXISTS
 (
     SELECT 1 FROM dbo.iTwin AS t
-    WHERE t.iTwinId = b.iTwinId OR t.Code = N'ENG'
+    WHERE t.iTwinId = b.iTwinId OR t.Number = N'ENG'
 );
 
 INSERT INTO dbo.iModel (iModelId, iTwinId, Code, Description)
