@@ -1,0 +1,9 @@
+{
+  "name": "MMS-ENGINE (acme-engn-mms-dev)",
+  "type": "collection",
+  "version": "1",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

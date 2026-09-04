@@ -1,0 +1,28 @@
+meta {
+  name: REGLOCATION POST tags/{tagId:int}/approve
+  type: http
+  seq: 26
+}
+
+post {
+  url: {{baseUrl}}/tags/{{tagId}}/approve?code={{functionKey}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  POST /tags/{tagId:int}/approve
+  Function: ApproveTag
+  Source: RegLocationFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+
+  The body is an empty object: this file records that the endpoint
+  exists and how to reach it, not what to send. Supply a payload before
+  running, or expect a 400 naming the member that is missing.
+}

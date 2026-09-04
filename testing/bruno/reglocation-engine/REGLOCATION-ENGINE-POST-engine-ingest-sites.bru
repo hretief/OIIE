@@ -1,0 +1,25 @@
+meta {
+  name: REGLOCATION-ENGINE POST engine/ingest-sites
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/engine/ingest-sites?code={{functionKey}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  POST /engine/ingest-sites
+  Function: RegLocationEngineIngestSitesNow
+  Source: RegLocationEngineFunctions.cs
+
+  The body is an empty object: this file records that the endpoint
+  exists and how to reach it, not what to send. Supply a payload before
+  running, or expect a 400 naming the member that is missing.
+}

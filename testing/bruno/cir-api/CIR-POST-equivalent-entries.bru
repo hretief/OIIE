@@ -1,0 +1,25 @@
+meta {
+  name: CIR POST equivalent-entries
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/equivalent-entries?code={{functionKey}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  POST /equivalent-entries
+  Function: CreateEquivalentEntries
+  Source: CommandFunctions.cs
+
+  The body is an empty object: this file records that the endpoint
+  exists and how to reach it, not what to send. Supply a payload before
+  running, or expect a 400 naming the member that is missing.
+}

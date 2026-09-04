@@ -1,0 +1,20 @@
+meta {
+  name: ENG GET elements/{ecInstanceId}
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/elements/{{ecInstanceId}}?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /elements/{ecInstanceId}
+  Function: GetElement
+  Source: EngFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

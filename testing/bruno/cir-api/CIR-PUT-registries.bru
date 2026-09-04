@@ -1,0 +1,25 @@
+meta {
+  name: CIR PUT registries
+  type: http
+  seq: 16
+}
+
+put {
+  url: {{baseUrl}}/registries?code={{functionKey}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  PUT /registries
+  Function: UpdateRegistry
+  Source: CommandFunctions.cs
+
+  The body is an empty object: this file records that the endpoint
+  exists and how to reach it, not what to send. Supply a payload before
+  running, or expect a 400 naming the member that is missing.
+}

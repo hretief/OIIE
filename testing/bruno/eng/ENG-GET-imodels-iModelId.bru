@@ -1,0 +1,20 @@
+meta {
+  name: ENG GET imodels/{iModelId}
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/imodels/{{iModelId}}?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /imodels/{iModelId}
+  Function: GetIModel
+  Source: EngFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

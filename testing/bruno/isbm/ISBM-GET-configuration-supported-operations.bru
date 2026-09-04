@@ -1,0 +1,17 @@
+meta {
+  name: ISBM GET configuration/supported-operations
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/configuration/supported-operations?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /configuration/supported-operations
+  Function: GetSupportedOperations
+  Source: ConfigurationDiscoveryFunctions.cs
+}

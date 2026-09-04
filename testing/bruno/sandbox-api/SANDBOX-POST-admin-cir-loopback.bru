@@ -1,0 +1,24 @@
+meta {
+  name: SANDBOX POST /admin/cir/loopback
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/admin/cir/loopback
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  POST /admin/cir/loopback
+  Source: SandboxAdminEndpoints.cs
+
+  The body is an empty object: this file records that the endpoint
+  exists and how to reach it, not what to send. Supply a payload before
+  running, or expect a 400 naming the member that is missing.
+}

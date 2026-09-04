@@ -1,0 +1,17 @@
+meta {
+  name: ENG-ENGINE GET engine/status
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/engine/status?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /engine/status
+  Function: EngEngineStatus
+  Source: EngEngineFunctions.cs
+}

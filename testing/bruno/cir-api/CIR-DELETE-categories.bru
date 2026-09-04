@@ -1,0 +1,17 @@
+meta {
+  name: CIR DELETE categories
+  type: http
+  seq: 3
+}
+
+delete {
+  url: {{baseUrl}}/categories?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  DELETE /categories
+  Function: DeleteCategory
+  Source: CommandFunctions.cs
+}

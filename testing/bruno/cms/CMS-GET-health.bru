@@ -1,0 +1,17 @@
+meta {
+  name: CMS GET health
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/health?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /health
+  Function: Health
+  Source: CmsFunctions.cs
+}

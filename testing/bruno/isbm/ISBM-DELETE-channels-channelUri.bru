@@ -1,0 +1,20 @@
+meta {
+  name: ISBM DELETE channels/{*channelUri}
+  type: http
+  seq: 2
+}
+
+delete {
+  url: {{baseUrl}}/channels/{{channelUri}}?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  DELETE /channels/{*channelUri}
+  Function: DeleteChannel
+  Source: ChannelManagementFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

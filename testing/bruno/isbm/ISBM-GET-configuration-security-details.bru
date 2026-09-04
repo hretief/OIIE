@@ -1,0 +1,17 @@
+meta {
+  name: ISBM GET configuration/security-details
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/configuration/security-details?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /configuration/security-details
+  Function: GetSecurityDetails
+  Source: ConfigurationDiscoveryFunctions.cs
+}

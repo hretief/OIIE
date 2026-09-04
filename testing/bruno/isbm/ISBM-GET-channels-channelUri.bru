@@ -1,0 +1,20 @@
+meta {
+  name: ISBM GET channels/{*channelUri}
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/channels/{{channelUri}}?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /channels/{*channelUri}
+  Function: GetChannels
+  Source: ChannelManagementFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

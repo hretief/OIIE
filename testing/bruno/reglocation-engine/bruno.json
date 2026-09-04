@@ -1,0 +1,9 @@
+{
+  "name": "REGLOCATION-ENGINE (acme-engn-reglocation-dev)",
+  "type": "collection",
+  "version": "1",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

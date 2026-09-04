@@ -1,0 +1,20 @@
+meta {
+  name: ENG GET named-versions/{namedVersionId}/elements
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/named-versions/{{namedVersionId}}/elements?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /named-versions/{namedVersionId}/elements
+  Function: GetNamedVersionElements
+  Source: EngFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

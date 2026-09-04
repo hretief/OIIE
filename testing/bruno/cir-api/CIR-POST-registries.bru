@@ -1,0 +1,25 @@
+meta {
+  name: CIR POST registries
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/registries?code={{functionKey}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  POST /registries
+  Function: CreateRegistry
+  Source: CommandFunctions.cs
+
+  The body is an empty object: this file records that the endpoint
+  exists and how to reach it, not what to send. Supply a payload before
+  running, or expect a 400 naming the member that is missing.
+}

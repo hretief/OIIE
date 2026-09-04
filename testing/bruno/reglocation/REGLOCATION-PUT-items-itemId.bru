@@ -1,0 +1,28 @@
+meta {
+  name: REGLOCATION PUT items/{itemId:int}
+  type: http
+  seq: 7
+}
+
+put {
+  url: {{baseUrl}}/items/{{itemId}}?code={{functionKey}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  PUT /items/{itemId:int}
+  Function: UpdateItem
+  Source: RegLocationFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+
+  The body is an empty object: this file records that the endpoint
+  exists and how to reach it, not what to send. Supply a payload before
+  running, or expect a 400 naming the member that is missing.
+}

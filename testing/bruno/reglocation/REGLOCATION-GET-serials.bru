@@ -1,0 +1,17 @@
+meta {
+  name: REGLOCATION GET serials
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/serials?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /serials
+  Function: GetSerials
+  Source: RegLocationFunctions.cs
+}

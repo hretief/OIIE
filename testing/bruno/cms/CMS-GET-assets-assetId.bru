@@ -1,0 +1,20 @@
+meta {
+  name: CMS GET assets/{assetId}
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/assets/{{assetId}}?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /assets/{assetId}
+  Function: GetAssetById
+  Source: CmsFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

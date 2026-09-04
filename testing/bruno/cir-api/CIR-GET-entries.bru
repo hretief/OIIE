@@ -1,0 +1,17 @@
+meta {
+  name: CIR GET entries
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/entries?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /entries
+  Function: GetEntriesByCirid
+  Source: QueryFunctions.cs
+}

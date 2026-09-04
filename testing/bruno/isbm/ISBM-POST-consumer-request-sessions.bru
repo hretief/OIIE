@@ -1,0 +1,25 @@
+meta {
+  name: ISBM POST consumer-request-sessions
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/consumer-request-sessions?code={{functionKey}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  POST /consumer-request-sessions
+  Function: OpenConsumerRequestSession
+  Source: ConsumerRequestFunctions.cs
+
+  The body is an empty object: this file records that the endpoint
+  exists and how to reach it, not what to send. Supply a payload before
+  running, or expect a 400 naming the member that is missing.
+}

@@ -1,0 +1,17 @@
+meta {
+  name: REGLOCATION GET tags/proposed
+  type: http
+  seq: 27
+}
+
+get {
+  url: {{baseUrl}}/tags/proposed?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /tags/proposed
+  Function: GetProposedTags
+  Source: RegLocationFunctions.cs
+}

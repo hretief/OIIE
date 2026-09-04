@@ -1,0 +1,19 @@
+meta {
+  name: SANDBOX GET /admin/{participantId}/classes
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/admin/{{participantId}}/classes
+  body: none
+  auth: none
+}
+
+docs {
+  GET /admin/{participantId}/classes
+  Source: SandboxAdminEndpoints.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

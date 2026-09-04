@@ -1,0 +1,9 @@
+{
+  "name": "MMS (acme-api-mms-dev)",
+  "type": "collection",
+  "version": "1",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

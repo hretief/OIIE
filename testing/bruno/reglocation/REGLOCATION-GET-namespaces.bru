@@ -1,0 +1,17 @@
+meta {
+  name: REGLOCATION GET namespaces
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/namespaces?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /namespaces
+  Function: GetNamespaces
+  Source: RegLocationFunctions.cs
+}

@@ -1,0 +1,17 @@
+meta {
+  name: MMS GET assets
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/assets?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /assets
+  Function: GetAssets
+  Source: MmsFunctions.cs
+}

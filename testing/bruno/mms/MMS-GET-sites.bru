@@ -1,0 +1,17 @@
+meta {
+  name: MMS GET sites
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/sites?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /sites
+  Function: GetSites
+  Source: MmsFunctions.cs
+}

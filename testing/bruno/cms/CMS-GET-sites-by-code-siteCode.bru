@@ -1,0 +1,20 @@
+meta {
+  name: CMS GET sites/by-code/{siteCode}
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/sites/by-code/{{siteCode}}?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /sites/by-code/{siteCode}
+  Function: GetSiteByCode
+  Source: CmsFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

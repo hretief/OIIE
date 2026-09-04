@@ -1,0 +1,17 @@
+meta {
+  name: MMS-ENGINE GET engine/status
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/engine/status?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /engine/status
+  Function: MmsEngineStatus
+  Source: MmsEngineFunctions.cs
+}

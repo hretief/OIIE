@@ -1,0 +1,24 @@
+meta {
+  name: SANDBOX POST /admin/reg-location/approve
+  type: http
+  seq: 39
+}
+
+post {
+  url: {{baseUrl}}/admin/reg-location/approve
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  POST /admin/reg-location/approve
+  Source: SandboxAdminEndpoints.cs
+
+  The body is an empty object: this file records that the endpoint
+  exists and how to reach it, not what to send. Supply a payload before
+  running, or expect a 400 naming the member that is missing.
+}

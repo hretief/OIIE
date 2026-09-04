@@ -1,0 +1,25 @@
+meta {
+  name: ENG POST itwins
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/itwins?code={{functionKey}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  POST /itwins
+  Function: UpsertITwin
+  Source: EngFunctions.cs
+
+  The body is an empty object: this file records that the endpoint
+  exists and how to reach it, not what to send. Supply a payload before
+  running, or expect a 400 naming the member that is missing.
+}

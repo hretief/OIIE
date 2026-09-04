@@ -1,0 +1,20 @@
+meta {
+  name: ISBM DELETE sessions/{sessionId}/publications/{messageId}
+  type: http
+  seq: 17
+}
+
+delete {
+  url: {{baseUrl}}/sessions/{{sessionId}}/publications/{{messageId}}?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  DELETE /sessions/{sessionId}/publications/{messageId}
+  Function: ExpirePublication
+  Source: ProviderPublicationFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

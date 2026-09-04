@@ -1,0 +1,20 @@
+meta {
+  name: ISBM DELETE consumer-request-sessions/{sessionId}
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/consumer-request-sessions/{{sessionId}}?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  DELETE /consumer-request-sessions/{sessionId}
+  Function: CloseConsumerRequestSession
+  Source: ConsumerRequestFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

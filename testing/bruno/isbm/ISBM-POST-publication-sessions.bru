@@ -1,0 +1,25 @@
+meta {
+  name: ISBM POST publication-sessions
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/publication-sessions?code={{functionKey}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  POST /publication-sessions
+  Function: OpenPublicationSession
+  Source: ProviderPublicationFunctions.cs
+
+  The body is an empty object: this file records that the endpoint
+  exists and how to reach it, not what to send. Supply a payload before
+  running, or expect a 400 naming the member that is missing.
+}

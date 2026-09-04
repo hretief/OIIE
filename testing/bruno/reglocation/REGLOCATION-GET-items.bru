@@ -1,0 +1,17 @@
+meta {
+  name: REGLOCATION GET items
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/items?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /items
+  Function: GetItems
+  Source: RegLocationFunctions.cs
+}

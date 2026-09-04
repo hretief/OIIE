@@ -1,0 +1,17 @@
+meta {
+  name: ENG GET imodels
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/imodels?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /imodels
+  Function: GetIModels
+  Source: EngFunctions.cs
+}

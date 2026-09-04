@@ -1,0 +1,17 @@
+meta {
+  name: REGLOCATION-ENGINE GET engine/status
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/engine/status?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /engine/status
+  Function: RegLocationEngineStatus
+  Source: RegLocationEngineFunctions.cs
+}

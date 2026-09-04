@@ -1,0 +1,20 @@
+meta {
+  name: ENG DELETE itwins/{iTwinId:guid}
+  type: http
+  seq: 13
+}
+
+delete {
+  url: {{baseUrl}}/itwins/{{iTwinId}}?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  DELETE /itwins/{iTwinId:guid}
+  Function: DeleteITwin
+  Source: EngFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

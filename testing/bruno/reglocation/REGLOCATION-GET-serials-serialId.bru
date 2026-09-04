@@ -1,0 +1,20 @@
+meta {
+  name: REGLOCATION GET serials/{serialId:int}
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{baseUrl}}/serials/{{serialId}}?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /serials/{serialId:int}
+  Function: GetSerial
+  Source: RegLocationFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

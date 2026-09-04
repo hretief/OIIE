@@ -1,0 +1,25 @@
+meta {
+  name: REGLOCATION POST scopes
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/scopes?code={{functionKey}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  POST /scopes
+  Function: CreateScope
+  Source: RegLocationFunctions.cs
+
+  The body is an empty object: this file records that the endpoint
+  exists and how to reach it, not what to send. Supply a payload before
+  running, or expect a 400 naming the member that is missing.
+}

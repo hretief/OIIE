@@ -1,0 +1,17 @@
+meta {
+  name: CIR GET isbm/status
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/isbm/status?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /isbm/status
+  Function: IsbmStatus
+  Source: IsbmFunctions.cs
+}

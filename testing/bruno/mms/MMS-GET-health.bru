@@ -1,0 +1,17 @@
+meta {
+  name: MMS GET health
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/health?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /health
+  Function: Health
+  Source: MmsFunctions.cs
+}

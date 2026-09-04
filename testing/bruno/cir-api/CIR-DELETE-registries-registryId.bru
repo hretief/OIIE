@@ -1,0 +1,20 @@
+meta {
+  name: CIR DELETE registries/{registryId}
+  type: http
+  seq: 17
+}
+
+delete {
+  url: {{baseUrl}}/registries/{{registryId}}?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  DELETE /registries/{registryId}
+  Function: DeleteRegistry
+  Source: CommandFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

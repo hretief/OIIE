@@ -1,0 +1,17 @@
+meta {
+  name: CMS GET assettypes
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/assettypes?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /assettypes
+  Function: GetAssetTypes
+  Source: CmsFunctions.cs
+}

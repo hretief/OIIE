@@ -1,0 +1,25 @@
+meta {
+  name: MMS POST assets
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/assets?code={{functionKey}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  POST /assets
+  Function: UpsertAssets
+  Source: MmsFunctions.cs
+
+  The body is an empty object: this file records that the endpoint
+  exists and how to reach it, not what to send. Supply a payload before
+  running, or expect a 400 naming the member that is missing.
+}

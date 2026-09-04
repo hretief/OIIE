@@ -1,0 +1,20 @@
+meta {
+  name: REGLOCATION DELETE scopes/{scopeId:int}
+  type: http
+  seq: 12
+}
+
+delete {
+  url: {{baseUrl}}/scopes/{{scopeId}}?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  DELETE /scopes/{scopeId:int}
+  Function: DeleteScope
+  Source: RegLocationFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

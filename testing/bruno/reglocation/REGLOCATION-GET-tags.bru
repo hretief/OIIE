@@ -1,0 +1,17 @@
+meta {
+  name: REGLOCATION GET tags
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{baseUrl}}/tags?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /tags
+  Function: GetTags
+  Source: RegLocationFunctions.cs
+}

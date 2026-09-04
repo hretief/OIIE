@@ -1,0 +1,9 @@
+{
+  "name": "ENG-ENGINE (acme-engn-eng-dev)",
+  "type": "collection",
+  "version": "1",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

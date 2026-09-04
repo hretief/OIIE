@@ -1,0 +1,19 @@
+meta {
+  name: SANDBOX DELETE /admin/eng/itwins/{iTwinId:guid}
+  type: http
+  seq: 27
+}
+
+delete {
+  url: {{baseUrl}}/admin/eng/itwins/{{iTwinId}}
+  body: none
+  auth: none
+}
+
+docs {
+  DELETE /admin/eng/itwins/{iTwinId:guid}
+  Source: SandboxAdminEndpoints.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

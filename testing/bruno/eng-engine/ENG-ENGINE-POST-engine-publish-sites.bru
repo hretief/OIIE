@@ -1,0 +1,25 @@
+meta {
+  name: ENG-ENGINE POST engine/publish-sites
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/engine/publish-sites?code={{functionKey}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  POST /engine/publish-sites
+  Function: EngEnginePublishSites
+  Source: EngEngineFunctions.cs
+
+  The body is an empty object: this file records that the endpoint
+  exists and how to reach it, not what to send. Supply a payload before
+  running, or expect a 400 naming the member that is missing.
+}

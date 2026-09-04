@@ -1,0 +1,20 @@
+meta {
+  name: ISBM GET sessions/{sessionId}/requests/{requestMessageId}/response
+  type: http
+  seq: 23
+}
+
+get {
+  url: {{baseUrl}}/sessions/{{sessionId}}/requests/{{requestMessageId}}/response?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /sessions/{sessionId}/requests/{requestMessageId}/response
+  Function: ReadResponse
+  Source: ConsumerRequestFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}
