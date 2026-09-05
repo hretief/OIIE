@@ -1,0 +1,67 @@
+# SC02 -- stewardship approval, from REG-LOCATION out to operations.
+#
+# The second leg. A steward approves a proposal that SC01 delivered, and
+# REG-LOCATION republishes it as an approved location to the operational
+# participants.
+#
+# SC02 presumes SC01's data is still present. That is a precondition to observe,
+# not one to enforce: if the registry was reset the queue is empty, there is
+# nothing to approve, and the scenario simply cannot start. No gate is needed to
+# arrive at that outcome.
+#
+# The republication is what distinguishes this scenario from the first. The same
+# BOD travels again, but from a different sender with a different meaning -- an
+# approved location rather than a design proposal -- which is why the topic
+# carries sc02 and the subscribers are operational rather than engineering.
+scenarioId: sc02
+name: Stewardship approval and distribution
+scenario: 2
+useCase: UC01
+
+# Nothing downstream of REG-LOCATION is a working participant yet, so completion
+# is observed at the sender: the item leaving the stewardship queue as approved
+# is the furthest point that can currently be verified. When MMS gains a
+# backing store this should move to arrival there, which is a change to this
+# file and not to any code.
+completion:
+  participant: reg-location
+  contains: approved-locations
+  description: The proposal has been approved and republished to operations.
+
+channels:
+  # The enterprise sites channel. Not per-iTwin: a site exists above any one
+  # twin, and the participants that care about it -- MMS for maintenance, CMS
+  # for construction -- select on the site rather than the project that
+  # proposed it.
+  #
+  # This URI is literal rather than derived. It predates the convention and is
+  # provisioned on the broker in this exact form, so it is reproduced verbatim
+  # from the reg-location personality pack. Normalising it is a broker change
+  # and a migration, not a text edit.
+  - uri: /OIIE-SANDBOX/Enterprise/Site/OandM
+    type: Publication
+    publisher: reg-location
+    # Declared subscribers. The sandbox no longer emulates MMS or CMS; they are
+    # standalone participants now. The declaration is retained so provisioning
+    # still creates subscriber ends on this channel for them to connect to.
+    #
+    # Note that MmsEngine and CmsEngine are currently configured against their
+    # own site channel rather than this one, so the two are not yet aligned.
+    subscribers:
+      - mms
+      - cms
+    topics:
+      - oiie:sc02/ccom:SyncSites
+    description: Approved sites from the location registry to operations.
+
+  # Approved segments return to the per-iTwin engineering channel, addressed to
+  # whoever is following that twin. Same channel as SC01, opposite direction:
+  # ENG published proposals onto it, REG-LOCATION publishes decisions back.
+  - uri: /{enterprise}/{iTwinId}/engineering/publication
+    type: Publication
+    publisher: reg-location
+    subscribers:
+      - eng
+    topics:
+      - oiie:sc02/ccom:SyncSegments
+    description: Approved segments returned to the originating iTwin.

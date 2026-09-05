@@ -1,0 +1,57 @@
+# SC01 -- design release from ENG to REG-LOCATION.
+#
+# The first leg of the engineering handover. ENG promotes a named version and
+# publishes the segments it contains; REG-LOCATION subscribes and files each one
+# as a proposal awaiting a steward.
+#
+# SC01 stops at REG-LOCATION deliberately. Design data at this stage describes a
+# plant that may not be built as drawn, so an engineer publishing it is not what
+# admits it to operations -- a steward's approval is, and that is SC02. Nothing
+# here addresses MMS, CMS or GIS.
+#
+# Completion is observed rather than enforced. There is no gate in the UI that
+# stops an operator running these out of order; the scenario is done when the
+# data is visible at the receiving participant, which is what `completion`
+# below names. State lives in the participants, not in a run record.
+scenarioId: sc01
+name: Design release to the location registry
+scenario: 1
+useCase: UC01
+
+# Read by the UI to decide when this scenario has finished, and by anything
+# reporting progress. `contains` names the participant-side collection that
+# proves arrival: stewardship items are REG-LOCATION's inbox of unapproved
+# proposals, so a non-empty queue is exactly the evidence that ENG's publication
+# was delivered and ingested.
+completion:
+  participant: reg-location
+  contains: stewardship-items
+  description: ENG segments have arrived and await a stewardship decision.
+
+# The channel this scenario runs on.
+#
+# {enterprise} and {iTwinId} are substituted at resolve time. The iTwin is a
+# placeholder rather than a literal because every twin gets its own channel
+# under the OIIE convention -- one declaration therefore serves all of them, and
+# adding a twin needs no edit here.
+#
+# The resolved form must match what the engines derive byte for byte:
+#   EngEngineOptions.ChannelUriFor            -> /{Enterprise}/{id}/{Domain}/publication
+#   RegLocationEngineOptions.InboundChannelUriFor
+# A divergence does not fail loudly. The publish succeeds, the subscriber waits
+# on a channel nobody writes to, and nothing reports why -- which is the reason
+# this file exists rather than the URI being copied into each engine's settings.
+channels:
+  - uri: /{enterprise}/{iTwinId}/engineering/publication
+    type: Publication
+    publisher: eng
+    subscribers:
+      - reg-location
+    # Form is oiie:{scenario}/ccom:{bod}. The scenario is part of the topic
+    # because the same BOD means different things at different points in a
+    # journey: SyncSegments from ENG is a design proposal, whereas SyncSegments
+    # from REG-LOCATION is an approved location. A subscriber that wanted only
+    # one of those could not otherwise tell them apart.
+    topics:
+      - oiie:sc01/ccom:SyncSegments
+    description: Engineering design proposals from ENG to the location registry.
