@@ -346,10 +346,10 @@ GO
 /* ============================================================================
    class_objects
 
-   The classes a location registry classifies against. Keys mirror the
-   reg-location personality pack (Oiie.Sandbox.Core/PersonalityPacks/
-   reg-location/Fixtures/classes.yaml) so the emulation and the sandbox agree
-   on what this participant knows.
+   The classes a location registry classifies against. This is REG-LOCATION's
+   own reference data: the participant provisions the vocabulary it knows,
+   because a class list is customer data, not something a shared host can hold
+   on the participant's behalf.
 
    Note what is deliberately absent: rdl:TemperatureIndicatingController.
    REG-LOCATION holds the parent rdl:Instrument but not that leaf, which is
