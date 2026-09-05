@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using Oiie.Ccom.Oagis;
 using Oiie.Ccom.Types;
 using Oiie.Isbm.Client;
+using Oiie.Isbm.Client.Topology;
 using RegLocationEngine.Infrastructure.RegLocation;
 
 namespace RegLocationEngine.Application;
@@ -53,6 +54,7 @@ public sealed class SegmentIngestionService(
     IIsbmClient isbm,
     IRegLocationClient regLocation,
     IncomingSegmentMapper mapper,
+    TopologyClient topology,
     IOptions<RegLocationEngineOptions> options,
     ILogger<SegmentIngestionService> logger)
 {
@@ -101,7 +103,23 @@ public sealed class SegmentIngestionService(
             return report;
         }
 
-        var channelUri = _options.InboundChannelUriFor(_options.ITwinFederationId);
+        // The subscriber end of the same declaration ENG publishes from, so the
+        // two cannot drift: previously each derived this URI independently and
+        // agreement rested on both settings files saying the same thing.
+        //
+        // Resolved before the session is opened, and only once, because the
+        // session is cached across polls -- a channel that changed underneath a
+        // live session would not be picked up until the engine restarts, which
+        // is the accepted cost of a durable subscription.
+        var declared = await topology.FindSubscriptionAsync(
+            _options.ScenarioId, _options.ParticipantId, _options.ITwinFederationId, ct);
+
+        var channelUri = declared?.Uri
+            ?? _options.InboundChannelUriFor(_options.ITwinFederationId);
+
+        var topics = declared is { Topics.Count: > 0 }
+            ? declared.Topics.ToArray()
+            : _options.InboundTopics;
 
         // Scoped to the iTwin as well as the role, because this channel is
         // per-iTwin: a single 'segments' id would collide across twins and let
@@ -109,7 +127,7 @@ public sealed class SegmentIngestionService(
         // the sites leg -- the id must survive a restart or the backlog is
         // abandoned with the subscription.
         _sessionId ??= await isbm.OpenSubscriptionSessionAsync(
-            channelUri, _options.InboundTopics, ct,
+            channelUri, topics, ct,
             subscriberId: $"{_options.SourceId}:segments:{_options.ITwinFederationId:D}");
 
         while (report.MessagesRead < _options.MaxMessagesPerPoll)

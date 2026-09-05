@@ -23,6 +23,26 @@ public sealed class RegLocationEngineOptions
     /// </summary>
     public bool Enabled { get; set; }
 
+    /// <summary>
+    /// Root of the sandbox API, e.g. https://host, from which this engine reads
+    /// the channel topology. Optional: unset, the engine uses the channels
+    /// derived from its own settings, exactly as it did before topology existed.
+    /// </summary>
+    public string? SandboxBaseUrl { get; set; }
+
+    /// <summary>
+    /// This engine's participant id, used to find its own rows in the topology.
+    /// Matches the personality pack directory name.
+    /// </summary>
+    public string ParticipantId { get; set; } = "reg-location";
+
+    /// <summary>
+    /// The scenario whose topology this engine subscribes under. REG-LOCATION
+    /// receives the design release, which is SC01. Its own publications on
+    /// approval belong to SC02, and are looked up separately.
+    /// </summary>
+    public string ScenarioId { get; set; } = "sc01";
+
     // ---- Upstream: REG-LOCATION -------------------------------------------
 
     /// <summary>Root of the REG-LOCATION function app, e.g. https://host/api.</summary>

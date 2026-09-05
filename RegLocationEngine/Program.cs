@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Oiie.Isbm.Client;
+using Oiie.Isbm.Client.Topology;
 using RegLocationEngine.Application;
 using RegLocationEngine.Infrastructure.Cir;
 using RegLocationEngine.Infrastructure.RegLocation;
@@ -96,6 +97,23 @@ builder.Services.AddHttpClient<IIsbmClient, IsbmRestClient>((sp, http) =>
 // typed-client registration above cannot construct it unaided.
 builder.Services.AddTransient(sp =>
     sp.GetRequiredService<IOptions<IsbmClientOptions>>().Value);
+
+// --- Topology --------------------------------------------------------------
+//
+// The subscriber end of the channel declarations. Read from the sandbox so this
+// engine and the publisher cannot disagree about where a message goes; without
+// a base address the client returns null and the configured channels stand.
+builder.Services.AddHttpClient<TopologyClient>((sp, http) =>
+{
+    var options = sp.GetRequiredService<IOptions<RegLocationEngineOptions>>().Value;
+
+    if (!string.IsNullOrWhiteSpace(options.SandboxBaseUrl))
+    {
+        http.BaseAddress = new Uri(options.SandboxBaseUrl.TrimEnd('/') + "/");
+    }
+
+    http.Timeout = TimeSpan.FromSeconds(15);
+});
 
 // --- Engine ----------------------------------------------------------------
 
