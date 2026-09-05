@@ -1,6 +1,5 @@
 using Oiie.Isbm.Client;
 using SimHost.Application.Participants;
-using SimHost.Infrastructure.Sql;
 
 namespace SimHost.Infrastructure.Isbm;
 
@@ -14,49 +13,19 @@ public interface IIsbmClientAccessor
     IIsbmClient For(string participantId);
 }
 
-public interface IIsbmSessionStoreAccessor
-{
-    IIsbmSessionStore For(string participantId);
-
-    /// <summary>
-    /// The session manager, exposed here so callers that already hold the accessor
-    /// get open-confirm and stale-session recovery without a second dependency.
-    /// </summary>
-    IsbmSessionManager Manager { get; }
-}
-
-public sealed class IsbmClientAccessor : IIsbmClientAccessor, IIsbmSessionStoreAccessor
+public sealed class IsbmClientAccessor : IIsbmClientAccessor
 {
     private readonly Dictionary<string, IIsbmClient> _clients;
-    private readonly Dictionary<string, IIsbmSessionStore> _stores;
-    private IsbmSessionManager? _manager;
-
-    /// <summary>
-    /// Set after construction: the manager depends on this accessor, so injecting it
-    /// through the constructor would be circular.
-    /// </summary>
-    public IsbmSessionManager Manager
-    {
-        get => _manager ?? throw new InvalidOperationException("Session manager not attached.");
-        set => _manager = value;
-    }
 
     public IsbmClientAccessor(
         ParticipantRegistry registry,
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
-        IParticipantDbContextFactory dbFactory,
         ILoggerFactory loggerFactory)
     {
         _clients = registry.All.ToDictionary(
             p => p.ParticipantId,
             p => CreateClient(p, httpClientFactory, configuration, loggerFactory),
-            StringComparer.OrdinalIgnoreCase);
-
-        _stores = registry.All.ToDictionary(
-            p => p.ParticipantId,
-            IIsbmSessionStore (p) => new SqlIsbmSessionStore(
-                p.ParticipantId, dbFactory, loggerFactory.CreateLogger<SqlIsbmSessionStore>()),
             StringComparer.OrdinalIgnoreCase);
     }
 
@@ -64,11 +33,6 @@ public sealed class IsbmClientAccessor : IIsbmClientAccessor, IIsbmSessionStoreA
         _clients.TryGetValue(participantId, out var client)
             ? client
             : throw new KeyNotFoundException($"No ISBM client for participant '{participantId}'.");
-
-    IIsbmSessionStore IIsbmSessionStoreAccessor.For(string participantId) =>
-        _stores.TryGetValue(participantId, out var store)
-            ? store
-            : throw new KeyNotFoundException($"No ISBM session store for participant '{participantId}'.");
 
     private static IIsbmClient CreateClient(
         ParticipantContext participant,

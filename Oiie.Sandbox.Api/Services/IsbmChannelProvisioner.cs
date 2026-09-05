@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Oiie.Isbm.Client;
 using SimHost.Application.Participants;
+using SimHost.Application.Topology;
 using SimHost.Domain.Common;
 using SimHost.Infrastructure.Isbm;
 
@@ -31,6 +32,7 @@ public sealed record ChannelEnsureResult(
 /// </summary>
 public sealed class IsbmChannelProvisioner(
     ParticipantRegistry registry,
+    TopologyRegistry topology,
     IIsbmClientAccessor clients,
     IConfiguration configuration)
 {
@@ -73,6 +75,77 @@ public sealed class IsbmChannelProvisioner(
             }
         }
 
+        results.AddRange(await EnsureTopologyAsync(results, ct));
+
+        return results;
+    }
+
+    /// <summary>
+    /// Creates the enterprise-wide channels the topology declares.
+    ///
+    /// This is what makes a new scenario a file drop: declaring a channel in a
+    /// topology file is enough to have it provisioned on the next start, with
+    /// no personality pack edit and no code change.
+    ///
+    /// Per-iTwin channels are skipped here, because the twin ids are not known
+    /// until an operator registers one -- those go through
+    /// <see cref="EnsureForITwinAsync"/> instead.
+    ///
+    /// Channels already provisioned from a personality binding are skipped
+    /// rather than created twice. Creation is idempotent, so this is about the
+    /// report rather than the broker: the same channel listed twice with
+    /// different owning participants reads like a misconfiguration.
+    /// </summary>
+    private async Task<IReadOnlyList<ChannelEnsureResult>> EnsureTopologyAsync(
+        IReadOnlyList<ChannelEnsureResult> already, CancellationToken ct)
+    {
+        var results = new List<ChannelEnsureResult>();
+        var enterprise = configuration["EngEngine:Enterprise"] ?? "acme";
+
+        var seen = new HashSet<string>(
+            already.Select(r => r.ChannelUri), StringComparer.Ordinal);
+
+        foreach (var scenario in topology.Scenarios)
+        {
+            foreach (var channel in scenario.Channels)
+            {
+                if (channel.IsPerITwin)
+                {
+                    continue;
+                }
+
+                var uri = channel.Resolve(enterprise);
+
+                if (!seen.Add(uri))
+                {
+                    continue;
+                }
+
+                // Created under the publisher's credentials: the participant
+                // that posts to a channel is the one that must be able to.
+                // Falling back to the first participant would provision a
+                // channel the publisher has no rights on, which fails later at
+                // the publish rather than here.
+                if (!registry.All.Any(p => string.Equals(
+                        p.ParticipantId, channel.Publisher, StringComparison.OrdinalIgnoreCase)))
+                {
+                    results.Add(new ChannelEnsureResult(
+                        channel.Publisher, uri, channel.Type, false,
+                        $"Scenario {scenario.ScenarioId} names publisher '{channel.Publisher}', "
+                        + "which is not a registered participant."));
+                    continue;
+                }
+
+                var type = string.Equals(channel.Type, "Request", StringComparison.OrdinalIgnoreCase)
+                    ? IsbmChannelType.Request
+                    : IsbmChannelType.Publication;
+
+                results.Add(await CreateAsync(
+                    clients.For(channel.Publisher), channel.Publisher, uri, type,
+                    $"OIIE Sandbox: {scenario.ScenarioId} {channel.Description}".TrimEnd(), ct));
+            }
+        }
+
         return results;
     }
 
@@ -99,18 +172,63 @@ public sealed class IsbmChannelProvisioner(
     public async Task<ChannelEnsureResult> EnsureForITwinAsync(
         Guid iTwinId, string? description = null, CancellationToken ct = default)
     {
-        var participant = registry.All.First();
-        var client = clients.For(participant.ParticipantId);
-
         var enterprise = configuration["EngEngine:Enterprise"] ?? "acme";
         var domain = configuration["EngEngine:Domain"] ?? "engineering";
 
-        var uri = $"/{enterprise}/{iTwinId:D}/{domain}/publication";
+        var label = description is { Length: > 0 }
+            ? $"OIIE Sandbox: {description}"
+            : "OIIE Sandbox: iTwin publication";
+
+        // Every per-iTwin channel the topology declares, deduplicated: SC01 and
+        // SC02 both run on the engineering publication channel, in opposite
+        // directions, and it is one channel.
+        var declared = topology.AllChannels()
+            .Where(c => c.IsPerITwin)
+            .Select(c => (Uri: c.Resolve(enterprise, iTwinId), c.Type, c.Publisher))
+            .GroupBy(c => c.Uri, StringComparer.Ordinal)
+            .ToList();
+
+        ChannelEnsureResult? conventional = null;
+
+        foreach (var group in declared)
+        {
+            var first = group.First();
+            var publisher = registry.All.Any(p => string.Equals(
+                p.ParticipantId, first.Publisher, StringComparison.OrdinalIgnoreCase))
+                ? first.Publisher
+                : registry.All.First().ParticipantId;
+
+            var type = string.Equals(first.Type, "Request", StringComparison.OrdinalIgnoreCase)
+                ? IsbmChannelType.Request
+                : IsbmChannelType.Publication;
+
+            var result = await CreateAsync(
+                clients.For(publisher), publisher, group.Key, type, label, ct);
+
+            // The conventional channel is the one callers expect back, so it is
+            // singled out from what may be several.
+            if (string.Equals(group.Key, $"/{enterprise}/{iTwinId:D}/{domain}/publication",
+                    StringComparison.Ordinal))
+            {
+                conventional = result;
+            }
+        }
+
+        if (conventional is not null)
+        {
+            return conventional;
+        }
+
+        // No topology file declared a per-iTwin channel, so fall back to the
+        // convention. Keeps twin registration working on a deployment whose
+        // topology directory is empty, which is the same fallback the engines
+        // make.
+        var participant = registry.All.First();
 
         return await CreateAsync(
-            client, participant.ParticipantId, uri, IsbmChannelType.Publication,
-            description is { Length: > 0 } ? $"OIIE Sandbox: {description}" : "OIIE Sandbox: iTwin publication",
-            ct);
+            clients.For(participant.ParticipantId), participant.ParticipantId,
+            $"/{enterprise}/{iTwinId:D}/{domain}/publication",
+            IsbmChannelType.Publication, label, ct);
     }
 
     private static async Task<ChannelEnsureResult> CreateAsync(

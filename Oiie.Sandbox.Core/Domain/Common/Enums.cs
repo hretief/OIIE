@@ -8,11 +8,7 @@ public enum ProcessingStatus { Pending, Applied, Rejected, Failed }
 
 public enum ProvenanceAction { Created, Updated, Rejected, Ignored, Superseded }
 
-public enum OutboxState { Pending, Building, Posted, Failed, Held }
-
 public enum ChangeKind { Add, Change, Delete }
-
-public enum PendingWorkState { Queued, Accepted, Rejected, Expired }
 
 /// <summary>Provenance of a class or property definition — see spec §6.5.5.</summary>
 public enum DefinitionOrigin

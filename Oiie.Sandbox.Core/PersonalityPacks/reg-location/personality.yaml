@@ -1,6 +1,5 @@
 participantId: reg-location
 displayName: REG-LOCATION - Functional Location Registry
-schema: reg_location
 sourceId: REG-LOCATION
 sourceOwnerId: ACME-OPERATIONS
 logicalId: urn:oiie-sandbox:reg-location

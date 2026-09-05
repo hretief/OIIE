@@ -12,8 +12,6 @@ namespace Oiie.Sandbox.Api.Providers;
 /// </summary>
 public sealed class ProviderEngSource(EngProviderClient client) : IEngSource
 {
-    public bool IsProviderBacked => true;
-
     public async Task<IReadOnlyList<TwinView>> ListTwinsAsync(CancellationToken ct)
     {
         var twins = await client.GetITwinsAsync(ct);
@@ -386,12 +384,6 @@ public sealed class ProviderRegLocationSource(
     RegLocationProviderClient client,
     ILogger<ProviderRegLocationSource> logger) : IRegLocationSource
 {
-    public bool IsProviderBacked => true;
-
-    // The registry defines a Rejected state but exposes no route that reaches
-    // it, so this source cannot honour a refusal. Reported rather than faked.
-    public bool CanReject => false;
-
     public async Task<IReadOnlyList<StewardshipView>> GetQueueAsync(
         string? twin, bool includeDecided, CancellationToken ct)
     {

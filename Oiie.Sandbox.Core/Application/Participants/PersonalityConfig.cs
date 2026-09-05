@@ -11,9 +11,6 @@ public sealed class PersonalityConfig
 
     public string DisplayName { get; set; } = string.Empty;
 
-    /// <summary>SQL schema. Defaults to ParticipantId with hyphens replaced.</summary>
-    public string? Schema { get; set; }
-
     /// <summary>CIR Entry.SourceID for objects this participant owns.</summary>
     public string SourceId { get; set; } = string.Empty;
 
@@ -36,9 +33,6 @@ public sealed class PersonalityConfig
     public IsbmCredentials Isbm { get; set; } = new();
 
     public CirSettings Cir { get; set; } = new();
-
-    public string ResolvedSchema =>
-        Schema ?? ParticipantId.Replace('-', '_');
 }
 
 public sealed class ChannelBinding

@@ -1,5 +1,3 @@
-using SimHost.Application.Classification;
-
 namespace SimHost.Application.Participants;
 
 /// <summary>
@@ -12,38 +10,11 @@ public sealed class ParticipantContext
     public ParticipantContext(PersonalityConfig config)
     {
         Config = config;
-        ClassificationSource = new InMemoryClassificationSource([], [], [], []);
-        Resolver = new ClassificationResolver(ClassificationSource);
-        Binder = new ClassBinder(ClassificationSource);
-        Ingestor = new PropertyIngestor(ClassificationSource);
     }
 
     public PersonalityConfig Config { get; }
 
     public string ParticipantId => Config.ParticipantId;
-
-    public string Schema => Config.ResolvedSchema;
-
-    public IClassificationSource ClassificationSource { get; private set; }
-
-    public ClassificationResolver Resolver { get; private set; }
-
-    public ClassBinder Binder { get; private set; }
-
-    public PropertyIngestor Ingestor { get; private set; }
-
-    /// <summary>
-    /// Rebuilt when definitions change — including when they arrive over the bus
-    /// from the RDL participant, which is what clears unmapped chips without any
-    /// data being re-sent.
-    /// </summary>
-    public void RefreshClassification(IClassificationSource source)
-    {
-        ClassificationSource = source;
-        Resolver = new ClassificationResolver(source);
-        Binder = new ClassBinder(source);
-        Ingestor = new PropertyIngestor(source);
-    }
 }
 
 public sealed class ParticipantRegistry

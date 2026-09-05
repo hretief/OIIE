@@ -20,8 +20,13 @@
     <Content Include="..\Oiie.Sandbox.Core\PersonalityPacks\**\*.yaml"
              Link="PersonalityPacks\%(RecursiveDir)%(Filename)%(Extension)"
              CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\Oiie.Sandbox.Core\Scenarios\**\*.yaml"
-             Link="Scenarios\%(RecursiveDir)%(Filename)%(Extension)"
+    <!--
+      Channel topology. Deployed as content rather than embedded precisely so it
+      can be edited on the App Service: adding a participant or a scenario is a
+      file change and a provisioning run, never a rebuild of the solution.
+    -->
+    <Content Include="..\Oiie.Sandbox.Core\Topology\**\*.yaml"
+             Link="Topology\%(RecursiveDir)%(Filename)%(Extension)"
              CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

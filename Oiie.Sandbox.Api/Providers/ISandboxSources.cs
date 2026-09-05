@@ -148,13 +148,6 @@ public sealed record PromotionOutcome(
 /// </summary>
 public interface IEngSource
 {
-    /// <summary>
-    /// True when this is reading the real provider apps. Reported to the UI so
-    /// an operator can tell whether they are looking at a customer system or at
-    /// the sandbox's own rehearsal of one.
-    /// </summary>
-    bool IsProviderBacked { get; }
-
     Task<IReadOnlyList<TwinView>> ListTwinsAsync(CancellationToken ct);
 
     Task<IReadOnlyList<SegmentView>> ListSegmentsAsync(Guid twinId, CancellationToken ct);
@@ -194,9 +187,6 @@ public interface IEngSource
 /// </summary>
 public interface IRegLocationSource
 {
-    /// <inheritdoc cref="IEngSource.IsProviderBacked"/>
-    bool IsProviderBacked { get; }
-
     /// <summary>
     /// The steward's queue.
     /// </summary>
@@ -214,13 +204,4 @@ public interface IRegLocationSource
     /// The rows to approve, or null for the whole queue.
     /// </param>
     Task<int> ApproveAsync(IReadOnlyCollection<long>? ids, CancellationToken ct);
-
-    /// <summary>
-    /// Whether this source can refuse a proposal.
-    ///
-    /// False when provider-backed: REG-LOCATION defines a Rejected state but
-    /// exposes no route that reaches it. The endpoint reports that rather than
-    /// silently accepting a request it cannot honour.
-    /// </summary>
-    bool CanReject { get; }
 }

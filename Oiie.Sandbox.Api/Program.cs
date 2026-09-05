@@ -4,10 +4,8 @@ using Oiie.Sandbox.Api.Middleware;
 using Oiie.Sandbox.Api.Providers;
 using Oiie.Sandbox.Api.Services;
 using SimHost.Application;
-using SimHost.Application.Classification;
 using SimHost.Application.Participants;
 using SimHost.Infrastructure.Isbm;
-using SimHost.Infrastructure.Sql;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -63,18 +61,42 @@ builder.Services.AddScoped<IsbmChannelProvisioner>();
 
 // --- Provider read-through -------------------------------------------------
 //
-// The ENG and REG-LOCATION panels read the deployed customer-system emulators
-// rather than the sandbox's own participants, when those apps are configured.
+// The ENG and REG-LOCATION panels read the deployed customer-system emulators.
+// There is no sandbox-backed alternative any more: the sandbox does not hold
+// participant state, so the provider apps are the only place the panels' data
+// exists.
 //
 // A backend-for-frontend rather than letting the React app call them directly:
 // the provider apps authenticate with a function key, and a key in a browser
 // bundle is a key anyone with devtools can lift and replay against a customer
 // system. Holding it here keeps the app same-origin and the key server-side.
 //
-// Absent configuration falls back to the sandbox participants, so a fresh clone
-// with no Azure access still runs every panel.
+// Missing configuration fails startup rather than degrading. A host that boots
+// without providers can only serve panels that error on every read, and doing
+// that quietly turns a configuration mistake into a support call about missing
+// data.
 var providerOptions = builder.Configuration
     .GetSection(ProviderOptions.SectionName).Get<ProviderOptions>() ?? new ProviderOptions();
+
+var unconfigured = new List<string>();
+
+if (!providerOptions.Eng.IsConfigured)
+{
+    unconfigured.Add($"{ProviderOptions.SectionName}:Eng");
+}
+
+if (!providerOptions.RegLocation.IsConfigured)
+{
+    unconfigured.Add($"{ProviderOptions.SectionName}:RegLocation");
+}
+
+if (unconfigured.Count > 0)
+{
+    throw new InvalidOperationException(
+        "The sandbox reads all participant state from the provider apps, so they must "
+        + "be configured before it can start. Missing BaseUrl or Key for: "
+        + string.Join(", ", unconfigured) + ".");
+}
 
 builder.Services.AddHttpClient<EngProviderClient>((sp, http) =>
     ConfigureProvider(http, providerOptions.Eng));
@@ -82,34 +104,11 @@ builder.Services.AddHttpClient<EngProviderClient>((sp, http) =>
 builder.Services.AddHttpClient<RegLocationProviderClient>((sp, http) =>
     ConfigureProvider(http, providerOptions.RegLocation));
 
-if (providerOptions.Eng.IsConfigured)
-{
-    builder.Services.AddScoped<IEngSource, ProviderEngSource>();
-}
-else
-{
-    builder.Services.AddScoped<IEngSource, SandboxEngSource>();
-}
-
-if (providerOptions.RegLocation.IsConfigured)
-{
-    builder.Services.AddScoped<IRegLocationSource, ProviderRegLocationSource>();
-}
-else
-{
-    builder.Services.AddScoped<IRegLocationSource, SandboxRegLocationSource>();
-}
+builder.Services.AddScoped<IEngSource, ProviderEngSource>();
+builder.Services.AddScoped<IRegLocationSource, ProviderRegLocationSource>();
 
 static void ConfigureProvider(HttpClient http, ProviderEndpointOptions options)
 {
-    if (!options.IsConfigured)
-    {
-        // Registered anyway so the typed client can always be resolved, but
-        // left without a base address: nothing will inject it, because the
-        // sandbox-backed source is the one in the container.
-        return;
-    }
-
     // Trailing slash matters. Without it, a relative route replaces the last
     // path segment and /api is silently dropped from every call.
     var baseUrl = options.BaseUrl!.TrimEnd('/') + "/";
@@ -241,41 +240,8 @@ app.MapFallback(async context =>
     await context.Response.SendFileAsync(shell);
 });
 
-if (SandboxCapabilities.IsIsbmConfigured(app.Services.GetRequiredService<ParticipantRegistry>()))
-{
-    var accessor = app.Services.GetRequiredService<IsbmClientAccessor>();
-    accessor.Manager = app.Services.GetRequiredService<IsbmSessionManager>();
-}
-
 using (var scope = app.Services.CreateScope())
 {
-    // The orchestration tables are not created by any participant's reset, so without
-    // this the first scenario run fails on an invalid object name rather than on
-    // anything to do with the scenario.
-    try
-    {
-        await scope.ServiceProvider
-            .GetRequiredService<ISandboxSchemaInitializer>().EnsureTablesAsync();
-    }
-    catch (Exception ex)
-    {
-        app.Logger.LogWarning(ex,
-            "Could not ensure the scenario orchestration tables; scenario runs will fail " +
-            "until the sandbox schema is reachable.");
-    }
-
-    // Without this, a restart leaves every participant with an empty snapshot and
-    // classification silently stops working until something reseeds.
-    try
-    {
-        await scope.ServiceProvider.GetRequiredService<ClassificationRefresher>().RefreshAllAsync();
-    }
-    catch (Exception ex)
-    {
-        app.Logger.LogWarning(ex,
-            "Could not load classification at startup; run POST /admin/schema/seed.");
-    }
-
     // Channels are provisioned here rather than assumed to exist.
     //
     // Without this, a deployment whose channels were never created fails at the

@@ -2,22 +2,12 @@ using Azure.Core;
 using Azure.Storage.Blobs;
 using Oiie.Ccom;
 using Oiie.Isbm.Client;
-using SimHost.Application.Bods;
-using SimHost.Application.Cir;
-using SimHost.Application.Classification;
 using SimHost.Application.Identity;
-using SimHost.Application.Inbox;
-using SimHost.Application.Outbox;
 using SimHost.Application.Participants;
-using SimHost.Application.Scenarios;
+using SimHost.Application.Topology;
 using SimHost.Domain.Common;
 using SimHost.Infrastructure.Blob;
 using SimHost.Infrastructure.Isbm;
-using SimHost.Infrastructure.Sql;
-using SimHost.Personalities.Eng;
-using SimHost.Personalities.Mms;
-using SimHost.Personalities.Cms;
-using SimHost.Personalities.RegLocation;
 
 namespace SimHost.Application;
 
@@ -54,8 +44,8 @@ public static class SandboxCoreRegistration
     }
 
     /// <summary>
-    /// Registers the whole sandbox engine: participants, infrastructure, the scenario
-    /// vocabularies and every personality's services.
+    /// Registers the whole sandbox engine: participants, infrastructure and every
+    /// personality's services.
     /// </summary>
     /// <remarks>
     /// Deliberately excluded, because they are host decisions rather than engine ones:
@@ -71,16 +61,18 @@ public static class SandboxCoreRegistration
         var personalities = LoadPersonalities(configuration, environment);
         services.AddSingleton(new ParticipantRegistry(personalities));
 
-        // --- Infrastructure ----------------------------------------------------
-        services.AddSingleton<IParticipantConnectionStringProvider,
-            KeyVaultConnectionStringProvider>();
-        services.AddSingleton<IParticipantDbContextFactory, ParticipantDbContextFactory>();
-        services.AddSingleton<IParticipantSchemaInitializer, ParticipantSchemaInitializer>();
+        // --- Topology ----------------------------------------------------------
+        // Which participant publishes to which channel, per scenario. Separate
+        // from the personality packs because it is a statement about the system
+        // rather than about any one participant: a channel has two ends, and
+        // declaring each end in its own file is what let them drift apart.
+        //
+        // Loaded from content like everything else here, so a new scenario or
+        // participant is a file drop and a provisioning run. Nothing in this
+        // graph names a scenario, which is what keeps that true.
+        services.AddSingleton(new TopologyRegistry(LoadTopology(configuration, environment)));
 
-        // Scenario orchestration state, in the shared sandbox schema rather than any one
-        // participant's.
-        services.AddSingleton<ISandboxDbContextFactory, SandboxDbContextFactory>();
-        services.AddSingleton<ISandboxSchemaInitializer, SandboxSchemaInitializer>();
+        // --- Infrastructure ----------------------------------------------------
 
         // Storage and ISBM are optional at startup so the database work can proceed before
         // either is wired. Each is registered only when configured, and the outbox — which
@@ -113,13 +105,6 @@ public static class SandboxCoreRegistration
         {
             services.AddSingleton<IsbmClientAccessor>();
             services.AddSingleton<IIsbmClientAccessor>(sp => sp.GetRequiredService<IsbmClientAccessor>());
-            services.AddSingleton<IIsbmSessionStoreAccessor>(sp => sp.GetRequiredService<IsbmClientAccessor>());
-
-            // Session management is a service, not a pump: SandboxResetService closes
-            // sessions before dropping tables, and it runs in both hosts. Only the
-            // hosted pumps that *drain* those sessions are host-exclusive.
-            services.AddSingleton<IsbmSessionManager>();
-            services.AddSingleton<InboxTelemetry>();
         }
 
         // --- BOD ---------------------------------------------------------------
@@ -133,7 +118,6 @@ public static class SandboxCoreRegistration
         });
 
         // --- Application services ----------------------------------------------
-        services.AddSingleton<DispatcherControl>();
 
         // Where the admin API lives. Only meaningful for hosts that are not the API
         // themselves, which since the split means the operator UI.
@@ -146,118 +130,14 @@ public static class SandboxCoreRegistration
         // participants should need.
         services.AddSingleton<ITagIdentityService, EmulatedTagIdentityService>();
 
-        // Registered unconditionally: the inbox pump reads the current run from it, and a
-        // null run id is the correct answer outside a scenario.
-        services.AddSingleton<ScenarioRunContext>();
-
-        // The action vocabulary. Each action wraps a service the admin endpoints already
-        // call, so a scenario drives the participants the way an operator would.
-        services.AddSingleton<IScenarioAction, CreateTagAction>();
-        services.AddSingleton<IScenarioAction, RelateTagsAction>();
-        services.AddSingleton<IScenarioAction, PublishRelationshipsAction>();
-        services.AddSingleton<IScenarioAction, PromoteNamedVersionAction>();
-        services.AddSingleton<IScenarioAction, ApproveStewardshipAction>();
-        services.AddSingleton<IScenarioAction, RegisterEquipmentAction>();
-        services.AddSingleton<IScenarioAction, RaiseWorkOrderAction>();
-        services.AddSingleton<IScenarioAction, CompleteWorkOrderAction>();
-        services.AddSingleton<IScenarioAction, SignOffWorkOrderAction>();
-        services.AddSingleton<IScenarioAction, RegisterCirAction>();
-        services.AddSingleton<IScenarioAction, ResolveIdentityAction>();
-        services.AddSingleton<ScenarioActionRegistry>();
-
-        // The assertion vocabulary (spec §11.2). Phase 1 covers what uc01 needs; the
-        // remaining names in the table are added as the scenarios that use them arrive.
-        services.AddSingleton<IScenarioAssertion, MessageReceivedAssertion>();
-        services.AddSingleton<IScenarioAssertion, MessageNotReceivedAssertion>();
-        services.AddSingleton<IScenarioAssertion, BodValidAssertion>();
-        services.AddSingleton<IScenarioAssertion, StoreContainsAssertion>();
-        services.AddSingleton<IScenarioAssertion, StoreNotContainsAssertion>();
-        services.AddSingleton<IScenarioAssertion, CirEquivalentAssertion>();
-        services.AddSingleton<IScenarioAssertion, CirRegisteredAssertion>();
-        services.AddSingleton<IScenarioAssertion, IdentityResolvedAssertion>();
-        services.AddSingleton<IScenarioAssertion, OutboxStateAssertion>();
-        services.AddSingleton<IScenarioAssertion, PendingWorkAssertion>();
-        services.AddSingleton<ScenarioAssertionRegistry>();
-
-        services.AddSingleton<ScenarioLoader>();
-        services.AddSingleton<ScenarioCatalog>();
-        services.AddSingleton<ScenarioRunner>();
-
-        // Read-side services for the run-detail UI. Singletons like the rest of this group:
-        // both create their own short-lived DbContexts per call rather than holding one, so
-        // there is no scoped state to respect.
-        services.AddSingleton<IdentityLineageService>();
-        services.AddSingleton<RunTimelineService>();
-        services.AddSingleton<MessageTransformService>();
-        services.AddSingleton<RunDataService>();
-        services.AddSingleton<ParticipantStoreBrowser>();
         services.AddSingleton<SandboxResetService>();
-        services.AddSingleton<ScenarioLauncher>();
 
-        services.AddSingleton<CcomAttributeMapperFactory>();
-        services.AddSingleton<CirTelemetry>();
-        services.AddSingleton<CirClient>();
-        services.AddSingleton<CirRegistrationService>();
-        services.AddSingleton<CmsContextResolver>();
-        services.AddSingleton<MmsContextResolver>();
-        services.AddSingleton<MmsInventoryWriter>();
-        services.AddSingleton<ClassFixtureLoader>();
-        services.AddSingleton<ClassificationRefresher>();
-
-        services.AddSingleton<IBodBuilder, SyncSegmentsBuilder>();
-        services.AddSingleton<IBodBuilder, SyncSegmentConnectionsBuilder>();
-        services.AddSingleton<EngService>();
-
-        services.AddSingleton<IBodBuilder, RegLocationSegmentsBuilder>();
-        services.AddSingleton<IBodBuilder, RegLocationConnectionsBuilder>();
-        services.AddSingleton<IBodHandler, SyncSegmentsHandler>();
-        services.AddSingleton<IBodHandler, SyncSegmentConnectionsHandler>();
-        services.AddSingleton<RegLocationService>();
-
-        services.AddSingleton<IBodHandler, MmsSegmentsHandler>();
-        services.AddSingleton<IBodHandler, MmsSegmentConnectionsHandler>();
-
-        // OIIE Scenario 11. MMS publishes asset install/removal events for the first time —
-        // through phase 1 it only consumed — and CMS is the "O&M Systems" actor
-        // that receives them.
-        services.AddSingleton<IBodBuilder, MmsAssetSegmentEventsBuilder>();
-        services.AddSingleton<MmsWorkOrderService>();
-        services.AddSingleton<IBodHandler, CmsAssetSegmentEventsHandler>();
-
-        // CMS receives the same approved segments MMS does, and turns each into an
-        // asset placeholder rather than a functional location — a condition
-        // monitoring system monitors assets, not design artefacts.
-        services.AddSingleton<IBodHandler, CmsSegmentsHandler>();
-
-        return services;
-    }
-
-    /// <summary>
-    /// Adds the background pumps that move messages in and out over ISBM.
-    /// </summary>
-    /// <remarks>
-    /// Kept separate from <see cref="AddSandboxCore"/> so a host can compose the engine
-    /// without also becoming a message mover. Two processes both draining the same ISBM
-    /// sessions would settle each other's messages and make delivery nondeterministic,
-    /// so exactly one host — the API — runs these.
-    /// </remarks>
-    public static IServiceCollection AddSandboxMessagePumps(this IServiceCollection services)
-    {
-        // Reuse the registry AddSandboxCore already built rather than re-reading every
-        // personality.yaml from disk. Must be called after AddSandboxCore.
-        var registry = services
-            .FirstOrDefault(d => d.ServiceType == typeof(ParticipantRegistry))?
-            .ImplementationInstance as ParticipantRegistry
-            ?? throw new InvalidOperationException(
-                $"{nameof(AddSandboxMessagePumps)} must be called after {nameof(AddSandboxCore)}.");
-
-        var isbmConfigured = SandboxCapabilities.IsIsbmConfigured(registry);
-
-        if (isbmConfigured)
-        {
-            services.AddHostedService<InboxPump>();
-            services.AddHostedService<OutboxDispatcher>();
-        }
+        // No participant personalities and no BOD builders or handlers are
+        // registered here. Every participant is a separate deployable -- an
+        // engine paired with a provider -- holding its own store and doing its
+        // own ISBM and CIR work. Registering a builder per participant in this
+        // container is what made adding one a recompile, which is the whole
+        // thing the golden rule forbids.
 
         return services;
     }
@@ -269,6 +149,15 @@ public static class SandboxCoreRegistration
             configuration["Sandbox:PersonalitiesPath"], environment, "PersonalityPacks");
 
         return PersonalityLoader.LoadAll(personalitiesRoot);
+    }
+
+    private static IReadOnlyList<TopologyConfig> LoadTopology(
+        IConfiguration configuration, IHostEnvironment environment)
+    {
+        var topologyRoot = ResolveContentPath(
+            configuration["Sandbox:TopologyPath"], environment, "Topology");
+
+        return TopologyLoader.LoadAll(topologyRoot);
     }
 
     /// <summary>

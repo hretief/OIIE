@@ -1,6 +1,5 @@
 participantId: eng
 displayName: ENG - Engineering Design
-schema: eng
 sourceId: ENG
 sourceOwnerId: ACME-ENGINEERING
 logicalId: urn:oiie-sandbox:eng
