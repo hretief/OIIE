@@ -13,9 +13,42 @@
 
 const BASE = (import.meta.env.VITE_SANDBOX_API ?? '').replace(/\/$/, '')
 
-// Deployed sandboxes set Sandbox:AdminKey, and /admin/* is rejected without it.
-// Empty locally, where the endpoints are open.
-const ADMIN_KEY = import.meta.env.VITE_SANDBOX_ADMIN_KEY ?? ''
+// Deployed sandboxes set Sandbox:AdminKey, and the guarded /admin routes are
+// rejected without it.
+//
+// Supplied at runtime and held in sessionStorage rather than read from
+// import.meta.env at build time. Vite inlines every VITE_-prefixed variable into
+// the bundle, and this bundle is served from the sandbox's own public wwwroot --
+// so a build-time key is a downloadable key, which defeats the reason the app is
+// hosted same-origin in the first place. It also unlocks /admin/reset and
+// channel deletion, which the middleware's exemption list deliberately withholds
+// from anonymous callers.
+//
+// VITE_SANDBOX_ADMIN_KEY is still honoured as a fallback so that local
+// development, where the key is usually absent entirely, keeps working unchanged.
+const ADMIN_KEY_STORAGE = 'oiie.sandbox.admin_key'
+
+/** The key currently in effect, if any. */
+export function adminKey(): string {
+  try {
+    const stored = sessionStorage.getItem(ADMIN_KEY_STORAGE)
+    if (stored) return stored
+  } catch {
+    // sessionStorage unavailable (private mode, blocked). Fall through.
+  }
+
+  return import.meta.env.VITE_SANDBOX_ADMIN_KEY ?? ''
+}
+
+/** Remember a key for this tab. Cleared when the tab closes. */
+export function setAdminKey(key: string): void {
+  try {
+    if (key) sessionStorage.setItem(ADMIN_KEY_STORAGE, key)
+    else sessionStorage.removeItem(ADMIN_KEY_STORAGE)
+  } catch {
+    // Not fatal: the call below will simply be rejected and prompt again.
+  }
+}
 
 /** A digital twin: the plant a design belongs to. */
 export interface ITwin {
@@ -64,15 +97,6 @@ export interface TagList {
   iTwinId: string
   count: number
   tags: Tag[]
-  /**
-   * Whether these came from the deployed ENG app rather than the sandbox's own
-   * rehearsal of it.
-   *
-   * Determines which class catalog can be offered when authoring: only ENG's
-   * own classes resolve to an identifier the deployed app will accept, and only
-   * the sandbox holds the reference data the degradation demo depends on.
-   */
-  providerBacked?: boolean
 }
 
 export interface NewTag {
@@ -165,6 +189,29 @@ export class SandboxError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await send(path, init)
+
+  // A 401 means this route is guarded and the key we hold is absent or wrong.
+  // Prompting here rather than at each call site means every guarded route gets
+  // the same treatment, including the ones that are only reachable from a button
+  // press deep in the UI.
+  //
+  // Retried once. A second 401 is a wrong key rather than a missing one, and
+  // looping would trap the user in a prompt they cannot dismiss.
+  if (response.status === 401 && !init?.signal?.aborted) {
+    const supplied = await promptForAdminKey()
+
+    if (supplied) {
+      setAdminKey(supplied)
+      const retried = await send(path, init)
+      return await unwrap<T>(retried)
+    }
+  }
+
+  return await unwrap<T>(response)
+}
+
+async function send(path: string, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers)
   headers.set('Accept', 'application/json')
 
@@ -172,14 +219,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers.set('Content-Type', 'application/json')
   }
 
-  if (ADMIN_KEY) {
-    headers.set('x-sandbox-admin-key', ADMIN_KEY)
+  const key = adminKey()
+
+  if (key) {
+    headers.set('x-sandbox-admin-key', key)
   }
 
-  let response: Response
-
   try {
-    response = await fetch(`${BASE}${path}`, { ...init, headers })
+    return await fetch(`${BASE}${path}`, { ...init, headers })
   } catch {
     // fetch only rejects when the request never completed: the API is not
     // running, or the dev proxy could not reach it. Worth saying plainly,
@@ -190,13 +237,41 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       0,
     )
   }
+}
 
+async function unwrap<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const failure = await describeFailure(response)
     throw new SandboxError(failure.message, response.status, failure.body)
   }
 
   return (await response.json()) as T
+}
+
+/**
+ * Ask for the admin key.
+ *
+ * Deliberately `window.prompt`: this is a sandbox operator action, not a user
+ * journey, and a bespoke modal would need routing through App state to reach
+ * every call site. Replace it if the key ever needs to be entered often enough
+ * for the ceremony to matter.
+ *
+ * Overridable so a host can substitute its own dialog without this module
+ * knowing about the UI.
+ */
+let askForKey: () => string | null = () =>
+  window.prompt(
+    'This action needs the sandbox admin key.\n\n' +
+    'az keyvault secret show --vault-name mndot --name sandbox-admin-key-dev --query value -o tsv',
+  )
+
+export function setAdminKeyPrompt(prompt: () => string | null): void {
+  askForKey = prompt
+}
+
+async function promptForAdminKey(): Promise<string | null> {
+  const supplied = askForKey()
+  return supplied ? supplied.trim() : null
 }
 
 /**
@@ -423,47 +498,36 @@ function isPromotionResult(body: unknown): body is PromotionResult {
 // ─── Reference data ──────────────────────────────────────────────────────────
 
 /**
- * A reference-data class a participant can bind.
+ * A class an ENG element can be created on.
  *
- * Each repository holds its own model, mapped to CCOM as the common one, so this
- * differs per participant: ENG holds the full library including leaf classes,
- * REG-LOCATION deliberately holds less. Choosing from what a participant
- * actually holds is what stops a segment arriving at the registry unbound.
+ * ENG's EC metadata, flattened. There is no taxonomy chain and no aspect
+ * concept here: ENG models inheritance between classes but the catalog does not
+ * walk it, and ClassModifier controls instantiability rather than whether a
+ * class applies alongside another. The fields that used to describe those
+ * things came from the Sandbox's own reference-data library, which has been
+ * removed -- each participant now provisions its own classes in its own store.
  */
 export interface ClassDefinition {
+  /**
+   * The fully qualified EC class name, e.g. 'ENG.Streetlight'.
+   *
+   * This is the key because it is what round trips: an element read back
+   * reports FullyQualifiedECClassName, and a picker whose value did not match
+   * it would show a stored class as absent from reference data.
+   */
   key: string
   name: string
-  kind: 'Taxonomy' | 'Aspect'
-  appliesTo: string
-  /** Root first, e.g. ['rdl:Equipment', 'rdl:Instrument']. */
-  chain: string[]
-  /** Aspects apply alongside the taxonomy rather than instead of it. */
-  isAspect: boolean
-}
-
-/** The classes a participant can bind. */
-export function listClasses(
-  participantId: string,
-  signal?: AbortSignal,
-): Promise<ClassDefinition[]> {
-  return request<ClassDefinition[]>(
-    `/admin/${encodeURIComponent(participantId)}/class-catalog`,
-    { signal },
-  )
+  /** The id the write path needs, so the name need not be resolved twice. */
+  ecClassId: number
 }
 
 /**
- * The classes the deployed ENG app can actually store an element against.
+ * The classes the deployed ENG app can store an element against.
  *
- * Deliberately a different list from listClasses('eng'). That one is the
- * sandbox's own reference data (rdl:*), which carries properties and narrowing
- * rules and drives the degraded-binding demo. This one is ENG's EC metadata
- * (ENG.*), and its keys are the only ones a write to the deployed app will
- * resolve.
- *
- * Both are needed, and neither replaces the other: sending an rdl:* key to the
- * deployed ENG app is refused, and the sandbox cannot demonstrate asymmetric
- * understanding using a vocabulary every participant shares.
+ * ENG's EC metadata (ENG.*), whose keys are the only ones a write to the
+ * deployed app will resolve. The Sandbox used to serve a second, parallel
+ * catalog from its own reference data (rdl:*), but that library had no writer
+ * once BOD handling moved into the engines and has been removed.
  */
 export function listEngElementClasses(
   signal?: AbortSignal,
@@ -506,31 +570,6 @@ export interface StewardshipItem {
   contextIdInSource: string | null
 }
 
-/**
- * A location in the registry's authoritative model.
- *
- * The registry deliberately does not adopt the source's identifier: an ENG
- * segment becomes LOC-000412 here, which is precisely the identity problem the
- * CIR exists to solve.
- */
-export interface RegLocation {
-  id: number
-  /** The registry's own code, e.g. LOC-000412. */
-  locationCode: string
-  name: string | null
-  description: string | null
-  /** As bound locally, which may be an ancestor of what the sender sent. */
-  classKey: string | null
-  /** Set when the sender classified more specifically than the registry understands. */
-  requestedClassKey: string | null
-  area: string | null
-  /** Where it came from, retained so provenance survives the message archive. */
-  sourceParticipant: string
-  sourceIdentifier: string
-  createdAt: string
-  updatedAt: string
-}
-
 export interface ApprovalResult {
   approved: number
   rejected: number
@@ -570,15 +609,6 @@ export function listStewardship(
   return request<StewardshipItem[]>(`/admin/reg-location/stewardship${query}`, { signal })
 }
 
-/** The registry's authoritative locations, scoped to one iTwin. */
-export function listLocations(
-  iTwinId?: string,
-  signal?: AbortSignal,
-): Promise<RegLocation[]> {
-  const query = iTwinId ? `?twin=${encodeURIComponent(iTwinId)}` : ''
-  return request<RegLocation[]>(`/admin/reg-location/locations${query}`, { signal })
-}
-
 /**
  * Approve proposals, either a chosen subset or the whole queue.
  *
@@ -592,99 +622,6 @@ export function approveStewardship(proposalIds?: number[]): Promise<ApprovalResu
     method: 'POST',
     body: JSON.stringify({ proposalIds: proposalIds ?? null }),
   })
-}
-
-/**
- * One MMS light system, as LIGHT_SYSTEM_INVENTORY holds it.
- *
- * Each coded column carries both its raw id and the name resolved from MMS's
- * own reference tables. The pair matters: a null name next to a non-null id is
- * a dangling reference, which reads very differently from a null id.
- */
-export interface MmsLocation {
-  lightSystemId: number
-  lightSystemName: string
-  classCodeId: number
-  classCode: string | null
-  statusId: number | null
-  status: string | null
-  ownerId: number | null
-  owner: string
-}
-
-/**
- * What MMS holds, scoped to one iTwin.
- *
- * The twin is resolved to an OWNER_ID through ws-CIR server-side rather than
- * matched against a column, because LIGHT_SYSTEM_INVENTORY has no iTwin column
- * and cannot be given one.
- *
- * resolved=false is not an error: it means the registry knows no MMS owner for
- * that twin. The reason explains which, and rows is then empty rather than
- * unfiltered -- returning everything would show one district's inventory to
- * another.
- */
-export interface MmsInventory {
-  twin: string | null
-  resolved: boolean
-  reason: string | null
-  ownerId: number | null
-  ownerName: string | null
-  locations: MmsLocation[]
-}
-
-/** MMS's own inventory for a twin. Omitting the twin returns every row. */
-export function listMmsLocations(
-  iTwinId?: string,
-  signal?: AbortSignal,
-): Promise<MmsInventory> {
-  const query = iTwinId ? `?twin=${encodeURIComponent(iTwinId)}` : ''
-  return request<MmsInventory>(`/admin/mms/locations${query}`, { signal })
-}
-
-/**
- * One row of CMS's own ASSET table.
- *
- * placeholder is derived server-side rather than stored: an asset with neither a
- * serial number nor a commission date is still an identification-only stub,
- * awaiting the nameplate detail that arrives later from CONSTRUCT.
- */
-export interface CmsAsset {
-  assetId: number
-  assetTag: string
-  assetName: string | null
-  description: string | null
-  serialNumber: string | null
-  manufacturer: string | null
-  model: string | null
-  commissionDate: string | null
-  operationalStatus: string | null
-  criticalityLevel: string | null
-  assetClassId: number | null
-  siteId: number
-  createdAtUtc: string
-  updatedAtUtc: string | null
-  placeholder: boolean
-}
-
-export interface CmsAssetList {
-  records: CmsAsset[]
-  scopedByTwin: boolean
-  unresolvedContext?: string | null
-  detail?: string | null
-}
-
-/**
- * CMS's own ASSET table. Omitting the twin returns every row, which is what the
- * CMS panel wants: the point is to show what CMS actually holds, not what one
- * registry relation happens to make visible.
- */
-export function listCmsAssets(
-  iTwinId?: string,
-  signal?: AbortSignal,
-): Promise<CmsAssetList> {
-  const query = iTwinId ? `?twin=${encodeURIComponent(iTwinId)}` : ''
-  return request<CmsAssetList>(`/admin/cms/customer-assets${query}`, { signal })
 }
 
 // ─── Day zero ────────────────────────────────────────────────────────────────
@@ -716,22 +653,5 @@ export interface DayZeroResult {
  */
 export function resetDayZero(): Promise<DayZeroResult> {
   return request<DayZeroResult>('/admin/reset/day-zero', { method: 'POST' })
-}
-
-/** Registry entries and equivalences asserted by a bootstrap. */
-export interface CirBootstrapResult {
-  related: unknown[]
-}
-
-/**
- * Register the participants with CIR and assert the twin equivalences between
- * them.
- *
- * Separate from the reset because it is the second half of the sequence: a
- * day-zero leaves participants with clean schemas but no shared identity, and
- * nothing cross-participant resolves until this has run.
- */
-export function bootstrapCir(): Promise<CirBootstrapResult> {
-  return request<CirBootstrapResult>('/admin/cir/bootstrap', { method: 'POST' })
 }
 

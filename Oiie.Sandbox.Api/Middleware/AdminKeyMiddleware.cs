@@ -22,10 +22,17 @@ namespace Oiie.Sandbox.Api.Middleware;
 /// which is served from this host and runs in a browser, can display the sandbox
 /// without a key in its bundle. See <see cref="ReadOnlyRoutes"/>.
 ///
-/// TEMPORARY: three workflow writes are also exempt, so the end-to-end workflow
+/// TEMPORARY: a few workflow writes are also exempt, so the end-to-end workflow
 /// can be driven from the browser without a key. See
 /// <see cref="UnauthenticatedWriteRoutes"/>; that list is meant to be deleted when
 /// real sign-in lands.
+///
+/// Both lists are coupled to WorkflowOrchestration/src/api.ts and nothing
+/// enforces it. This gate fails closed, so a route added there and not here is
+/// broken only when someone clicks the button -- and often does not look like a
+/// permission failure, because a fetch that degrades to an empty list renders as
+/// "nothing here" rather than "denied". Adding a call to api.ts means deciding,
+/// here, whether it is exempt or deliberately guarded.
 /// </summary>
 public sealed class AdminKeyMiddleware(RequestDelegate next, IConfiguration configuration, ILogger<AdminKeyMiddleware> logger)
 {
@@ -56,16 +63,20 @@ public sealed class AdminKeyMiddleware(RequestDelegate next, IConfiguration conf
     [
         "/admin/eng/twins",
         "/admin/eng/tags",
+        // The twin's iModels, for the segment form's model picker. Prefix
+        // matching also spans /admin/eng/imodels/sync, but that is a POST and
+        // this branch is GET/HEAD only, so the write stays guarded here.
+        "/admin/eng/imodels",
+        // A candidate federation id for the segment form. Mints a value and
+        // persists nothing -- it answers "what would you have used", so there is
+        // no state to protect and the id is not real until a segment is
+        // submitted carrying it.
+        "/admin/eng/federation-id/suggest",
         // ENG's own EC classes, for the element picker. A separate route from
         // the participant-scoped /class-catalog because it reads the provider
         // rather than the Sandbox's reference data.
         "/admin/eng/element-class-catalog",
         "/admin/reg-location/stewardship",
-        "/admin/reg-location/locations",
-        "/admin/mms/locations",
-        "/admin/cms/customer-assets",
-        "/admin/cms/customer-sites",
-        "/admin/scenarios",
     ];
 
     /// <summary>
@@ -76,7 +87,6 @@ public sealed class AdminKeyMiddleware(RequestDelegate next, IConfiguration conf
     [
         "/class-catalog",
         "/messages",
-        "/outbox",
     ];
 
     /// <summary>
@@ -102,6 +112,17 @@ public sealed class AdminKeyMiddleware(RequestDelegate next, IConfiguration conf
         "/admin/eng/tags",
         "/admin/eng/promote",
         "/admin/reg-location/approve",
+        // Reflects platform iModels into ENG so a segment can be authored
+        // against one. The browser holds the IMS token and the sandbox does not,
+        // so this cannot be done server-side; it is idempotent and additive.
+        "/admin/eng/imodels/sync",
+        // Registers a platform iTwin with ENG so segments have somewhere to
+        // land. Additive, and the sandbox stores no twin of its own.
+        //
+        // Note this one also provisions ISBM channels. That is creation, not the
+        // deletion the exclusions below are about, but it is the most powerful
+        // thing on this list and the first to reconsider when this is tightened.
+        "/admin/eng/itwins/add",
     ];
 
     private readonly string? _key = configuration[SandboxAdminKey.ConfigurationKey];

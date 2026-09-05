@@ -60,8 +60,8 @@ cd deploy/sandbox
 ```
 
 The script verifies the result rather than just reporting a successful upload — the
-last run reported 5 participants, ISBM configured, storage reachable, and 5
-participants connected as their own SQL users. The admin key is reused across
+last run reported 5 participants, ISBM configured, and storage reachable. The admin
+key is reused across
 deployments (`sandbox-admin-key-demo` in the `mndot` vault), so an existing key stays
 valid:
 
@@ -495,13 +495,11 @@ actually crossed the wire, retrieved from the payload store.
 | The stewardship queue looks empty after approving | Expected. The panel defaults to `PROPOSED`; approved rows are only returned for `?state=Approved` or `?state=all` |
 | An approved segment is not visible in CMS | Check the CMS asset register panel, not the monitored-asset view. The segment becomes a placeholder row in `cms.Asset` under a minted `LOC-…` tag, with the segment identifier in `AssetName` |
 | `sc11` reports MMS holds no functional location | Its inline handover did not complete. The scenario provisions the location itself; if that failed, the later steps have nothing to attach to |
-| `/admin/schema/seed` reports `0 class(es)` for every participant | The fixture path resolved somewhere the packs are not. Personality packs live in `Oiie.Sandbox.Core` and are *linked* into each host's build output, so under `dotnet run` they sit beside the assembly rather than under the content root. `SandboxCoreRegistration.ResolveContentPath` tries the content root and then the output directory — anything resolving `Sandbox:PersonalitiesPath` must go through it. Symptom is doubly confusing because the registry loads correctly at startup, so `/admin/eng/class-catalog` returns classes while seeding reports none |
 
 
 ## From cold
 
 ```
-POST /admin/schema/init             create tables
 POST /admin/isbm/channels/ensure    create channels
 ```
 
@@ -509,19 +507,16 @@ Then the session sequence above.
 
 ## After a model change
 
-`/admin/schema/init` short-circuits on a sentinel table and will not add new ones.
-Use `/admin/reset`, or `/admin/schema/reset` if ISBM state is known clean.
+The sandbox owns no database, so a sandbox model change needs nothing here. Each
+participant's tables are created and seeded by that participant's own provider on
+startup, and rebuilt by `/admin/reset/day-zero`, which resets the providers over
+HTTP.
 
-A change that adds a **table or a column** needs `/admin/reset/day-zero`. The other
-resets clear rows within the shape that is already there; only day zero rebuilds the
-shape. Skipping it after a schema change fails at the first query against the new
-column rather than at reset, so the error surfaces a long way from its cause.
-
-The same applies to **indexes**. The composite index backing the outbox idempotency
-guard (DR-011) is absent from any database created before it was added, because
-`/admin/schema/init` short-circuits on the sentinel table. Nothing breaks — the guard
-is a query, not a schema dependency — so this will not announce itself; the lookup
-simply is not index-backed until a day zero runs.
+A change to a **provider's** schema or reference data needs `/admin/reset/day-zero`.
+`/admin/reset` clears channels and rows within the shape that is already there;
+only day zero drops and recreates the provider schemas and re-applies their
+bootstrap. Skipping it after a schema change fails at the first query against the
+new column rather than at reset, so the error surfaces a long way from its cause.
 
 ## iTwins
 
@@ -559,8 +554,6 @@ Only ENG is twin-scoped today. REG-LOCATION, MMS and CMS are not.
 
 | Symptom | Check |
 |---|---|
-| Outbox `state: 3` | `lastError` carries the provider's own fault text, which is usually more precise than anything this side could infer |
-| `Login failed for user 'sb_*'` | Almost always the wrong database, not the wrong password. Contained users exist only inside their own database, so the server reports "no such login". `GET /health/secrets` echoes the effective `Sandbox:Database` |
 | 404 with `{"fault":...}` | Missing channel or session |
 | 404 with no body | No such route on this provider |
 | `DeserializationError` | The provider names the exact property and DTO. Copy member names from a verified route rather than from the specification |
@@ -571,17 +564,21 @@ Only ENG is twin-scoped today. REG-LOCATION, MMS and CMS are not.
 | `NotValidated` | No XSD held for that namespace. `Schemas/ccom` is empty by design |
 | A tag is missing from `/admin/eng/tags` | Almost always the wrong twin, not a lost row. A request naming no twin reads ENG's default, so a tag created under `x-itwin-id` will not appear in it. `GET /admin/eng/twins` lists what exists |
 | Invalid column name `ITwinId` | The schema predates the twin columns. `/admin/reset` will not add them — use `/admin/reset/day-zero` |
-| A participant's **Repository contents** expander reports a table unreadable | A grant, not a UI fault. The browser reads as that participant's own contained user, so it shows exactly what the participant can see. Compare against `provision.ps1` for that schema before assuming the page is broken |
 | An approved location reaches CMS but not MMS | Read the MMS message's `processingStatus` before anything else. **`Rejected`** is a verdict: the iTwin genuinely has no `OWNER_ID` related in ws-CIR, so relate it and resend. **`Failed`** means the registry could not be consulted and nothing was written -- the relation is probably fine and the message should be replayed, not re-sent by the publisher. Confirm with `GET /admin/cir/registry` |
-| A message failed for a reason that has since gone away | `POST /admin/{participantId}/messages/{messageId}/replay` re-runs the stored BOD through its handler. Inbound only; the outbound equivalent is `POST /admin/{participantId}/outbox/retry`. It writes a new message row and leaves the failed one as evidence. Requires blob storage: a `ContentRef` of `unstored:*` means the body was never retained and the endpoint will refuse |
+| `400 invalid redirect_uri` on sign-in | The site's origin is not registered as a redirect URI on the IMS client. Register `<origin>/signin-oidc` exactly, including scheme and path. Renaming the Azure site changes the origin and therefore breaks this |
+| Sign-in succeeds, then CORS on `ims.bentley.com/connect/token` | The origin is missing from the IMS client's **allowed CORS origins**, which is a separate list from the redirect URIs -- registering the redirect URI alone is not enough. The giveaway is `net::ERR_FAILED` reported next to status `200`: IMS answered, but without `Access-Control-Allow-Origin`, so the browser discarded the response. This is fixed only in the IMS client registration; no change to this solution can set that header |
+| `ContainerStartupFailure`, exit code 134, after recovering a Key Vault | `az keyvault recover` restores the secrets but **not** the role assignments on the vault. The app's managed identity silently loses `Key Vault Secrets User`, and because `AddSandboxKeyVault` runs before the host is built, the failure aborts the process rather than surfacing as a request error. Re-grant with `az role assignment create --assignee-object-id <webapp principalId> --assignee-principal-type ServicePrincipal --role "Key Vault Secrets User" --scope <vaultId>`. Restoring your own access is not enough -- check the app identity separately |
+| An app setting change appears to have no effect | The old value is still being served because the worker never restarted successfully. If a restart is crash-looping, the site keeps answering from the last good instance, so a rotated secret can look like it failed to apply when it simply has not loaded. Confirm the instance is actually running before concluding the change was wrong |
+| A UI panel is empty, or an action reports "This action needs the sandbox admin key" | The route is missing from `AdminKeyMiddleware`. It fails closed, so any `/admin` route the unauthenticated UI calls must be listed in `ReadOnlyRoutes` or `UnauthenticatedWriteRoutes`; adding a call to `api.ts` without touching the middleware breaks only at the click. Confirm with `curl -i <origin><route>` -- a 401 with no key, where the browser sends none, is this. Note an empty panel can be the same fault as the error popup: a fetch that degrades to an empty list looks like "nothing here" rather than "denied" |
+| A deploy fails with `RoleAssignmentExists` | A role was granted by hand at a scope Bicep also manages. The template names assignments deterministically, an ad-hoc grant gets a random name, and Azure rejects the pair as duplicates even though the role is right. Delete the ad-hoc assignment named in the error and re-run; `-SkipInfrastructure` gets a code deploy out in the meantime |
 
 ## State that outlives `/admin/reset`
 
 Deliberately not cleared, and worth knowing about:
 
-- **Key Vault secrets.** Rotate with `provision.ps1 -RotatePasswords`, then restart —
-  the configuration provider snapshots at startup, so a running instance keeps the
-  old values.
+- **Key Vault secrets.** ISBM tokens and the admin key are set outside the app.
+  Change one and restart — the configuration provider snapshots at startup, so a
+  running instance keeps the old values.
 - **Blob payload bodies.** Prefixed per environment and expire on a lifecycle rule.
 - **Channels belonging to participants not currently configured.** `/admin/reset`
   only purges channels the loaded personalities bind. `GET /admin/isbm/channels`

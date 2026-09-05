@@ -1421,12 +1421,9 @@ function SegmentForm({ accent, dimBg, busy, error, editing, classes, iModels, iM
             {classKey && !classes.some(c => c.key === classKey) && (
               <option value={classKey}>{classKey} (not in BIC reference data)</option>
             )}
-            {classes.filter(c => !c.isAspect).map(c => (
-              // Indented by depth so the taxonomy is legible: an instrument is a
-              // kind of equipment, and the picker should show that rather than
-              // presenting a flat list of unrelated options.
+            {classes.map(c => (
               <option key={c.key} value={c.key}>
-                {`${'\u00a0\u00a0'.repeat(Math.max(0, c.chain.length - 1))}${c.name}`}
+                {c.name}
               </option>
             ))}
           </select>
@@ -2101,12 +2098,6 @@ function Workspace({ user }: { user: CurrentUser }) {
   // ENG's reference data, offered in the class picker.
   const [engClasses, setEngClasses] = useState<api.ClassDefinition[]>([])
 
-  // Whether the ENG panel is reading the deployed app or the sandbox's own
-  // participant. Recorded because it decides which catalog the picker may
-  // offer: an rdl:* key is meaningless to the deployed ENG app, and offering
-  // one would produce a segment the save refuses.
-  const [engProviderBacked, setEngProviderBacked] = useState(false)
-
   // Published segments are finished work, so the table opens on what is still
   // pending and the filter is there when the rest is wanted.
   const [maturityFilter, setMaturityFilter] = useState<MaturityFilter>('Pending')
@@ -2118,12 +2109,12 @@ function Workspace({ user }: { user: CurrentUser }) {
   function flash(msg: string) { setToast({ msg, accent: p.accent }); setTimeout(() => setToast(null), 2800) }
   function now() { return new Date().toISOString().slice(0, 16).replace('T', ' ') }
 
-  // Restart the demo environment: day-zero reset, then CIR bootstrap.
+  // Restart the demo environment with a day-zero reset.
   //
-  // The two run in sequence because the bootstrap depends on the reset having
-  // finished — it registers participants whose schemas the reset has just
-  // recreated. Running them concurrently would register against tables that are
-  // about to be dropped.
+  // There is no CIR bootstrap step any more. It existed to register the sandbox
+  // MMS and CMS personalities and assert twin equivalences between them, and
+  // those personalities are gone: MMS and CMS are standalone participants that
+  // register themselves with CIR when they ingest.
   //
   // Every panel is refreshed afterwards rather than left to its own effect: the
   // reset invalidates all of them at once, and stale rows from the previous
@@ -2131,10 +2122,7 @@ function Workspace({ user }: { user: CurrentUser }) {
   async function runDayZero() {
     try {
       const reset = await api.resetDayZero()
-      await api.bootstrapCir()
 
-      // Only the sandbox-backed panels are refreshed. MMS and CMS hold seeded
-      // rows that a reset does not invalidate, because nothing wrote them.
       await Promise.all([
         refreshSegments(),
         refreshStewardship(),
@@ -2292,7 +2280,6 @@ function Workspace({ user }: { user: CurrentUser }) {
       const result = await api.listTags(activeTwin.uuid, signal)
       if (signal?.aborted) return
       setEngSegments(result.tags)
-      setEngProviderBacked(result.providerBacked ?? false)
       setEngError(null)
     } catch (err) {
       if (signal?.aborted) return
@@ -2350,11 +2337,18 @@ function Workspace({ user }: { user: CurrentUser }) {
         if (abort.signal.aborted) return
 
         setIModels(known)
-      } catch {
+      } catch (e) {
         // Empty rather than stale. The form refuses to author without a model,
         // so a failed lookup blocks the segment instead of letting it be
         // attributed to a model that could not be confirmed.
-        if (!abort.signal.aborted) setIModels([])
+        //
+        // Reported rather than swallowed: an empty picker and a failed lookup
+        // look identical in the UI, which previously made a 401 here read as
+        // "this twin has no iModels".
+        if (!abort.signal.aborted) {
+          console.error('Could not load the iModels for this iTwin', e)
+          setIModels([])
+        }
       } finally {
         if (!abort.signal.aborted) setIModelsLoading(false)
       }
@@ -2390,30 +2384,20 @@ function Workspace({ user }: { user: CurrentUser }) {
 
   // ── Loading ENG's reference data ─────────────────────────────────────────
   //
-  // Which catalog depends on where segments are actually stored, so this waits
-  // for the segment load to answer that rather than guessing.
-  //
-  // When the deployed ENG app is backing the panel, the picker must offer ENG's
-  // own classes: those are the only keys it can resolve to an identifier, and a
-  // save carrying anything else is refused. When the sandbox is backing it, its
-  // own reference data is correct and richer — it is what makes the degraded
-  // binding demo work at all.
+  // The picker offers ENG's own element classes: those are the only keys it can
+  // resolve to an identifier, and a save carrying anything else is refused.
   //
   // A failure is not surfaced — the picker simply has nothing to offer, which
   // the empty state explains.
   useEffect(() => {
     const abort = new AbortController()
 
-    const load = engProviderBacked
-      ? api.listEngElementClasses(abort.signal)
-      : api.listClasses('eng', abort.signal)
-
-    load
+    api.listEngElementClasses(abort.signal)
       .then(setEngClasses)
       .catch(() => { /* picker renders its own empty state */ })
 
     return () => abort.abort()
-  }, [engProviderBacked])
+  }, [])
 
   // ── Loading the stewardship queue ────────────────────────────────────────
 

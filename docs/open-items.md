@@ -968,3 +968,160 @@ the UI or SyncSites — so whichever option is taken must seed the EC half only.
 The EC-only extract is lines 83-273 of the script.
 
 Applied manually for now.
+
+## Register the deployed origin in the IMS client's allowed CORS origins
+
+Raised 2026-09 while testing sign-in on the deployed sandbox. **Not fixable from
+this repository.**
+
+After `<origin>/signin-oidc` was registered as a redirect URI, sign-in reached
+IMS and came back, but the browser-side token exchange in
+[auth.ts](../WorkflowOrchestration/src/auth.ts) then failed on
+`POST https://ims.bentley.com/connect/token` with no `Access-Control-Allow-Origin`
+header. The signature is `net::ERR_FAILED` reported alongside status `200`: IMS
+answered, the browser discarded the response.
+
+Redirect URIs and allowed CORS origins are **separate lists** on the IMS client
+registration. Registering the first does not populate the second, which is why
+fixing the `invalid redirect_uri` error surfaced this one rather than resolving
+it. `https://acme-api-sandbox-dev.azurewebsites.net` needs adding to the allowed
+CORS origins by someone with access to the Bentley IMS client registration.
+
+Nothing in this solution can set that header — it is emitted by IMS, not by the
+sandbox — so there is no code change that would work around it. Note also that
+renaming the Azure site changes the origin and breaks both lists at once.
+
+## Redeploy the sandbox UI to ship the runtime admin-key bundle
+
+Raised 2026-09 alongside the admin-key rotation. **Done** — recorded because the
+Vite inlining trap is easy to reintroduce.
+
+The admin key was previously set as `VITE_SANDBOX_ADMIN_KEY` in
+`WorkflowOrchestration/.env.local`, and Vite inlines every `VITE_` variable into
+the bundle it builds. Because that bundle is served from the API's own
+`wwwroot`, the key was readable by anyone who loaded the site.
+
+The app now reads the key from `sessionStorage` and prompts for it at runtime,
+`.env.local` no longer sets it, and [deploy.ps1](../deploy/sandbox/deploy.ps1)
+clears the variable for the build and refuses to publish if the key still
+appears in the output. The cleaned bundle has been deployed and the leaked key
+was rotated in `mndot` and in the app settings, so the old value is dead.
+
+Anyone adding a secret to a `VITE_` variable will ship it to the browser again.
+The build guard catches only the admin key, by value.
+
+## Key Vault recovery does not restore role assignments
+
+Raised 2026-09 after `mndot` was soft-deleted during cleanup and recovered.
+**Resolved for the sandbox; recorded because the trap is not specific to it.**
+
+`az keyvault recover` brings back the vault and its secrets but **not** the role
+assignments on it. Every managed identity that read from the vault silently
+loses access, and the vault looks healthy from the portal.
+
+For the sandbox this presented as `ContainerStartupFailure`, exit code 134,
+because `AddSandboxKeyVault` in
+[SandboxCoreRegistration.cs](../Oiie.Sandbox.Core/Application/SandboxCoreRegistration.cs)
+runs against `builder.Configuration` before the host exists — so the failure
+aborts the process rather than surfacing as a failed request. Re-granting
+`Key Vault Secrets User` to the web app's principal fixed it.
+
+Two things worth carrying forward:
+
+- Restoring **your own** access is not enough and actively masks the problem: the
+  CLI starts working while the app is still locked out.
+- While a restart is crash-looping, Azure keeps serving from the last good
+  instance, so a corrected app setting appears not to have applied. Confirm the
+  instance is actually running before concluding a config change was wrong.
+
+The other identities that read `mndot` (the `isbm-*` consumers) have **not** been
+audited. If anything else authenticated to that vault by managed identity, it
+has the same missing assignment and will fail the next time it restarts.
+
+## An ad-hoc role assignment blocks the next full infrastructure deploy
+
+Raised 2026-09 while recovering from the Key Vault deletion. **Blocking, but
+only for `-not $SkipInfrastructure` runs.**
+
+`infra/sandbox/main.bicep` creates the API's `Key Vault Secrets User` grant under
+a deterministic name derived from `guid(keyVault.id, apiApp.id, <roleId>)`. While
+getting the app running again, the same role was granted to the same principal
+from the CLI, which minted assignment `92ae537b-e84b-4479-8949-c129aeebb97a`
+under a random name instead.
+
+Azure treats that as a duplicate, so the Bicep deployment now fails with
+`RoleAssignmentExists` naming that id. The sandbox deploys today only because
+`-SkipInfrastructure` avoids the template.
+
+The fix is to delete the ad-hoc assignment and let Bicep recreate it — the role
+itself is correct, so nothing is broken until someone runs a full deploy. This
+needs `Microsoft.Authorization/roleAssignments/delete`, which the account used in
+this session does not have:
+
+```
+az role assignment delete --ids "<vaultId>/providers/Microsoft.Authorization/roleAssignments/92ae537b-e84b-4479-8949-c129aeebb97a"
+```
+
+The general lesson is that granting a role by hand at a scope Bicep also manages
+converts an idempotent template into a failing one, because the two disagree
+about the assignment's *name* while agreeing about its content.
+
+## Every route the UI calls needs an entry in `AdminKeyMiddleware`
+
+Raised 2026-09 after three separate route failures in one testing session.
+
+`AdminKeyMiddleware` fails closed by design — an unlisted `/admin` route needs
+the key. The Workflow Orchestration app is unauthenticated, so every route it
+calls must appear in `ReadOnlyRoutes` or `UnauthenticatedWriteRoutes`, and
+nothing enforces that. Adding a route to `api.ts` and forgetting the middleware
+is a silent break found only by clicking the button.
+
+Three were missing and have been added: `GET /admin/eng/imodels`,
+`POST /admin/eng/imodels/sync`, and `GET /admin/eng/federation-id/suggest`. An
+audit of `api.ts` found a fourth, `POST /admin/eng/itwins/add`, before it was hit.
+
+Two things make this worse than it sounds:
+
+- **The failure does not look like an auth failure.** The iModels lookup in
+  `App.tsx` caught the 401 and set an empty list, which renders identically to a
+  twin with no iModels. That catch now logs before clearing, but the same shape
+  exists anywhere a fetch failure degrades to empty.
+- **The exemptions are a temporary hole.** `UnauthenticatedWriteRoutes` exists to
+  be deleted when real sign-in arrives, so every addition makes that removal
+  larger. `itwins/add` is the one to look at first: it is additive like the rest,
+  but it also provisions ISBM channels.
+
+Worth a test that walks the routes referenced in `api.ts` and asserts each is
+either exempt or deliberately guarded, so the list cannot drift again. The
+guarded ones are legitimate — `/admin/reset/day-zero` is destructive and should
+prompt — so the test has to encode intent rather than just presence.
+
+## `-SkipInfrastructure` silently disabled the bundle leak guard
+
+Raised 2026-09. **Fixed; recorded because the shape recurs.**
+
+The admin key was resolved inside `deploy.ps1`'s `if (-not $SkipInfrastructure)`
+block, but the guard that greps the built bundle for that key sits further down
+and is written as `if ($adminKey)`. With `-SkipInfrastructure` the variable was
+empty, so the check quietly did nothing — the switch people reach for when infra
+is already in place also turned off the protection added hours earlier.
+
+The lookup now runs unconditionally, before the infrastructure block.
+
+The general defect is a safety check written as `if ($x)` where `$x` is populated
+elsewhere: it degrades to a no-op rather than an error when the value is missing.
+Other guards in these scripts are worth reading with that in mind.
+
+## `/health` returns 404 on the deployed sandbox
+
+Raised 2026-09 while probing the deployed API. **Low confidence, unverified.**
+
+`GET https://acme-api-sandbox-dev.azurewebsites.net/health` returns 404, while
+the deployment's own verification step passes and reports `participants: 4`,
+`isbmConfigured: True`, `storage: True` — so the app is healthy and something
+answers for it.
+
+Most likely the probe used the wrong path and the real endpoint is elsewhere, in
+which case the only thing to fix is the documentation that says `/health`. Worth
+confirming which, since a health path that 404s is the kind of thing a monitor
+gets pointed at and silently misreports.

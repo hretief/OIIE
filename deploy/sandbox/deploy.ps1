@@ -19,9 +19,10 @@
     which is built into this API's wwwroot. Both the Azure sites and the Bicep
     resource are gone as of DR-024.
 
-    Assumes deploy/provision.ps1 has already run for this environment: the database,
-    schemas, contained users and Key Vault secrets come from there. This script adds
-    the hosting.
+    Assumes deploy/provision.ps1 has already run for this environment: the storage
+    container and Key Vault secrets come from there. This script adds the hosting.
+    The sandbox owns no database of its own -- participant data lives in the
+    provider apps, which are provisioned and deployed separately.
 
     Two things are copied into the publish output that are not part of the project:
     Personalities and Schemas. They live beside the solution locally and inside
@@ -32,10 +33,10 @@
     immediately after a first deployment is usually that, not a missing grant.
 
 .EXAMPLE
-    .\deploy.ps1 -Environment dev -DatabaseName acme-db-sandbox-dev
+    .\deploy.ps1 -Environment dev
 
 .EXAMPLE
-    .\deploy.ps1 -Environment dev -DatabaseName acme-db-sandbox-dev -SkipInfrastructure
+    .\deploy.ps1 -Environment dev -SkipInfrastructure
 #>
 
 [CmdletBinding()]
@@ -69,26 +70,6 @@ param(
     # The integration engine behind ENG. Separate from the provider app: it
     # carries the SyncSites publish that add-iTwin triggers.
     [string]$EngEngineApp = 'acme-engn-eng-dev',
-
-    # Only needed when a per-developer database is being deployed.
-    [string]$Alias,
-
-    # Deploy without a SQL database.
-    #
-    # Per DR-022 the sandbox database is being removed: ENG and REG-LOCATION now
-    # read through the provider apps, and the engines own publish/ingest. When both
-    # providers are configured the panels never touch a DbContext, so requiring a
-    # database would block a deployment on a dependency it no longer uses.
-    #
-    # The startup schema and classification calls are already wrapped in try/catch
-    # and only log warnings, so the site boots. What stays degraded is anything
-    # genuinely DB-backed: scenario runs, classification seeding, and the sandbox
-    # fallback sources for any panel whose provider is NOT configured.
-    [switch]$NoDatabase,
-
-    # Overrides the derived database name, for pointing a deployment at a
-    # database that already exists under a different name.
-    [string]$DatabaseName,
 
     [string]$PlanSku = 'B1',
 
@@ -149,31 +130,11 @@ foreach ($tool in @('az', 'dotnet')) {
     }
 }
 
-if ($Environment -eq 'dev' -and -not $NoDatabase -and
-    [string]::IsNullOrWhiteSpace($Alias) -and [string]::IsNullOrWhiteSpace($DatabaseName)) {
-    throw '-Alias is required for the dev environment (it names the per-developer database). Use -DatabaseName to name one explicitly, or -NoDatabase to deploy without one.'
-}
-
-# Bicep only references the SQL server as an existing resource and passes this
-# through as the Sandbox__Database app setting; it never creates a database. With
-# -NoDatabase the setting is left empty so nothing advertises a database that is
-# not there.
-$databaseName = if ($NoDatabase) { '' }
-    elseif (-not [string]::IsNullOrWhiteSpace($DatabaseName)) { $DatabaseName }
-    else {
-        switch ($Environment) {
-            'dev' { "acme-db-sandbox-dev-$Alias" }
-            'ci' { 'acme-db-sandbox-ci' }
-            'demo' { 'acme-db-sandbox-demo' }
-        }
-    }
-
 $apiAppName = "acme-api-sandbox-$Environment"
 $isbmBaseUrl = "https://$IsbmApp.azurewebsites.net/api"
 
 Write-Host "Environment : $Environment"
 Write-Host "API         : $apiAppName"
-Write-Host "Database    : $(if ($NoDatabase) { 'none (-NoDatabase; scenario runs and classification seeding stay unavailable)' } else { $databaseName })"
 Write-Host "Storage     : $StorageAccount"
 Write-Host ''
 
@@ -182,22 +143,40 @@ if ($SubscriptionId) {
 }
 
 
-# The database must already exist. Deploying an app that cannot reach its database
-# produces a running site that fails on every request, which is worse than a
-# deployment that refuses to start.
-#
-# Skipped under -NoDatabase, where having no database is the intent rather than a
-# misconfiguration.
-if (-not $NoDatabase) {
-    & az sql db show --resource-group $ResourceGroup --server $SqlServer `
-        --name $databaseName --query name -o tsv 2>$null | Out-Null
+# --- Admin key
 
-    if ($LASTEXITCODE -ne 0) {
-        throw "Database '$databaseName' does not exist. Run deploy/provision.ps1 -Environment $Environment first, or pass -NoDatabase."
-    }
+# Resolved before the infrastructure block, and outside it, because the build
+# guard further down needs the key to check the bundle for it. Leaving this
+# inside -SkipInfrastructure meant the one switch people reach for when infra is
+# already in place also silently disabled the leak check.
+#
+# Admin endpoints reset databases and delete channels. Unprotected on a
+# workstation is fine; unprotected on a public URL is a destructive API anyone
+# can call. Reused across deployments so existing scripts keep working.
+$adminSecret = "sandbox-admin-key-$Environment"
+$adminKey = & az keyvault secret show --vault-name $KeyVault --name $adminSecret `
+    --query value -o tsv 2>$null
+
+if ($LASTEXITCODE -ne 0 -or -not $adminKey) {
+    $alphabet = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    $bytes = [byte[]]::new(32)
+    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $adminKey = -join ($bytes | ForEach-Object { $alphabet[$_ % $alphabet.Length] })
+
+    Invoke-Az @(
+        'keyvault', 'secret', 'set',
+        '--vault-name', $KeyVault, '--name', $adminSecret, "--value=$adminKey", '--output', 'none'
+    ) -Because 'Storing the admin key'
+
+    Write-Host "  admin key created: $adminSecret"
+}
+else {
+    $adminKey = ($adminKey | Select-Object -First 1).Trim()
+    Write-Host "  admin key reused: $adminSecret"
 }
 
-# --- Infrastructure --------------------------------------------------------
+
+# --- Infrastructure
 
 if (-not $SkipInfrastructure) {
     Write-Host 'Deploying infrastructure...'
@@ -205,31 +184,6 @@ if (-not $SkipInfrastructure) {
     $isbmKey = & az functionapp keys list -g $ResourceGroup -n $IsbmApp `
         --query functionKeys.default -o tsv 2>$null
     if ($LASTEXITCODE -ne 0) { $isbmKey = '' }
-
-    # Admin endpoints reset databases and delete channels. Unprotected on a
-    # workstation is fine; unprotected on a public URL is a destructive API anyone
-    # can call. Reused across deployments so existing scripts keep working.
-    $adminSecret = "sandbox-admin-key-$Environment"
-    $adminKey = & az keyvault secret show --vault-name $KeyVault --name $adminSecret `
-        --query value -o tsv 2>$null
-
-    if ($LASTEXITCODE -ne 0 -or -not $adminKey) {
-        $alphabet = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-        $bytes = [byte[]]::new(32)
-        [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-        $adminKey = -join ($bytes | ForEach-Object { $alphabet[$_ % $alphabet.Length] })
-
-        Invoke-Az @(
-            'keyvault', 'secret', 'set',
-            '--vault-name', $KeyVault, '--name', $adminSecret, "--value=$adminKey", '--output', 'none'
-        ) -Because 'Storing the admin key'
-
-        Write-Host "  admin key created: $adminSecret"
-    }
-    else {
-        $adminKey = ($adminKey | Select-Object -First 1).Trim()
-        Write-Host "  admin key reused: $adminSecret"
-    }
 
     # ConvertTo-Json must be called with -InputObject, not through the pipeline:
     # an empty array pipes zero items and yields an empty string rather than [].
@@ -257,7 +211,6 @@ if (-not $SkipInfrastructure) {
         "keyVaultName=$KeyVault",
         "storageAccountName=$StorageAccount",
         "sqlServerName=$SqlServer",
-        "sqlDatabaseName=$databaseName",
         "isbmBaseUrl=$isbmBaseUrl",
         "isbmApiKey=$isbmKey",
         "planSku=$PlanSku",
@@ -459,8 +412,24 @@ function Publish-SandboxApp {
 
                 if ($LASTEXITCODE -ne 0) { throw 'npm install failed.' }
 
-                & npx vite build 2>&1 | Out-Null
-                if ($LASTEXITCODE -ne 0) { throw 'vite build failed.' }
+                # Cleared for the build only. Vite inlines every VITE_-prefixed
+                # variable, and this bundle is served from the API's own public
+                # wwwroot -- so an admin key present here is an admin key
+                # published to anyone who opens the site. The app asks for it at
+                # runtime instead and keeps it in sessionStorage.
+                #
+                # Set on the process rather than edited in .env.local because the
+                # variable may equally come from the shell or CI.
+                $priorKey = $env:VITE_SANDBOX_ADMIN_KEY
+                $env:VITE_SANDBOX_ADMIN_KEY = ''
+
+                try {
+                    & npx vite build 2>&1 | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw 'vite build failed.' }
+                }
+                finally {
+                    $env:VITE_SANDBOX_ADMIN_KEY = $priorKey
+                }
             }
             finally {
                 Pop-Location
@@ -469,6 +438,21 @@ function Publish-SandboxApp {
             $dist = Join-Path $webRoot 'dist'
             if (-not (Test-Path (Join-Path $dist 'index.html'))) {
                 throw 'vite build produced no index.html. The API would serve an empty wwwroot.'
+            }
+
+            # Fails the deploy rather than publishing a readable admin key.
+            # Checked against the built output because that is what actually
+            # ships: reasoning about which .env file won is how this got missed
+            # the first time.
+            if ($adminKey) {
+                $leaked = Get-ChildItem (Join-Path $dist 'assets') -Filter *.js -ErrorAction SilentlyContinue |
+                    Where-Object { Select-String -Path $_.FullName -SimpleMatch $adminKey -Quiet }
+
+                if ($leaked) {
+                    throw ("The admin key is present in the built bundle ($($leaked.Name)). " +
+                           'Something set VITE_SANDBOX_ADMIN_KEY for the build. Refusing to ' +
+                           'publish it to a public wwwroot.')
+                }
             }
 
             $wwwroot = Join-Path $publishDir 'wwwroot'
@@ -544,23 +528,8 @@ if (-not $health.storageConfigured) {
     Write-Warning 'Storage is not configured; BOD payload bodies will not be retained.'
 }
 
-# Key Vault and SQL are the two grants that take time to propagate, and the two
-# that fail in ways the app cannot report until something asks it to connect.
-try {
-    $sql = Invoke-RestMethod "$apiUrl/health/sql" -TimeoutSec 60
-    $failed = @($sql | Where-Object { -not $_.connected })
-
-    if ($failed.Count -gt 0) {
-        Write-Warning "SQL: $($failed[0].participantId) — $($failed[0].error)"
-        Write-Warning 'If this is a Key Vault 403, the role assignment may still be propagating. Retry in a few minutes.'
-    }
-    else {
-        Write-Host "  sql            : $(@($sql).Count) participant(s) connected as their own users"
-    }
-}
-catch {
-    Write-Warning "Could not reach /health/sql: $($_.Exception.Message)"
-}
+# SQL connectivity is no longer checked here: the sandbox owns no database. Each
+# participant provider connects to its own store and reports its own health.
 
 Write-Host "`nDeployed API: $apiUrl" -ForegroundColor Green
 
