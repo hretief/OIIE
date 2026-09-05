@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Oiie.Isbm.Client.Topology;
 using Oiie.Isbm.Client;
 
 // FunctionsApplication.CreateBuilder is the 2.x entry point. It wraps
@@ -77,6 +78,25 @@ builder.Services.AddHttpClient<IIsbmClient, IsbmRestClient>((sp, http) =>
 // typed-client registration above cannot construct it unaided.
 builder.Services.AddTransient(sp =>
     sp.GetRequiredService<IOptions<IsbmClientOptions>>().Value);
+
+// --- Topology --------------------------------------------------------------
+//
+// Where this engine publishes is a property of the system, not of this app, so
+// it is read from the sandbox rather than only from local settings. Registered
+// unconditionally: the client returns null without a base address, and every
+// caller falls back to its configured channel, so an engine deployed without a
+// sandbox URL behaves exactly as it did before.
+builder.Services.AddHttpClient<TopologyClient>((sp, http) =>
+{
+    var options = sp.GetRequiredService<IOptions<EngEngineOptions>>().Value;
+
+    if (!string.IsNullOrWhiteSpace(options.SandboxBaseUrl))
+    {
+        http.BaseAddress = new Uri(options.SandboxBaseUrl.TrimEnd('/') + "/");
+    }
+
+    http.Timeout = TimeSpan.FromSeconds(15);
+});
 
 // --- Engine ----------------------------------------------------------------
 

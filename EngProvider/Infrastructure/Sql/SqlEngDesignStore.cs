@@ -53,6 +53,14 @@ public sealed class SqlEngDesignStore(
 
         await SqlScriptRunner.ExecuteAsync(
             _options.SqlConnectionString, "EngProvider.Infrastructure.Sql.schema.sql", ct);
+
+        // Reference data is part of a reset, not something left for the next
+        // cold start. The drop takes the EC schemas and classes with it, and a
+        // provider that answered its class catalog with an empty list would
+        // look broken rather than empty -- nothing could be created on it, and
+        // the cause would not be visible from the response.
+        await SqlScriptRunner.ExecuteAsync(
+            _options.SqlConnectionString, "EngProvider.Infrastructure.Sql.bootstrap.sql", ct);
     }
 
     // ---- iTwins and iModels ----------------------------------------------

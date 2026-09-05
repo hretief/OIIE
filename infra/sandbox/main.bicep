@@ -11,11 +11,8 @@ param keyVaultName string = 'mndot'
 @description('Existing storage account for BOD payload bodies.')
 param storageAccountName string
 
-@description('Existing SQL server hosting the Sandbox database.')
+@description('Existing SQL server hosting the participant provider databases. The sandbox itself owns no database; this is used only for the firewall rule that lets the deployed sites reach the providers\' server.')
 param sqlServerName string = 'acme-sql-server'
-
-@description('Sandbox database for this environment. Empty when deploying without a database (DR-022), in which case Sandbox__Database is left blank.')
-param sqlDatabaseName string = ''
 
 @description('ws-ISBM provider base URL, including /api.')
 param isbmBaseUrl string
@@ -119,8 +116,6 @@ var sharedAppSettings = [
   { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
 
   { name: 'Sandbox__Environment', value: environmentName }
-  { name: 'Sandbox__SqlServer', value: sqlServerName }
-  { name: 'Sandbox__Database', value: sqlDatabaseName }
 
   // Deployed alongside the app rather than a level up, unlike the local
   // layout where the solution root is the parent.

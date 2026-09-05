@@ -72,6 +72,14 @@
     <EmbeddedResource Include="Infrastructure\Sql\schema.sql" LogicalName="EngProvider.Infrastructure.Sql.schema.sql" />
 
     <!--
+      Reference data: the EC schemas and classes ENG can store an element
+      against. Provisioning classes is the provider's job, because the class
+      list is customer data held in the customer's store. Applied after
+      schema.sql, and idempotent for the same reason.
+    -->
+    <EmbeddedResource Include="Infrastructure\Sql\bootstrap.sql" LogicalName="EngProvider.Infrastructure.Sql.bootstrap.sql" />
+
+    <!--
       The companion to schema.sql, applied only by an explicit reset. Kept as a
       separate resource so that nothing which runs at startup can reach it.
     -->

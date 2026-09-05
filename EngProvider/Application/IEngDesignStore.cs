@@ -14,6 +14,17 @@ public sealed class EngOptions
     public bool AutoCreateSchema { get; set; } = true;
 
     /// <summary>
+    /// Applies the reference-data seed — the EC schemas and classes ENG can
+    /// store an element against — after the schema.
+    ///
+    /// Separate from <see cref="AutoCreateSchema"/> because an empty-but-valid
+    /// design database is a legitimate state to want, whereas a schema-less one
+    /// is not. Provisioning classes is this provider's job either way: the
+    /// class list is customer reference data, held in the customer's store.
+    /// </summary>
+    public bool AutoBootstrap { get; set; } = true;
+
+    /// <summary>
     /// Where to announce a new named version, or empty to announce nowhere.
     ///
     /// Empty by default so ENG stays usable standalone: a missing URL means
@@ -63,7 +74,9 @@ public interface IEngDesignStore
     ///
     /// Recreating is part of the same call rather than left to the next restart,
     /// since a host that is already running will not re-run its initializer and
-    /// would answer every query with an invalid-object error until bounced.
+    /// would answer every query with an invalid-object error until bounced. The
+    /// class catalog is re-seeded for the same reason: the drop removes it, and
+    /// an empty catalog would leave nothing creatable.
     /// </summary>
     Task ResetAsync(CancellationToken ct);
 

@@ -6,8 +6,12 @@ using Microsoft.Extensions.Options;
 namespace EngProvider.Infrastructure.Sql;
 
 /// <summary>
-/// Applies schema.sql at startup. The DDL is idempotent, so this is safe on every
-/// cold start and on scale-out. Requires db_ddladmin.
+/// Applies schema.sql, then bootstrap.sql, at startup. Both scripts are
+/// idempotent, so this is safe on every cold start and on scale-out. Requires
+/// db_ddladmin.
+///
+/// Order matters and is not negotiable: the bootstrap seeds rows into tables
+/// the schema creates, so applying it first would fail on a fresh database.
 /// </summary>
 public sealed class SchemaInitializer(
     IOptions<EngOptions> options,
@@ -17,12 +21,6 @@ public sealed class SchemaInitializer(
 
     public async Task StartAsync(CancellationToken ct)
     {
-        if (!_options.AutoCreateSchema)
-        {
-            logger.LogInformation("Schema auto-creation disabled.");
-            return;
-        }
-
         if (string.IsNullOrWhiteSpace(_options.SqlConnectionString))
         {
             logger.LogWarning("Eng__SqlConnectionString is not configured; skipping schema initialization.");
@@ -31,10 +29,29 @@ public sealed class SchemaInitializer(
 
         try
         {
-            await SqlScriptRunner.ExecuteAsync(
-                _options.SqlConnectionString, "EngProvider.Infrastructure.Sql.schema.sql", ct);
+            if (_options.AutoCreateSchema)
+            {
+                await SqlScriptRunner.ExecuteAsync(
+                    _options.SqlConnectionString, "EngProvider.Infrastructure.Sql.schema.sql", ct);
 
-            logger.LogInformation("ENG schema verified.");
+                logger.LogInformation("ENG schema verified.");
+            }
+            else
+            {
+                logger.LogInformation("Schema auto-creation disabled.");
+            }
+
+            if (_options.AutoBootstrap)
+            {
+                await SqlScriptRunner.ExecuteAsync(
+                    _options.SqlConnectionString, "EngProvider.Infrastructure.Sql.bootstrap.sql", ct);
+
+                logger.LogInformation("ENG class catalog verified.");
+            }
+            else
+            {
+                logger.LogInformation("Bootstrap seeding disabled.");
+            }
         }
         catch (Exception ex)
         {

@@ -22,16 +22,17 @@ participant "ws-ISBM provider" as Isbm
 
 == One-time setup ==
 
-User -> Eng : POST /admin/schema/init
+User -> Eng : provider startup
 activate Eng
-Eng -> Db : create tables from the EF model
+Eng -> Db : apply schema.sql, then bootstrap.sql
 note right of Eng
-  No migrations. The schema name is a
-  parameter, and every session starts
-  from reset — there is nothing to
-  migrate and no history worth keeping.
+  No migrations. The provider owns its
+  own schema and its own classes, and
+  every session starts from reset —
+  there is nothing to migrate and no
+  history worth keeping.
 end note
-Eng --> User : 10 tables in schema eng
+Eng --> User : schema and class catalog ready
 deactivate Eng
 
 User -> Isbm : POST /admin/isbm/channels/ensure

@@ -476,7 +476,8 @@ public sealed class EngFunctions(
         try
         {
             await store.ResetAsync(ct);
-            logger.LogWarning("ENG data reset: all tables dropped and recreated.");
+            logger.LogWarning(
+                "ENG data reset: all tables dropped and recreated, class catalog re-seeded.");
 
             return await OkAsync(req, new { reset = true }, ct);
         }

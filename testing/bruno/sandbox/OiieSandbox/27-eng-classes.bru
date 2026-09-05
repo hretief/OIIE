@@ -14,10 +14,14 @@ headers {
   x-functions-key: {{engFunctionKey}}
 }
 
+vars:pre-request {
+  engBaseUrl: acme-api-eng-dev.azurewebsites.net
+}
+
 docs {
   The class catalog the ENG panel's ECCLASS dropdown is populated from, read
   straight from EngProvider rather than through the Sandbox.
-
+  
   The key travels as a header, not as a `code=` query parameter. Both authenticate,
   but the provider's own routes read `code` as a filter — GetTags does exactly that —
   so a key in that position is ambiguous at best and silently filters at worst.

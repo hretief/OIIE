@@ -3,6 +3,7 @@ using EngEngine.Infrastructure.State;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Oiie.Isbm.Client;
+using Oiie.Isbm.Client.Topology;
 
 namespace EngEngine.Application;
 
@@ -43,6 +44,7 @@ public sealed class EngPublicationService(
     IIsbmClient isbm,
     IEngEngineStateStore stateStore,
     EngSegmentsBuilder builder,
+    TopologyClient topology,
     IOptions<EngEngineOptions> options,
     ILogger<EngPublicationService> logger)
 {
@@ -75,7 +77,30 @@ public sealed class EngPublicationService(
         if (model is null)
             return Failed($"ENG does not have iModel '{_options.IModelId:D}'.");
 
-        var channelUri = _options.ChannelUriFor(model.ITwinId);
+        // The topology is asked first, and answers with both the channel and the
+        // topics -- they belong together. A channel resolved centrally but
+        // topics taken from local settings would let a subscriber be found on
+        // the right channel filtering for a topic nobody posts under, which is
+        // the same silent non-delivery by a narrower route.
+        var declared = await topology.FindPublicationAsync(
+            _options.ScenarioId, _options.ParticipantId, model.ITwinId, ct);
+
+        var channelUri = declared?.Uri ?? _options.ChannelUriFor(model.ITwinId);
+
+        var topics = declared is { Topics.Count: > 0 }
+            ? [.. declared.Topics]
+            : _options.Topics;
+
+        if (declared is not null && !string.Equals(
+                declared.Uri, _options.ChannelUriFor(model.ITwinId), StringComparison.Ordinal))
+        {
+            // Worth a line: the engine is publishing somewhere other than its
+            // own settings say, which is intended but confusing to find later
+            // when reading only this app's configuration.
+            logger.LogInformation(
+                "Publishing to {Channel} from topology, overriding the configured {Configured}.",
+                declared.Uri, _options.ChannelUriFor(model.ITwinId));
+        }
 
         var (state, etag) = await stateStore.ReadAsync(ct);
 
@@ -170,7 +195,7 @@ public sealed class EngPublicationService(
                     var messageId = await isbm.PostPublicationAsync(
                         sessionId,
                         content,
-                        _options.Topics,
+                        topics,
                         ct: ct);
 
                     published.Add(marker.VersionGuid);
