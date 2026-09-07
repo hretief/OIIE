@@ -43,6 +43,17 @@ public interface IRegLocationClient
     /// </summary>
     Task<RegTagDetail> CreateTagAsync(CreateTagRequest request, CancellationToken ct);
 
+    /// <summary>
+    /// Corrects an already-proposed tag in place.
+    ///
+    /// This is how a modification made to an ENG element after promotion reaches
+    /// REG-LOCATION: rather than being dropped as an already-known GUID, the
+    /// segment's changed code/name/class overwrite the tag this engine
+    /// previously proposed for the same federation GUID and inbound revision.
+    /// Null if the tag has since been removed from the registry.
+    /// </summary>
+    Task<RegTagDetail?> UpdateTagAsync(int tagId, UpdateTagRequest request, CancellationToken ct);
+
     // ---- Sites ------------------------------------------------------------
 
     /// <summary>
@@ -89,10 +100,12 @@ public interface IRegLocationClient
 /// <summary>
 /// Reads REG-LOCATION over its REST surface, and files proposals into it.
 ///
-/// The only write is <see cref="CreateTagAsync"/>, which creates tags in the
-/// Proposed state. The engine has no route to approval and that absence is the
-/// point: an integration component able to record a steward's decision could
-/// manufacture a release nobody authorised.
+/// The writes are <see cref="CreateTagAsync"/>, which creates tags in the
+/// Proposed state, and <see cref="UpdateTagAsync"/>, which corrects a tag this
+/// engine already proposed. Neither can approve anything: the engine has no
+/// route to approval and that absence is the point, an integration component
+/// able to record a steward's decision could manufacture a release nobody
+/// authorised.
 /// </summary>
 public sealed class RegLocationRestClient(HttpClient http) : IRegLocationClient
 {
@@ -186,6 +199,24 @@ public sealed class RegLocationRestClient(HttpClient http) : IRegLocationClient
         return await response.Content.ReadFromJsonAsync<RegTagDetail>(Json, ct)
             ?? throw new RegLocationClientException(
                 $"REG-LOCATION accepted tag '{request.Code}' but returned no body.");
+    }
+
+    public async Task<RegTagDetail?> UpdateTagAsync(int tagId, UpdateTagRequest request, CancellationToken ct)
+    {
+        using var response = await http.PutAsJsonAsync($"tags/{tagId}", request, Json, ct);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+
+            throw new RegLocationClientException(
+                $"REG-LOCATION returned {(int)response.StatusCode} updating tag '{tagId}': {body}");
+        }
+
+        return await response.Content.ReadFromJsonAsync<RegTagDetail>(Json, ct);
     }
 
     // ---- Sites ------------------------------------------------------------

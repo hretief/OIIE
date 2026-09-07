@@ -82,6 +82,19 @@ public sealed record CreateTagRequest(
     Guid? Guid,
     string? State);
 
+/// <summary>
+/// What the engine puts to correct a tag it has already proposed.
+///
+/// Mirrors the provider's UpdateTagRequest. ItemId and the federation GUID are
+/// absent for the same reason they are absent there: an edit changes what the
+/// tag says, not which thing it is or where it lives.
+/// </summary>
+public sealed record UpdateTagRequest(
+    int ClassId,
+    string Code,
+    int Revision,
+    string Name);
+
 // ---- Sites ---------------------------------------------------------------
 
 public sealed record RegScope(

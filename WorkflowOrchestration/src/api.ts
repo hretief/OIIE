@@ -596,7 +596,7 @@ export type StewardshipFilter = 'Proposed' | 'Approved' | 'all'
  * state defaults server-side to Proposed. Ask for 'all' to see what was approved
  * beside what is still outstanding.
  */
-export function listStewardship(
+export async function listStewardship(
   iTwinId?: string,
   state?: StewardshipFilter,
   signal?: AbortSignal,
@@ -606,7 +606,15 @@ export function listStewardship(
   if (state) params.set('state', state)
 
   const query = params.size > 0 ? `?${params}` : ''
-  return request<StewardshipItem[]>(`/admin/reg-location/stewardship${query}`, { signal })
+
+  // The endpoint answers { count, items }, not a bare array -- matching every
+  // other list route in this API. Unwrapped here rather than changed server
+  // side, since the wrapper carries count for callers that want it without
+  // measuring the array themselves.
+  const response = await request<{ count: number; items: StewardshipItem[] }>(
+    `/admin/reg-location/stewardship${query}`, { signal },
+  )
+  return response.items
 }
 
 /**

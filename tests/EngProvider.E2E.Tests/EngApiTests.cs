@@ -156,13 +156,15 @@ public sealed class EngApiTests(EngHostFixture host)
     }
 
     /// <summary>
-    /// What a marker described has already been published, so it cannot be
-    /// rewritten afterwards. Remediation is forward-only: new work, new marker.
+    /// What a marker described has already been published, so an edit cannot
+    /// stay behind and rewrite it. Editing a previously promoted element is
+    /// allowed, but the edit moves the element forward past the marker that
+    /// captured it -- which is what makes it eligible for the next one.
     /// </summary>
     [Fact]
-    public async Task Work_below_a_marker_can_no_longer_be_edited()
+    public async Task Editing_a_promoted_element_moves_it_into_the_next_marker()
     {
-        var code = UniqueCode("FROZEN");
+        var code = UniqueCode("REPROMOTE");
 
         var created = await UpsertAsync(
             new { ecClassId = host.ConcreteClassId, codeValue = code });
@@ -170,9 +172,9 @@ public sealed class EngApiTests(EngHostFixture host)
         var elementId = created.GetProperty("elements")[0]
             .GetProperty("ecInstanceId").GetInt64();
 
-        await CreateMarkerAsync("freeze");
+        var first = await CreateMarkerAsync("freeze");
 
-        var late = await UpsertAsync(new
+        var edited = await UpsertAsync(new
         {
             ecInstanceId = elementId,
             ecClassId = host.ConcreteClassId,
@@ -180,8 +182,22 @@ public sealed class EngApiTests(EngHostFixture host)
             userLabel = "Edited after the baseline"
         });
 
-        Assert.NotEmpty(RejectionsOf(late));
+        Assert.Empty(RejectionsOf(edited));
+
+        var second = await CreateMarkerAsync("reflow");
+
+        var firstContents = await Client.GetFromJsonAsync<List<JsonElement>>(
+            $"api/named-versions/{first}/elements", EngHostFixture.Json);
+        var secondContents = await Client.GetFromJsonAsync<List<JsonElement>>(
+            $"api/named-versions/{second}/elements", EngHostFixture.Json);
+
+        // The edit landed above the first marker, so that marker's own
+        // description of the element is unchanged -- it simply no longer
+        // contains it, having been superseded by the second.
+        Assert.DoesNotContain(firstContents!, e => e.GetProperty("codeValue").GetString() == code);
+        Assert.Contains(secondContents!, e => e.GetProperty("codeValue").GetString() == code);
     }
+
 
     [Fact]
     public async Task Duplicate_code_is_rejected_without_losing_the_rest_of_the_batch()

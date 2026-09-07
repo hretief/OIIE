@@ -869,7 +869,14 @@ app.MapGet("/admin/eng/tags", async (
             t.RangeMaximum,
             t.ControlAction,
             t.PidReference,
-            t.Maturity,
+
+            // ENG stores no per-element Maturity, so t.Maturity is always null for
+            // a provider-backed segment; reporting it verbatim would leave the UI
+            // believing nothing is ever published. PublishedInVersion is what ENG
+            // actually tracks -- a marker's changeset range covering the element --
+            // so it is the source of truth here, with t.Maturity kept only as a
+            // fallback for a source that does report one directly.
+            maturity = t.Maturity ?? (t.PublishedInVersion is not null ? "Published" : "WorkInProgress"),
             t.PublishedInVersion,
             t.UpdatedAt
         })

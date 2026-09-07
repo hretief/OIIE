@@ -114,6 +114,44 @@ public class Sc01EndToEndTests
     }
 
     [Fact]
+    public async Task A_correction_to_a_promoted_element_overwrites_the_proposed_tag()
+    {
+        var broker = new FakeIsbmBroker();
+        var topology = TopologyOverHttp();
+
+        var registry = await PublishFromEngAsync(broker, topology);
+        var first = await IngestIntoRegLocationAsync(broker, topology, registry);
+
+        Assert.Equal(1, first.TagsProposed);
+
+        var filedTagId = Assert.Single(registry.FindTagsByGuidAsync(ElementGuid, CancellationToken.None).Result).Tag.TagId;
+
+        // ENG re-promotes the same element, edited: same FederationGuid, same
+        // inbound revision slot, different name. This is what a corrected,
+        // re-promoted element looks like on the wire.
+        await RepublishAsync(broker, topology, Element() with { UserLabel = "Feed pump (corrected)" });
+
+        var second = await IngestIntoRegLocationAsync(broker, topology, registry);
+
+        // The correction reached REG-LOCATION as a write to the tag this leg
+        // already proposed, not as a second tag and not as a no-op.
+        Assert.Equal(1, second.TagsProposed);
+        Assert.Equal(0, second.AlreadyKnown);
+        Assert.Single(registry.Created);
+        Assert.Single(registry.Corrected);
+        Assert.Equal(filedTagId, registry.Corrected[0].TagId);
+
+        var corrected = Assert.Single(
+            await registry.FindTagsByGuidAsync(ElementGuid, CancellationToken.None));
+        Assert.Equal("Feed pump (corrected)", corrected.Tag.Name);
+        Assert.Equal(filedTagId, corrected.Tag.TagId);
+
+        // Still Proposed: a correction is not an approval, it is the same
+        // pending decision with different content for the steward to see.
+        Assert.Equal("Proposed", corrected.Tag.State);
+    }
+
+    [Fact]
     public async Task Segments_are_deferred_when_the_site_has_no_scope()
     {
         var broker = new FakeIsbmBroker();
@@ -146,7 +184,7 @@ public class Sc01EndToEndTests
         return new FakeRegLocationClient(new Dictionary<Guid, int> { [ITwinId] = SiteScopeId });
     }
 
-    private static async Task RepublishAsync(FakeIsbmBroker broker, TopologyClient topology)
+    private static async Task RepublishAsync(FakeIsbmBroker broker, TopologyClient topology, EngElement? element = null)
     {
         var options = Options.Create(new EngEngineOptions
         {
@@ -168,7 +206,7 @@ public class Sc01EndToEndTests
         });
 
         var service = new EngPublicationService(
-            new FakeEngClient(IModelId, ITwinId, Marker(), [Element()]),
+            new FakeEngClient(IModelId, ITwinId, Marker(), [element ?? Element()]),
             broker,
             new FakeEngStateStore(),
             new EngSegmentsBuilder(options),

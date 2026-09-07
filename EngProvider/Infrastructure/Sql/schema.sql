@@ -983,19 +983,25 @@ GO
    Baseline immutability
 
    A marker is a statement about what the design said at a position, and that
-   statement has already been published. If an element at or below the highest
-   marker could still be altered, the contents derived for that marker would
-   change after the fact: a consumer holding the baseline would disagree with
-   this database about what it was sent, and the detector's content hash would
-   no longer match what it published.
+   statement has already been published: what a marker described must go on
+   describing exactly that, forever. It does not follow that the element
+   itself is frozen -- only that the element's state as of that marker is.
 
-   So history is closed and the present is open. Elements above the highest
-   marker are ordinary work in progress and freely editable; elements at or
-   below it are frozen. A database with no markers yet freezes nothing.
+   An element may be promoted more than once. Editing it after a marker has
+   captured it is exactly how a correction is expressed: the edit moves the
+   element forward, past every marker cut so far, and the next marker's delta
+   picks it up and promotes it again. What this trigger forbids is narrower:
+   an insert, update, or delete that leaves an element's ChangesetIndex at or
+   below an already-cut marker, which would rewrite what that marker already
+   described rather than add new history above it.
 
-   Remediation is deliberately forward-only: a defect reported by REG-LOCATION
-   is fixed by authoring new work and cutting a new marker, never by editing
-   what an earlier marker already described.
+   A plain UPDATE is therefore let through here even though the row being
+   replaced (in `deleted`) sits at or below the frozen line -- that is what an
+   edit to a previously promoted element always looks like. It is judged by
+   where it lands (`inserted`), not by where it started. A DELETE has no
+   `inserted` counterpart, so it is judged on `deleted` alone: removing a row
+   the same statement is not also replacing is removing history, not editing
+   it, and that stays forbidden regardless of position.
 
    Enforced here rather than only in application code, so the rule holds
    regardless of which client is connected -- an ad-hoc UPDATE from a
@@ -1017,9 +1023,19 @@ BEGIN
         SELECT 1
         FROM
         (
+            -- Where every touched row ends up: the new position for an insert
+            -- or update, and -- only for a row this statement does not also
+            -- replace -- the old position for a delete. A row present in both
+            -- inserted and deleted is an update, and is judged solely on where
+            -- it landed.
             SELECT iModelId, ChangesetIndex FROM inserted
             UNION ALL
-            SELECT iModelId, ChangesetIndex FROM deleted
+            SELECT d.iModelId, d.ChangesetIndex
+            FROM deleted AS d
+            WHERE NOT EXISTS
+            (
+                SELECT 1 FROM inserted AS i WHERE i.ECInstanceId = d.ECInstanceId
+            )
         ) AS touched
         INNER JOIN
         (
@@ -1031,7 +1047,7 @@ BEGIN
         WHERE touched.ChangesetIndex <= marker.FrozenThrough
     )
     BEGIN
-        THROW 50003, 'Cannot modify elements at or below the most recent named version. Author new work and create a new named version instead.', 1;
+        THROW 50003, 'Cannot leave an element at or below the most recent named version. Edits must move it forward; author new work and create a new named version to promote it again.', 1;
     END
 END;
 GO

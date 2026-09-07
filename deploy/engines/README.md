@@ -45,9 +45,9 @@ cleanly and 401s on every poll.
 
 ## Settings the script does not decide
 
-`EngEngine__Enabled` and the `RegLocationEngine` ingest flags are set to
-`false`. Both derive their channel from an iTwin federation id, and enabling
-them before an iTwin exists gives a poll loop that fails on a timer. Set the id,
+`EngEngine__Enabled` and `RegLocationEngine__Enabled` are set to `false`. Both
+derive their outbound channel from an iTwin federation id, and enabling them
+before an iTwin exists gives a poll loop that fails on a timer. Set the id,
 then flip the flag:
 
 ```powershell
@@ -62,6 +62,18 @@ where iModel is a genuine domain concept. In both cases the value is an **iTwin
 federation id** -- an iModel id yields a well-formed channel URI that nobody
 publishes to, so the engine polls forever without ever raising an error.
 (`RegLocationEngine__IModelId` still binds as a deprecated alias.)
+
+**`RegLocationEngine__IngestEnabled` now defaults to `true`.** It used to be
+grouped with `Enabled` above and set `false` for the same iTwin-federation-id
+reason, but the two are unrelated: `Enabled` gates the *outbound* sweep, which
+does need a resolved twin, while `IngestEnabled` gates the *inbound* leg that
+merely subscribes to ENG's channel and requires nothing twin-specific to exist
+first. Leaving it `false` after standing up the estate silently stopped every
+ENG promotion from ever reaching REG-LOCATION — the timer fired, the flag made
+it a no-op, and nothing in the logs said so. Confirmed 2026-09-06 while testing
+promotions manually. If this app is ever redeployed with the flag reset to
+`false`, ENG's queue will look empty in the stewardship UI with no error to
+explain why; see DR-025.
 
 The `SitesIngestEnabled` legs on CMS, MMS and REG-LOCATION are enabled from the
 start. Their channel is enterprise-level rather than iTwin-derived, which is the

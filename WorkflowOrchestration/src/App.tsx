@@ -2402,9 +2402,10 @@ function Workspace({ user }: { user: CurrentUser }) {
   // ── Loading the stewardship queue ────────────────────────────────────────
 
   const refreshStewardship = useCallback(async (signal?: AbortSignal) => {
-    // Scoped to the selected twin. Without this the queue answers for every twin
-    // at once, so toggling the selector appeared to change nothing -- the rows
-    // were never the selected twin's to begin with.
+    // Scoped to the selected twin. REG-LOCATION's equivalent of an iTwin is the
+    // scope (the site boundary a tag's registry row is filed under); the
+    // sandbox resolves the twin GUID to that scope server-side, so the twin's
+    // own uuid is passed straight through here.
     if (!activeTwin) {
       setStewardship([])
       return

@@ -848,8 +848,9 @@ public sealed class SqlEngDesignStore(
     private static string Explain(SqlException ex) => ex.Number switch
     {
         ErrBaselineImmutable =>
-            "That element is at or below the most recent named version and cannot be changed. "
-                + "Author new work and create a new named version instead.",
+            "That element cannot be removed: it is at or below the most recent named version, "
+                + "and removing it would rewrite what that marker already described. Edit it "
+                + "instead and cut a new named version to promote the change.",
 
         // 2601/2627 are the two duplicate-key numbers: unique index and unique
         // constraint respectively.

@@ -304,17 +304,28 @@ public sealed class ProviderEngSource(EngProviderClient client) : IEngSource
                 continue;
             }
 
-            markers.Add(await client.CreateNamedVersionAsync(
-                new EngNamedVersionDraftDto(
-                    model.IModelId,
-                    versionName,
-                    Description: null,
+            try
+            {
+                markers.Add(await client.CreateNamedVersionAsync(
+                    new EngNamedVersionDraftDto(
+                        model.IModelId,
+                        versionName,
+                        Description: null,
 
-                    // ENG records who cut the marker. The sandbox has no signed-in
-                    // principal to name, and inventing one would put a fabricated
-                    // author on an immutable record.
-                    CreatedBy: null),
-                ct));
+                        // ENG records who cut the marker. The sandbox has no signed-in
+                        // principal to name, and inventing one would put a fabricated
+                        // author on an immutable record.
+                        CreatedBy: null),
+                    ct));
+            }
+            catch (NamedVersionNameConflictException)
+            {
+                // A refusal the operator can act on -- pick a different name --
+                // not a fault. Reported as a finding so it reaches the panel the
+                // same way every other gate refusal does, rather than an error page.
+                findings.Add($"{model.Code}: NameAlreadyUsed — '{versionName}' already names a version in this model.");
+                continue;
+            }
 
             released += pending.Count;
         }
@@ -387,21 +398,26 @@ public sealed class ProviderRegLocationSource(
     public async Task<IReadOnlyList<StewardshipView>> GetQueueAsync(
         string? twin, bool includeDecided, CancellationToken ct)
     {
-        // "All" has no single route: proposed rows come from the queue, decided
-        // ones only from the full tag list.
-        var rows = includeDecided
-            ? (await client.GetTagsAsync(null, ct))
-                .Select(t => new RegTagDetailDto(t, EmptyObject)).ToList()
-            : (await client.GetProposedTagsAsync(ct)).ToList();
+        // The registry's equivalent of an iTwin is the scope: the site boundary
+        // every registered object is filed under. The twin GUID is resolved to
+        // its scope up front, so both branches below can filter (or fetch) by
+        // ScopeId rather than by the object's own federation GUID -- that GUID
+        // identifies the element the tag was raised from, not the twin it lives
+        // in, so matching against it never found anything.
+        int? scopeId = null;
 
         if (!string.IsNullOrWhiteSpace(twin))
         {
-            // The registry has no concept of an iTwin. The nearest equivalent is
-            // the federation GUID on the paired registry row, so the filter is
-            // applied against that when the caller named a GUID.
             if (Guid.TryParse(twin, out var twinGuid))
             {
-                rows = rows.Where(r => r.Object.Guid == twinGuid).ToList();
+                var scope = await client.FindScopeByGuidAsync(twinGuid, ct);
+
+                if (scope is null)
+                {
+                    return [];
+                }
+
+                scopeId = scope.ScopeId;
             }
             else
             {
@@ -412,6 +428,20 @@ public sealed class ProviderRegLocationSource(
                     "Twin filter '{Twin}' is not a GUID; REG-LOCATION cannot scope by twin, "
                     + "so the unfiltered queue was returned.", twin);
             }
+        }
+
+        // "All" has no single route: proposed rows come from the queue, decided
+        // ones only from the full tag list. The full list accepts a scope
+        // filter server-side; the proposed-only queue does not, so it is
+        // narrowed here instead once the registry row is known.
+        var rows = includeDecided
+            ? (await client.GetTagsAsync(scopeId, ct))
+                .Select(t => new RegTagDetailDto(t, EmptyObject)).ToList()
+            : (await client.GetProposedTagsAsync(ct)).ToList();
+
+        if (scopeId is { } wantedScope && !includeDecided)
+        {
+            rows = rows.Where(r => r.Object.ScopeId == wantedScope).ToList();
         }
 
         return rows.Select(r => new StewardshipView(

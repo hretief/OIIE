@@ -47,3 +47,6 @@ simhost.err.log
 # implementations, but large binaries that never diff usefully - keep them
 # locally under docs/ rather than in the history.
 docs/*.pdf
+
+# Local publish output
+publish/

@@ -43,6 +43,14 @@ public sealed record RegObjectDto(
 /// <summary>A tag with its registry row, which the provider always returns as a pair.</summary>
 public sealed record RegTagDetailDto(RegTagDto Tag, RegObjectDto Object);
 
+/// <summary>
+/// A scope: the registry's stand-in for a twin/site boundary.
+///
+/// Only the fields the sandbox needs to resolve a twin GUID to the ScopeId
+/// every tag's registry row carries are restated here.
+/// </summary>
+public sealed record RegScopeDto(int ScopeId, string Name);
+
 /// <summary>Who decided, which the registry requires for an approval.</summary>
 public sealed record ApproveTagRequestDto(string DecidedBy);
 
@@ -77,6 +85,19 @@ public sealed class RegLocationProviderClient(
         var route = scopeId is null ? "tags" : $"tags?scopeId={scopeId}";
 
         return await SendAsync<List<RegTagDto>>(HttpMethod.Get, route, null, ct) ?? [];
+    }
+
+    /// <summary>
+    /// Resolves a twin GUID to the scope carrying it.
+    ///
+    /// A scope has no revisions, so one GUID names at most one scope; the
+    /// registry's own <c>GET scopes?guid=</c> route is a single-valued lookup
+    /// for exactly that reason.
+    /// </summary>
+    public async Task<RegScopeDto?> FindScopeByGuidAsync(Guid guid, CancellationToken ct)
+    {
+        var found = await SendAsync<List<RegScopeDto>>(HttpMethod.Get, $"scopes?guid={guid:D}", null, ct) ?? [];
+        return found.Count > 0 ? found[0] : null;
     }
 
     /// <summary>

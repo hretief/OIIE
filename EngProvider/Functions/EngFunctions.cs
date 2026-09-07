@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using EngProvider.Application;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 
 namespace EngProvider.Functions;
@@ -403,7 +404,21 @@ public sealed class EngFunctions(
                 "iModelId and name are required.", ct);
         }
 
-        var created = await store.CreateNamedVersionAsync(draft, ct);
+        EngNamedVersion created;
+
+        try
+        {
+            created = await store.CreateNamedVersionAsync(draft, ct);
+        }
+        catch (SqlException ex) when (ex.Number is 2601 or 2627
+            && ex.Message.Contains("UQ_NamedVersion_iModel_Name"))
+        {
+            // A version name is scoped to its iModel, and re-using one is a
+            // request the caller can correct rather than a server fault --
+            // answered 409 so it comes back as a refusal, not an error page.
+            return await ProblemAsync(req, HttpStatusCode.Conflict,
+                $"iModel '{draft.IModelId:D}' already has a named version called '{draft.Name}'.", ct);
+        }
 
         logger.LogInformation(
             "ENG created named version {Version} '{Name}'.", created.NamedVersionId, created.Name);

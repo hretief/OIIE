@@ -4,6 +4,25 @@ Pending work carried between sessions. Decisions belong in
 [decision-register.md](decision-register.md); this file is only for things not
 yet done.
 
+## `acme-engn-reglocation-dev` has no Application Insights telemetry
+
+**Status:** not started. Raised 2026-09-06 while debugging DR-025.
+
+Querying `traces`, `requests`, and even an unfiltered `union requests, traces`
+over the last two hours against the app's own Application Insights component
+returned zero rows, despite the timer functions genuinely running (confirmed
+independently via `GET engine/status` and by triggering `POST
+engine/ingest` on demand). Either the connection string is missing or
+misconfigured, or telemetry is being sampled away entirely.
+
+This made the `IngestEnabled=false` bug (DR-025) far harder to diagnose than it
+should have been — the timer's own `logger.LogError` for a failed drain would
+never have been seen either, since it goes through the same pipe. Worth
+auditing `APPLICATIONINSIGHTS_CONNECTION_STRING` across all four engine apps
+(`acme-engn-eng-dev`, `acme-engn-reglocation-dev`, `acme-engn-cms-dev`,
+`acme-engn-mms-dev`) and confirming each actually emits telemetry, not just that
+the setting is present.
+
 ## Bridge free-text iTwin `Type` to the normalised `iTwinType` key
 
 **Status:** deferred by decision, not blocked. Raised 2026-09 while giving the

@@ -226,18 +226,45 @@ internal sealed class FakeRegLocationClient(Dictionary<Guid, int> scopesByGuid) 
 {
     private int _nextTagId = 1;
 
+    // Tag id -> the request currently backing it. Mutable so a correction
+    // overwrites the row in place, the same way REG-LOCATION's UPDATE does.
+    private readonly Dictionary<int, CreateTagRequest> _tags = [];
+
     public List<CreateTagRequest> Created { get; } = [];
+
+    public List<(int TagId, UpdateTagRequest Request)> Corrected { get; } = [];
 
     public Task<IReadOnlyList<RegTagDetail>> FindTagsByGuidAsync(Guid guid, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<RegTagDetail>>(
-            [.. Created
-                .Where(r => r.Guid == guid)
-                .Select(r => Detail(r, 0))]);
+            [.. _tags
+                .Where(kv => kv.Value.Guid == guid)
+                .Select(kv => Detail(kv.Key, kv.Value))]);
 
     public Task<RegTagDetail> CreateTagAsync(CreateTagRequest request, CancellationToken ct)
     {
         Created.Add(request);
-        return Task.FromResult(Detail(request, _nextTagId++));
+        var tagId = _nextTagId++;
+        _tags[tagId] = request;
+        return Task.FromResult(Detail(tagId, request));
+    }
+
+    public Task<RegTagDetail?> UpdateTagAsync(int tagId, UpdateTagRequest request, CancellationToken ct)
+    {
+        if (!_tags.TryGetValue(tagId, out var existing))
+            return Task.FromResult<RegTagDetail?>(null);
+
+        Corrected.Add((tagId, request));
+
+        var updated = existing with
+        {
+            ClassId = request.ClassId,
+            Code = request.Code,
+            Revision = request.Revision,
+            Name = request.Name
+        };
+
+        _tags[tagId] = updated;
+        return Task.FromResult<RegTagDetail?>(Detail(tagId, updated));
     }
 
     public Task<RegScope?> FindScopeByGuidAsync(Guid guid, CancellationToken ct) =>
@@ -246,7 +273,7 @@ internal sealed class FakeRegLocationClient(Dictionary<Guid, int> scopesByGuid) 
                 ? new RegScope(scopeId, "Test Site", 1, null, null, null, true, 0)
                 : null);
 
-    private static RegTagDetail Detail(CreateTagRequest r, int tagId) =>
+    private static RegTagDetail Detail(int tagId, CreateTagRequest r) =>
         new(new RegTag(tagId, r.ItemId, r.ClassId, r.Code, r.Revision, r.Name, r.State ?? "Proposed"),
             new RegObject(tagId, 1, r.Guid, r.ScopeId, 0, 0, null, null, null, null));
 

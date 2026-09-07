@@ -153,7 +153,7 @@ $engines = @{
         # exists.
         Extra   = @{
             'Enabled'            = 'false'
-            'IngestEnabled'      = 'false'
+            'IngestEnabled'      = 'true'
             'SitesIngestEnabled' = 'true'
             'Domain'             = 'operations'
             'InboundDomain'      = 'engineering'
@@ -162,7 +162,7 @@ $engines = @{
         }
         Schedules = @{
             'RegLocationEngineSweepSchedule'       = '0 */5 * * * *'
-            'RegLocationEngineIngestSchedule'      = '0 */2 * * * *'
+            'RegLocationEngineIngestSchedule'      = '*/10 * * * * *'
             'RegLocationEngineSitesIngestSchedule' = '0 */2 * * * *'
         }
     }

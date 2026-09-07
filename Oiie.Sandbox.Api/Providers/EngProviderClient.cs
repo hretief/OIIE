@@ -241,6 +241,14 @@ public sealed class EngProviderClient(HttpClient http, ILogger<EngProviderClient
         {
             using var response = await http.PostAsJsonAsync(route, draft, Json, ct);
 
+            // A name collision is ENG answering plainly, not a fault -- carried
+            // back as its own exception so the promote endpoint can turn it into
+            // a finding instead of an unhandled 500.
+            if (response.StatusCode == HttpStatusCode.Conflict)
+            {
+                throw new NamedVersionNameConflictException(draft.IModelId, draft.Name);
+            }
+
             response.EnsureSuccessStatusCode();
 
             return await response.Content.ReadFromJsonAsync<EngNamedVersionDto>(Json, ct)

@@ -1523,3 +1523,63 @@ months.
 **Out of scope:** `acme-sql-server` and the `mndot` Key Vault. Both are shared
 with resources outside this solution, and neither can be renamed in place —
 Azure requires create-and-migrate for both.
+
+## DR-025 — `RegLocationEngine__IngestEnabled` defaults to `true`, not `false`
+
+**Context:** Found 2026-09-06 while manually testing SC01 end to end for the
+first time against deployed dev apps. ENG promotions were confirmed reaching
+ISBM (`EngEngine` marker/segment publish counts advanced correctly on every
+poll), but REG-LOCATION's stewardship queue stayed short by exactly the
+elements published since the previous manual drain. No error appeared anywhere
+— not in the HTTP response, not in the timer's own log line, not in
+Application Insights, because there was no telemetry for the app at all to
+begin with.
+
+The cause was `RegLocationEngineFunctions.RegLocationEngineIngest`, the timer
+that drains the inbound channel: its first line is `if
+(!_options.IngestEnabled) return;`. The deploy script and
+`RegLocationEngine/local.settings.json` both shipped `IngestEnabled = false`,
+grouped in the same settings block as `Enabled = false` under the reasoning
+recorded in `deploy/engines/README.md` — that both derive their channel from an
+iTwin federation id and must wait for one to exist.
+
+**That reasoning does not hold for `IngestEnabled`.** `Enabled` gates
+`RegLocationApprovalService`'s sweep, which publishes *this* engine's own
+`SyncSites`/`SyncSegments` traffic and genuinely needs
+`ITwinFederationId` resolved first. `IngestEnabled` gates
+`SegmentIngestionService.DrainAsync`, which only subscribes to ENG's channel
+(`InboundDomain`) and reads whatever ENG already published — there is nothing
+twin-specific it needs to wait for. The two flags were conflated because they
+happened to be declared next to each other, not because they share a
+precondition.
+
+**Decision:** `RegLocationEngine__IngestEnabled` defaults to `true` in both the
+deploy script (`deploy/engines/deploy-engine.ps1`) and
+`RegLocationEngine/local.settings.json`. `Enabled` (the outbound sweep) stays
+`false` by default, unchanged — that one genuinely does need the federation id
+set first.
+
+**Also changed:** `RegLocationEngineIngestSchedule` moved from `0 */2 * * * *`
+(every 2 minutes) to `*/10 * * * * *` (every 10 seconds), matching
+`EngEnginePollSchedule`'s existing 15-second cadence closely enough that a
+manual promotion in the ENG UI shows up in the REG-LOCATION stewardship queue
+in roughly the same second, without a manual drain call. Two minutes was a
+reasonable production default but made interactive testing feel broken even
+once `IngestEnabled` was corrected.
+
+**Consequences:**
+
+- Any environment stood up before this change carries the old
+  `IngestEnabled = false` (or the old 2-minute schedule) until it is
+  redeployed or the setting is corrected by hand:
+  `az functionapp config appsettings set -g <rg> -n acme-engn-reglocation-dev
+  --settings RegLocationEngine__IngestEnabled=true
+  RegLocationEngineIngestSchedule="*/10 * * * * *"`.
+- This was silent by design elsewhere in the estate (`Enabled=false` is meant
+  to fail as silence rather than error, per DR-020/DR-021's reasoning about
+  `IsPublishable`), but that design intent assumed the flag would only ever be
+  `false` deliberately, not by an inherited default nobody revisited. The
+  absence of Application Insights telemetry for `acme-engn-reglocation-dev`
+  made this materially harder to find — worth checking that every deployed
+  engine actually has a wired-up instrumentation key as a follow-up.
+

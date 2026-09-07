@@ -276,14 +276,81 @@ public sealed class SegmentIngestionService(
                 request = request with { ScopeId = scopeId.Value };
             }
 
-            // The registry is asked, rather than engine state consulted. First
-            // proposal wins: a location the registry already holds is left
-            // exactly as it is, whatever state it is in. That is what makes a
-            // redelivered message harmless, and it means a re-publication can
-            // never reopen a decision a steward has already made.
+            // The registry is asked, rather than engine state consulted, because
+            // it is the registry that actually knows what it holds and whether
+            // a steward has already acted on it.
             var existing = await regLocation.FindTagsByGuidAsync(request.Guid!.Value, ct);
 
-            if (existing.Count > 0)
+            // Same GUID, same inbound revision slot: this is the row this leg
+            // itself proposed earlier, so a later publication for it is a
+            // correction, not a duplicate. Matched by revision because a GUID
+            // legitimately carries several real revisions (see
+            // docs/FederationId/federation-guid-guideline.md) and only the one
+            // this leg owns may be overwritten in place.
+            var priorProposal = existing.FirstOrDefault(t => t.Tag.Revision == request.Revision);
+
+            if (priorProposal is not null)
+            {
+                // Identical to what is already on file -- a redelivery, not a
+                // correction. Writing it again would just restamp date_changed
+                // for no reason, and would count as a false correction.
+                var unchanged =
+                    priorProposal.Tag.ClassId == request.ClassId &&
+                    string.Equals(priorProposal.Tag.Code, request.Code, StringComparison.Ordinal) &&
+                    string.Equals(priorProposal.Tag.Name, request.Name, StringComparison.Ordinal);
+
+                if (unchanged)
+                {
+                    report.AlreadyKnown++;
+
+                    logger.LogDebug(
+                        "Segment {Guid} rev {Revision} matches tag {TagId} already on file; left untouched.",
+                        request.Guid, request.Revision, priorProposal.Tag.TagId);
+
+                    continue;
+                }
+
+                if (!string.Equals(priorProposal.Tag.State, RegTagStates.Proposed, StringComparison.OrdinalIgnoreCase))
+                {
+                    // A steward has already decided this revision. Overwriting it
+                    // here would let an unreviewed correction masquerade as the
+                    // decision that was actually made, so it is left untouched --
+                    // the correction waits for a fresh revision or a steward.
+                    report.AlreadyKnown++;
+
+                    logger.LogDebug(
+                        "Segment {Guid} rev {Revision} is already {State}; left untouched.",
+                        request.Guid, request.Revision, priorProposal.Tag.State);
+
+                    continue;
+                }
+
+                var corrected = await regLocation.UpdateTagAsync(
+                    priorProposal.Tag.TagId,
+                    new UpdateTagRequest(request.ClassId, request.Code, request.Revision, request.Name),
+                    ct);
+
+                if (corrected is null)
+                {
+                    // Removed from the registry between the lookup and the write --
+                    // an ordinary race, not a fault. Falling through would try to
+                    // create it fresh below.
+                    logger.LogDebug(
+                        "Tag {TagId} for {Guid} vanished before its correction could be applied; proposing anew.",
+                        priorProposal.Tag.TagId, request.Guid);
+                }
+                else
+                {
+                    report.TagsProposed++;
+
+                    logger.LogInformation(
+                        "Corrected tag {TagId} '{Code}' from {Guid} [{CorrelationId}].",
+                        corrected.Tag.TagId, corrected.Tag.Code, request.Guid, envelope.BodId);
+
+                    continue;
+                }
+            }
+            else if (existing.Count > 0)
             {
                 report.AlreadyKnown++;
 

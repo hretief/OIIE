@@ -17,7 +17,7 @@
     "RegLocationEngine__ITwinFederationId": "00000000-0000-0000-0000-000000000000",
 
     "//inbound": "The leg that receives proposals from ENG. InboundDomain is engineering -- ENG's channel -- and must not be the operations domain above, which is this engine's own outbound channel.",
-    "RegLocationEngine__IngestEnabled": "false",
+    "RegLocationEngine__IngestEnabled": "true",
     "RegLocationEngine__InboundDomain": "engineering",
     "RegLocationEngine__InboundTopics__0": "oiie:sc01/ccom:SyncSegments",
     "RegLocationEngine__InboundItemId": "1",
@@ -39,7 +39,7 @@
     "Isbm__ApiKey": "",
 
     "RegLocationEngineSweepSchedule": "0 */5 * * * *",
-    "RegLocationEngineIngestSchedule": "0 */2 * * * *",
+    "RegLocationEngineIngestSchedule": "*/10 * * * * *",
     "RegLocationEngineSitesIngestSchedule": "0 */2 * * * *"
   }
 }
