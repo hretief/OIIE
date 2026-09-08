@@ -1,0 +1,8 @@
+﻿Functions\ebfs_exists.sql
+Procedures\ebps_drop.sql
+
+Tables\base_types.sql
+Tables\namespaces.sql
+Tables\id_number_register.sql                   # Mssql Only
+Tables\class_groups.sql
+Tables\class_objects.sql
