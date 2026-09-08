@@ -101,20 +101,38 @@ public sealed class EngEngineClient(
     /// </summary>
     private const string DefaultSiteType = "District";
 
+    // Each base URL accepts two setting names, and this is not redundancy for
+    // its own sake. Sandbox:*ProviderBaseUrl was the reset's own set;
+    // Providers:*:BaseUrl is what the panels read and what deploy.ps1 has always
+    // written. Only ENG was ever given both, so day zero skipped REG-LOCATION
+    // while the REG-LOCATION panel worked -- a reset that reported success and
+    // left the data alone. Reading both means one configured provider is
+    // configured for every purpose.
     private readonly string? _providerBaseUrl =
-        Trimmed(configuration["Sandbox:EngProviderBaseUrl"]);
+        Trimmed(configuration["Sandbox:EngProviderBaseUrl"])
+        ?? Trimmed(configuration["Providers:Eng:BaseUrl"]);
 
     private readonly string? _engineBaseUrl =
         Trimmed(configuration["Sandbox:EngEngineBaseUrl"]);
 
     private readonly string? _regLocationBaseUrl =
-        Trimmed(configuration["Sandbox:RegLocationProviderBaseUrl"]);
+        Trimmed(configuration["Sandbox:RegLocationProviderBaseUrl"])
+        ?? Trimmed(configuration["Providers:RegLocation:BaseUrl"]);
+
+    // The REG-LOCATION engine is its own Functions host, separate from the
+    // REG-LOCATION provider it reads. Its published-tag set is what made
+    // publishedTags keep counting across day zero: the registry was emptied
+    // while the engine kept believing it had already sent everything.
+    private readonly string? _regLocationEngineBaseUrl =
+        Trimmed(configuration["Sandbox:RegLocationEngineBaseUrl"]);
 
     private readonly string? _mmsBaseUrl =
-        Trimmed(configuration["Sandbox:MmsProviderBaseUrl"]);
+        Trimmed(configuration["Sandbox:MmsProviderBaseUrl"])
+        ?? Trimmed(configuration["Providers:Mms:BaseUrl"]);
 
     private readonly string? _cmsBaseUrl =
-        Trimmed(configuration["Sandbox:CmsProviderBaseUrl"]);
+        Trimmed(configuration["Sandbox:CmsProviderBaseUrl"])
+        ?? Trimmed(configuration["Providers:Cms:BaseUrl"]);
 
     /// <summary>
     /// The CIR the engines register in, which is not necessarily the one the
@@ -129,14 +147,27 @@ public sealed class EngEngineClient(
     /// engine-written entries that break the next run.
     /// </remarks>
     private readonly string? _cirBaseUrl =
-        Trimmed(configuration["Sandbox:CirProviderBaseUrl"]);
+        Trimmed(configuration["Sandbox:CirProviderBaseUrl"])
+        ?? Trimmed(configuration["Providers:Cir:BaseUrl"]);
 
     /// <summary>
     /// The registry the engines write into -- the enterprise id, not a
     /// per-participant value.
     /// </summary>
-    private readonly string? _cirRegistryId =
-        Trimmed(configuration["Sandbox:CirRegistryId"]);
+    /// <remarks>
+    /// Defaults to the enterprise the engines are deployed with
+    /// (<c>{prefix}__Enterprise=acme</c> in deploy-engine.ps1) rather than to
+    /// null. An absent registry id used to mean CIR was skipped entirely, so the
+    /// one setting nobody knew to write was also the one that silently left
+    /// stale CIRIDs behind. Defaulting to the value the engines actually use
+    /// makes the common deployment correct without configuration.
+    ///
+    /// This drops only the engine-written registry. The personality packs
+    /// register under OIIE-SANDBOX, which is a different deployment and is not
+    /// cleared here.
+    /// </remarks>
+    private readonly string _cirRegistryId =
+        Trimmed(configuration["Sandbox:CirRegistryId"]) ?? "acme";
 
     // The provider and engine are separate Functions hosts with separate host
     // keys. A single default header on the HttpClient can only ever satisfy one
@@ -153,6 +184,10 @@ public sealed class EngEngineClient(
 
     private readonly string? _regLocationKey =
         Trimmed(configuration["Providers:RegLocation:Key"])
+        ?? Trimmed(configuration["Sandbox:EngFunctionsKey"]);
+
+    private readonly string? _regLocationEngineKey =
+        Trimmed(configuration["Sandbox:RegLocationEngineKey"])
         ?? Trimmed(configuration["Sandbox:EngFunctionsKey"]);
 
     private readonly string? _mmsKey =
@@ -208,10 +243,16 @@ public sealed class EngEngineClient(
     /// keeps the emulation honest -- the sandbox has no more access to a
     /// customer system's schema than a real integrator would.
     ///
-    /// An unconfigured base URL is a skip, not a failure. Running only part of
-    /// the stack is the normal case during front-end work, and reporting "MMS
-    /// was not reachable" for a host nobody started would bury the failures that
-    /// do matter.
+    /// Each provider decides for itself what a reset means. They drop, recreate
+    /// and re-seed, so bootstrapped reference data -- classes, namespaces, units
+    /// -- comes back while transactional rows do not. Nothing here needs to know
+    /// that distinction.
+    ///
+    /// An unconfigured provider is a failure, not a skip. It reads as one system
+    /// being untouched while the rest were rebuilt, which is the state day zero
+    /// exists to rule out: ids restart from 1 in the systems that were reset and
+    /// collide with the rows still held by the one that was not. Silence here
+    /// previously turned that into a green reset over stale data.
     ///
     /// Returns the reasons rather than throwing. Day zero has already torn down
     /// channels and participant schemas by the time this runs, and failing the
@@ -222,25 +263,24 @@ public sealed class EngEngineClient(
     {
         var problems = new List<string>();
 
-        var targets = new List<(string Label, string? Url, string? Key)>
+        var targets = new List<(string Label, string? Url, string? Key, string Setting)>
         {
-            ("ENG provider", _providerBaseUrl is null ? null : $"{_providerBaseUrl}/eng/reset", _providerKey),
-            ("ENG engine", _engineBaseUrl is null ? null : $"{_engineBaseUrl}/engine/reset", _engineKey),
-            ("REG-LOCATION provider", _regLocationBaseUrl is null ? null : $"{_regLocationBaseUrl}/reglocation/reset", _regLocationKey),
-            ("MMS provider", _mmsBaseUrl is null ? null : $"{_mmsBaseUrl}/mms/reset", _mmsKey),
-            ("CMS provider", _cmsBaseUrl is null ? null : $"{_cmsBaseUrl}/cms/reset", _cmsKey),
+            ("ENG provider", _providerBaseUrl is null ? null : $"{_providerBaseUrl}/eng/reset", _providerKey, "Sandbox:EngProviderBaseUrl or Providers:Eng:BaseUrl"),
+            ("ENG engine", _engineBaseUrl is null ? null : $"{_engineBaseUrl}/engine/reset", _engineKey, "Sandbox:EngEngineBaseUrl"),
+            ("REG-LOCATION provider", _regLocationBaseUrl is null ? null : $"{_regLocationBaseUrl}/reglocation/reset", _regLocationKey, "Sandbox:RegLocationProviderBaseUrl or Providers:RegLocation:BaseUrl"),
+            ("REG-LOCATION engine", _regLocationEngineBaseUrl is null ? null : $"{_regLocationEngineBaseUrl}/engine/reset", _regLocationEngineKey, "Sandbox:RegLocationEngineBaseUrl"),
+            ("MMS provider", _mmsBaseUrl is null ? null : $"{_mmsBaseUrl}/mms/reset", _mmsKey, "Sandbox:MmsProviderBaseUrl or Providers:Mms:BaseUrl"),
+            ("CMS provider", _cmsBaseUrl is null ? null : $"{_cmsBaseUrl}/cms/reset", _cmsKey, "Sandbox:CmsProviderBaseUrl or Providers:Cms:BaseUrl"),
         };
 
-        if (!IsConfigured)
-        {
-            problems.Add("Sandbox:EngProviderBaseUrl and Sandbox:EngEngineBaseUrl are not configured, " +
-                         "so ENG's own data was left as it was.");
-        }
-
-        foreach (var (label, url, key) in targets)
+        foreach (var (label, url, key, setting) in targets)
         {
             if (url is null)
             {
+                problems.Add(
+                    $"{label} was NOT reset: no base URL is configured. Set {setting}. " +
+                    "Its data is still that of the previous run, while the systems that " +
+                    "were reset have restarted their ids from 1.");
                 continue;
             }
 
@@ -287,12 +327,16 @@ public sealed class EngEngineClient(
     /// </remarks>
     public async Task<IReadOnlyList<string>> ResetCirAsync(CancellationToken ct)
     {
-        if (_cirBaseUrl is null || string.IsNullOrWhiteSpace(_cirRegistryId))
+        if (_cirBaseUrl is null)
         {
-            // Skipped rather than reported, as an unconfigured provider is in
-            // ResetAsync: running part of the stack is normal, and a warning for
-            // a host nobody deployed would bury the failures that matter.
-            return [];
+            // Reported rather than skipped. CIR holds the identities of rows the
+            // other systems are about to renumber from 1, so leaving it
+            // untouched is the specific failure that surfaces later as a
+            // duplicate-entry conflict on what looks like a greenfield run.
+            return ["The CIR registry was NOT dropped: no base URL is configured. " +
+                    "Set Sandbox:CirProviderBaseUrl or Providers:Cir:BaseUrl. Its entries " +
+                    "still identify rows from the previous run, and will collide with the " +
+                    "first sites created after this reset."];
         }
 
         try
@@ -308,7 +352,7 @@ public sealed class EngEngineClient(
             // greenfield environment has no registry to drop.
             if (response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
-                return [];
+                return await ResetCirSessionsAsync(ct);
             }
 
             return [$"CIR refused to drop registry '{_cirRegistryId}' " +
@@ -321,6 +365,55 @@ public sealed class EngEngineClient(
 
             return [$"Could not reach the CIR provider to drop registry " +
                     $"'{_cirRegistryId}': {ex.Message}"];
+        }
+    }
+
+    /// <summary>
+    /// Tells the CIR provider to close and forget its ISBM sessions.
+    /// </summary>
+    /// <remarks>
+    /// Day zero deletes the channels the provider is subscribed to, which
+    /// destroys the sessions on them. The provider keeps polling the stored
+    /// session ids regardless, and the broker no longer recognises them, so
+    /// without this it never receives another BOD until someone restarts it.
+    ///
+    /// Called after the registry drop rather than before, because reopening a
+    /// session against a channel that is about to be deleted would leave the
+    /// provider holding a stale id again.
+    ///
+    /// A failure here is reported, not thrown: the registry has already been
+    /// dropped by this point, and losing that outcome to a session problem
+    /// would leave the caller believing nothing happened.
+    /// </remarks>
+    private async Task<IReadOnlyList<string>> ResetCirSessionsAsync(CancellationToken ct)
+    {
+        try
+        {
+            var response = await SendAsync(
+                HttpMethod.Post,
+                $"{_cirBaseUrl}/isbm/reset",
+                _cirKey,
+                body: null,
+                ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                return [];
+            }
+
+            return [$"The CIR registry was dropped, but its ISBM sessions were NOT " +
+                    $"reset ({(int)response.StatusCode}): " +
+                    Excerpt(await response.Content.ReadAsStringAsync(ct)) +
+                    " It will keep polling a session the broker has forgotten until " +
+                    "it is restarted."];
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            logger.LogWarning(ex, "Resetting CIR ISBM sessions failed.");
+
+            return [$"The CIR registry was dropped, but its ISBM sessions could not be " +
+                    $"reset: {ex.Message} It will keep polling a session the broker has " +
+                    "forgotten until it is restarted."];
         }
     }
 

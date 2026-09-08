@@ -10,25 +10,19 @@ identifierStyle: isa-tag
 # Publishes only. The self-subscription used for the phase 0 loopback is gone now
 # that a real receiver exists.
 #
-# The URI follows the OIIE naming convention, /{enterprise}/{itwin-federation-id}/
-# {domain}/{type}. The federation id is the sandbox's standing iTwin and has to match
-# the one in the scenarios byte for byte: this list is what the participant actually
-# publishes to, while the scenario's setup.channels only provisions and asserts, so a
-# divergence shows up as a run where nothing arrives and nothing says why.
+# Only enterprise-level channels are declared here, and that is the whole rule:
+# the registry describes what must exist before any iTwin does. Per-iTwin
+# channels are not listed because they cannot be -- their URIs carry a federation
+# id that does not exist until a twin is created -- and ENG provisions them from
+# the twin lifecycle instead. A pinned one used to sit here, which meant day zero
+# faithfully rebuilt a channel for a twin the same reset had just deleted.
 channels:
-  - channelUri: /acme/8f2f5e1c-6a1e-4c8e-9a5c-2b0e7d3f4a11/engineering/publication
-    role: Publisher
-    topics:
-      - Segments
-    useNotifications: false
-
   # The enterprise sites channel SyncSites travels on.
   #
   # Declared here even though the ENG *engine* publishes to it rather than this
   # participant, because day zero rebuilds only channels the registry knows
   # about. Left undeclared it was deleted and never recreated, and since nothing
-  # self-heals it -- the engine's channel bootstrap creates only the two
-  # per-iTwin channels, and the site publisher assumes this one exists -- every
+  # self-heals it -- the site publisher assumes this one exists -- every
   # SyncSites publication after a reset failed with 404 until someone recreated
   # it by hand.
   #

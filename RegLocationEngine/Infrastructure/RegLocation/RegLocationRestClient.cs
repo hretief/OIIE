@@ -65,6 +65,16 @@ public interface IRegLocationClient
     /// </summary>
     Task<RegScope?> FindScopeByGuidAsync(Guid guid, CancellationToken ct);
 
+    /// <summary>
+    /// The scope with this id, or null.
+    ///
+    /// The reverse of <see cref="FindScopeByGuidAsync"/>, and it exists for the
+    /// outbound leg: a tag records the scope it lives in but not the site, so
+    /// publishing an approval means going scope-first to find the site GUID the
+    /// channel is rooted in.
+    /// </summary>
+    Task<RegScope?> FindScopeAsync(int scopeId, CancellationToken ct);
+
     Task<RegScope> CreateScopeAsync(CreateScopeRequest request, CancellationToken ct);
 
     /// <summary>
@@ -224,6 +234,27 @@ public sealed class RegLocationRestClient(HttpClient http) : IRegLocationClient
     public async Task<RegScope?> FindScopeByGuidAsync(Guid guid, CancellationToken ct) =>
         (await GetListAsync<RegScope>($"scopes?guid={guid:D}", $"scope guid '{guid:D}'", ct))
             .FirstOrDefault();
+
+    public async Task<RegScope?> FindScopeAsync(int scopeId, CancellationToken ct)
+    {
+        using var response = await http.GetAsync($"scopes/{scopeId}", ct);
+
+        // Absent rather than an error: a tag can name a scope that has since
+        // been deleted, and the caller reports that as a finding rather than
+        // treating the registry as broken.
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+
+            throw new RegLocationClientException(
+                $"REG-LOCATION returned {(int)response.StatusCode} reading scope '{scopeId}': {body}");
+        }
+
+        return await response.Content.ReadFromJsonAsync<RegScope>(Json, ct);
+    }
 
     public async Task<RegScope> CreateScopeAsync(CreateScopeRequest request, CancellationToken ct) =>
         await PostAsync<CreateScopeRequest, RegScope>(

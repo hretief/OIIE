@@ -4,6 +4,64 @@ Pending work carried between sessions. Decisions belong in
 [decision-register.md](decision-register.md); this file is only for things not
 yet done.
 
+## `RegLocationEngine` is pinned to a single `iTwinFederationId`
+
+**Status:** not started. Raised 2026-09-08 after a day zero produced no CIR or
+REG-LOCATION entries with no error.
+
+`RegLocationEngine` reads `iTwinFederationId` from app settings and derives its
+inbound channel from it, so `GET engine/status` reported
+
+    inboundChannelUri: /acme/523099d2-.../engineering/publication
+
+while ENG had published the promoted element to the newly created twin
+`d543ebf6-...`. The engine was subscribed to the channel of a twin that day zero
+had destroyed, so it read zero messages indefinitely.
+
+This is silent by construction: an empty channel and a wrong channel are the same
+observation. It cost most of a session to find, because the ENG side of the
+publish looked correct in isolation and only a side-by-side comparison of the two
+channel URIs showed the mismatch.
+
+The engine needs to follow the twins that actually exist rather than one baked in
+at deploy time -- either by subscribing per site as sites are ingested (it already
+derives per-site URIs in `SiteIngestionService`), or by being reconfigured as part
+of day zero. Until then, every day zero requires the setting to be updated by hand
+and the engine restarted.
+
+Worth considering alongside it: `engine/status` should say when its configured
+twin is one no participant is publishing to, so this reports itself instead of
+presenting as silence.
+
+## Sandbox deploys are additive, leaving deleted files alive in dev
+
+**Status:** not started. Raised 2026-09-08. To be fixed when MMS is done and
+again when CMS is picked up.
+
+`cms/personality.yaml` was deleted from `Oiie.Sandbox.Core/PersonalityPacks/` but
+still exists in `site/wwwroot/PersonalityPacks/` on `acme-api-sandbox-dev`,
+confirmed over Kudu: the deployed app has `cms`, `eng`, `mms` and `reg-location`
+while source has only the latter three. Deployment overlays files without removing
+ones that have gone, so the pack has survived every redeploy since.
+
+The consequence is a live `ParticipantRegistry` containing a participant that
+exists nowhere in the repository. Its declared channels are
+`/OIIE-SANDBOX/Enterprise/Site/OandM` and `.../OandM-Events`, which is why day
+zero recreates `OandM-Events` and stamps it "OIIE Sandbox day zero" despite no
+source file declaring it. Anything iterating `registry.All` -- channel purge,
+rebuild, provisioning -- silently acts on the phantom.
+
+`git status` cannot show this: the divergence lives entirely in deployed state.
+
+Two things to settle when CMS is picked up:
+
+- Whether `cms` should have a pack in source as `mms` does. It is deployed and
+  running (`acme-api-cms-dev`, `acme-engn-cms-dev`) and `sc02` still declares it
+  as a subscriber, so its absence from the packs may be the accident rather than
+  its presence in `wwwroot`.
+- Making the deploy clean rather than additive, which is a separate defect and
+  true regardless of how the first question is answered.
+
 ## `CmsEngine` opens its sites subscription without a `subscriberId`
 
 **Status:** not started. Raised 2026-09-07 while fixing the same fault in
@@ -734,11 +792,14 @@ What remains:
   inbound leg passes `Proposed` explicitly, so it is correct today, but the safe
   behaviour depends on every future caller remembering. The default should
   probably be inverted, with the bootstrap seed stating `Approved` out loud.
-- **Inbound identity matching is GUID-only, first-proposal-wins.** A segment
-  whose GUID the registry already holds is ignored entirely, whatever state that
-  tag is in. That makes redelivery harmless and never reopens a steward's
-  decision, but it also means a genuine revision from ENG will not update
-  anything. Revision handling is unimplemented.
+- **Inbound identity matching is GUID-only, and a correction opens a new
+  revision.** Resolved by DR-028: a segment is compared against the highest
+  revision on file for its GUID. Identical content is ignored, a still-`Proposed`
+  row is corrected in place, and a change to an already-decided row is filed as a
+  new row at `revision = max + 1`. Outbound publishes only the highest revision
+  per GUID. What remains open is that matching is still GUID-only, so a location
+  republished under a *new* GUID is a new location as far as the registry is
+  concerned.
 - **A message that fails to file blocks the queue.** The drain stops rather than
   skipping ahead, and the publication stays on the channel. Correct for ordering
   and for not losing data, but a permanently bad message needs manual removal.

@@ -89,6 +89,33 @@ public class EngSegmentsBuilderTests
     }
 
     [Fact]
+    public void InfoSource_uuid_follows_the_marker_not_the_configured_poll_filter()
+    {
+        // The configured id is a poll filter; the marker says what was actually
+        // read. Every other test uses one guid for both, so it cannot tell which
+        // of the two the builder used -- this one gives them different values.
+        //
+        // The case is real rather than theoretical: a provider reset regenerates
+        // iModel ids, and the setting that names one goes stale. A stale id that
+        // matches nothing fails the lookup and is obvious. A stale id that
+        // matches a different live model publishes successfully with someone
+        // else's provenance, which is not.
+        var otherModel = Guid.Parse("33333333-3333-3333-3333-333333333333");
+
+        var builder = new EngSegmentsBuilder(Options.Create(new EngEngineOptions
+        {
+            IModelId = otherModel,
+            SourceId = "ENG",
+            LogicalId = "ENG"
+        }));
+
+        var bod = builder.Build(Marker(), [Element()], ITwinId, "corr-3");
+
+        Assert.Equal(IModelId, FirstSegment(bod).InfoSource?.UUID);
+        Assert.NotEqual(otherModel, FirstSegment(bod).InfoSource?.UUID);
+    }
+
+    [Fact]
     public void Ec_instance_id_and_code_value_complete_the_composite_key()
     {
         var bod = Builder().Build(Marker(), [Element()], ITwinId, "corr-3");

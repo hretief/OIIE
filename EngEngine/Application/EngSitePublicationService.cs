@@ -1,3 +1,4 @@
+using EngEngine.Infrastructure.Cir;
 using EngEngine.Infrastructure.Eng;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -9,6 +10,20 @@ public sealed record EngSitePublicationReport
 {
     public int SitesSeen { get; init; }
     public int SitesPublished { get; init; }
+
+    /// <summary>
+    /// Per-iTwin channels provisioned during this run. Zero is the steady state
+    /// once a twin has been published before, so this counts work done rather
+    /// than channels that exist.
+    /// </summary>
+    public int ChannelsCreated { get; init; }
+
+    /// <summary>
+    /// CIR entries written for the twins in this run. Zero is likewise normal:
+    /// CIR reports an identity it already holds as nothing-written.
+    /// </summary>
+    public int CirEntriesWritten { get; init; }
+
     public IReadOnlyList<string> Errors { get; init; } = [];
 
     /// <summary>
@@ -26,8 +41,16 @@ public sealed record EngSitePublicationReport
 /// inside it, because the two flows differ in every respect that matters. That
 /// one is a poll with a watermark over a stream of markers; this one is an act
 /// performed on a named twin. That one publishes onto the twin's own channel;
-/// this one cannot, because the twin's channel does not exist until this message
-/// has been processed.
+/// this one cannot, because the twin's channel is not addressable by a message
+/// whose purpose is to announce that the twin exists.
+///
+/// This service also establishes the twin before announcing it: it provisions
+/// the per-iTwin channels and registers the twin in CIR, then publishes. ENG
+/// does that work because ENG is where the twin comes from. The identity CIR
+/// holds is ENG's own primary key, and the channels are named for a federation
+/// id only ENG knows at creation time; a consumer doing either on ENG's behalf
+/// is recording something it inferred from a message rather than something it
+/// owns, and cannot do it until after the message it was needed for.
 ///
 /// There is no watermark and no published-set here. SyncSites goes out as
 /// Replace and the receiver upserts on Site.UUID, so republishing a site is
@@ -38,6 +61,7 @@ public sealed record EngSitePublicationReport
 public sealed class EngSitePublicationService(
     IEngClient eng,
     IIsbmClient isbm,
+    ICirClient cir,
     EngSitesBuilder builder,
     IOptions<EngEngineOptions> options,
     ILogger<EngSitePublicationService> logger)
@@ -79,6 +103,8 @@ public sealed class EngSitePublicationService(
         var errors = new List<string>();
         var skipped = new List<string>();
         var publishedCount = 0;
+        var channelsCreated = 0;
+        var cirEntriesWritten = 0;
 
         string? sessionId = null;
 
@@ -92,6 +118,17 @@ public sealed class EngSitePublicationService(
 
             try
             {
+                // Established before announced, and in this order deliberately.
+                // A subscriber reacting to SyncSites may go looking for the
+                // twin's channel or its CIR entry immediately; if either is
+                // created after the message goes out, that lookup races the
+                // publication and fails intermittently -- the kind of fault
+                // that reproduces only under load. Doing both first means the
+                // announcement is the last thing that happens, so anything it
+                // refers to is already there.
+                channelsCreated += await ProvisionChannelsAsync(twin, ct);
+                cirEntriesWritten += await RegisterInCirAsync(twin, ct);
+
                 // Opened lazily, and not closed afterwards: the client caches
                 // publication sessions per channel and reuses them across runs,
                 // as the marker drain does. Closing here would discard a session
@@ -128,9 +165,150 @@ public sealed class EngSitePublicationService(
         {
             SitesSeen = twins.Count,
             SitesPublished = publishedCount,
+            ChannelsCreated = channelsCreated,
+            CirEntriesWritten = cirEntriesWritten,
             Errors = errors,
             Skipped = skipped
         };
+    }
+
+    /// <summary>
+    /// Provisions the per-iTwin channels the twin's later traffic uses.
+    /// </summary>
+    /// <remarks>
+    /// Non-fatal per channel, and per twin. A channel that could not be created
+    /// is retried the next time the twin is published, whereas failing the run
+    /// would stop a bootstrap of many twins at the first broker hiccup and leave
+    /// the rest unannounced.
+    ///
+    /// Creation is conditional on a lookup rather than relying on a
+    /// create-if-absent: the broker answers an existing channel with a fault,
+    /// and treating that fault as success would hide the case where the channel
+    /// exists with the wrong type.
+    /// </remarks>
+    private async Task<int> ProvisionChannelsAsync(EngITwin twin, CancellationToken ct)
+    {
+        if (!_options.ProvisionITwinChannels)
+            return 0;
+
+        var created = 0;
+
+        foreach (var domain in _options.ITwinChannelDomains)
+        {
+            var uri = _options.ChannelUriFor(twin.ITwinId, domain);
+
+            try
+            {
+                if (await isbm.GetChannelAsync(uri, ct) is not null)
+                    continue;
+
+                await isbm.CreateChannelAsync(
+                    uri,
+                    IsbmChannelType.Publication,
+
+                    // The readable name lives here, which is why the URI does
+                    // not need to carry it: a channel named by federation id
+                    // survives the twin being renamed, and this is where someone
+                    // reading the broker's channel list finds out what it is.
+                    description: twin.Handle,
+                    ct: ct);
+
+                created++;
+
+                logger.LogInformation(
+                    "Provisioned channel {ChannelUri} for iTwin '{Site}'.", uri, twin.Handle);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Provisioning channel {ChannelUri} failed.", uri);
+            }
+        }
+
+        return created;
+    }
+
+    /// <summary>
+    /// Registers the twin in CIR under ENG's own key.
+    /// </summary>
+    /// <remarks>
+    /// IdInSource and Cirid are both the iTwin GUID here, and that is a fact
+    /// about ENG rather than a shortcut: ENG's internal key for a twin *is* its
+    /// federation id, so this entry records that the two coincide at the source.
+    /// Other participants differ -- REG-LOCATION carries an integer scope id
+    /// against the same Cirid -- and it is exactly that difference CIR exists to
+    /// hold.
+    ///
+    /// Because they coincide here, the two fields are the easiest place in the
+    /// system for a formatting difference to hide: written differently they
+    /// would still look correct side by side, while a consumer matching on the
+    /// string would find nothing. Both are rendered "D" explicitly, which is
+    /// also what <see cref="EngSitesBuilder"/> publishes as IDInInfoSource, so
+    /// the id in the message and the id in the registry are the same characters.
+    ///
+    /// CreateCirid is false because the GUID already exists -- ENG assigned it
+    /// when the twin was created. Asking CIR to mint one would produce a second
+    /// identity for a thing that already has one.
+    ///
+    /// Failure is logged and swallowed, matching the channel step: an
+    /// unreachable CIR should not prevent the twin from being announced, and the
+    /// next publication retries the registration.
+    /// </remarks>
+    private async Task<int> RegisterInCirAsync(EngITwin twin, CancellationToken ct)
+    {
+        if (!_options.RegisterInCir || string.IsNullOrWhiteSpace(_options.CirBaseUrl))
+            return 0;
+
+        // Named apart even though they carry the same value, so the trace says
+        // which role each is playing. When ENG's internal key stops being the
+        // federation id -- or another participant reads this log to work out
+        // what to match on -- the distinction is already recorded rather than
+        // needing to be reconstructed.
+        var federationId = twin.ITwinId.ToString("D");
+        var internalId = twin.ITwinId.ToString("D");
+
+        var request = new CreateRegistryRequest(
+            [
+                new CirRegistry(
+                    Id: _options.Enterprise,
+                    Description: [new CirLocalizedText("Sites")],
+                    Categories:
+                    [
+                        new CirCategory(
+                            Id: _options.CirITwinCategory,
+                            SourceId: _options.SourceId,
+                            Description: [new CirLocalizedText("ENG iTwins")],
+                            Entries:
+                            [
+                                new CirEntry(
+                                    IdInSource: internalId,
+                                    SourceId: _options.SourceId,
+                                    Cirid: twin.ITwinId,
+                                    SourceOwnerId: _options.Enterprise,
+                                    Name: twin.Handle,
+                                    Description: new CirLocalizedText(
+                                        twin.Description ?? twin.Handle),
+                                    Properties: [])
+                            ])
+                    ])
+            ],
+            CreateCirid: false);
+
+        try
+        {
+            var written = await cir.RegisterEntriesAsync(request, ct);
+
+            logger.LogInformation(
+                "CIR registration for iTwin '{Site}' wrote {Written} entry(ies) " +
+                "(internal id {InternalId}, federation id {FederationId}).",
+                twin.Handle, written, internalId, federationId);
+
+            return written;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Registering iTwin '{Site}' in CIR failed.", twin.Handle);
+            return 0;
+        }
     }
 
     /// <summary>

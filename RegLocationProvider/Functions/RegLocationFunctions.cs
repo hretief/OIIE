@@ -210,6 +210,76 @@ public sealed class RegLocationFunctions(
         return await OkAsync(req, await store.GetClassesAsync(ns, ct), ct);
     }
 
+    [Function("GetClass")]
+    public async Task<HttpResponseData> GetClass(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "classes/{classId:int}")] HttpRequestData req,
+        int classId,
+        CancellationToken ct)
+    {
+        var found = await store.FindClassAsync(classId, ct);
+
+        return found is null
+            ? await ProblemAsync(req, HttpStatusCode.NotFound, $"No class '{classId}'.", ct)
+            : await OkAsync(req, found, ct);
+    }
+
+    /// <summary>
+    /// Adds a class to the registry's vocabulary.
+    ///
+    /// The class id is in the body rather than minted by the registry, because a
+    /// class id has to match the one the participant's own system uses; an id
+    /// this registry chose would name a class nothing else recognises. That is
+    /// also why this is a POST to the collection with an id inside rather than a
+    /// PUT to classes/{id}: creating a class is not idempotent, and a repeat is
+    /// reported as a conflict rather than quietly overwriting a vocabulary entry
+    /// other rows are already classified against.
+    /// </summary>
+    [Function("CreateClass")]
+    public async Task<HttpResponseData> CreateClass(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "classes")] HttpRequestData req,
+        CancellationToken ct)
+        => await WriteGuardedAsync(req, async () =>
+        {
+            var body = await ReadBodyAsync<CreateClassRequest>(req, ct);
+
+            if (body is null)
+                return await ProblemAsync(req, HttpStatusCode.BadRequest, "A request body is required.", ct);
+
+            if (string.IsNullOrWhiteSpace(body.Code) || string.IsNullOrWhiteSpace(body.Name))
+                return await ProblemAsync(req, HttpStatusCode.BadRequest, "A class requires both a code and a name.", ct);
+
+            var created = await store.CreateClassAsync(body, ct);
+            return await WriteAsync(req, HttpStatusCode.Created, created, ct);
+        }, ct);
+
+    /// <summary>
+    /// Edits a class's code, name, description or parent.
+    ///
+    /// Group and namespace are not editable: moving a class between them is not
+    /// a correction to that class, it is a different class.
+    /// </summary>
+    [Function("UpdateClass")]
+    public async Task<HttpResponseData> UpdateClass(
+        [HttpTrigger(AuthorizationLevel.Function, "put", Route = "classes/{classId:int}")] HttpRequestData req,
+        int classId,
+        CancellationToken ct)
+        => await WriteGuardedAsync(req, async () =>
+        {
+            var body = await ReadBodyAsync<UpdateClassRequest>(req, ct);
+
+            if (body is null)
+                return await ProblemAsync(req, HttpStatusCode.BadRequest, "A request body is required.", ct);
+
+            if (string.IsNullOrWhiteSpace(body.Code) || string.IsNullOrWhiteSpace(body.Name))
+                return await ProblemAsync(req, HttpStatusCode.BadRequest, "A class requires both a code and a name.", ct);
+
+            var updated = await store.UpdateClassAsync(classId, body, ct);
+
+            return updated is null
+                ? await ProblemAsync(req, HttpStatusCode.NotFound, $"No class '{classId}'.", ct)
+                : await OkAsync(req, updated, ct);
+        }, ct);
+
     [Function("GetUnits")]
     public async Task<HttpResponseData> GetUnits(
         [HttpTrigger(AuthorizationLevel.Function, "get", Route = "units")] HttpRequestData req,
@@ -414,10 +484,15 @@ public sealed class RegLocationFunctions(
     /// <summary>
     /// Lists tags, optionally narrowed by item or scope.
     ///
-    /// Also serves lookup by code and by federation GUID, through the code and
+    /// Also serves lookup by code and by federation GUID, through the tagCode and
     /// guid query parameters. Both are list-valued: a code is unique only per
     /// item and revision, and a GUID deliberately survives revision, so neither
     /// identifies exactly one row.
+    ///
+    /// The code filter is named tagCode rather than code because the Functions
+    /// host reserves 'code' for the API key. A caller authenticating that way was
+    /// silently read as asking for tags whose code is the key, and got an empty
+    /// list back instead of the registry.
     /// </summary>
     [Function("GetTags")]
     public async Task<HttpResponseData> GetTags(
@@ -426,7 +501,7 @@ public sealed class RegLocationFunctions(
     {
         var query = System.Web.HttpUtility.ParseQueryString(req.Url.Query);
 
-        var code = query["code"];
+        var code = query["tagCode"];
         var rawGuid = query["guid"];
 
         if (!string.IsNullOrWhiteSpace(rawGuid))

@@ -40,9 +40,12 @@ public sealed class ProviderEndpointOptions
 /// <summary>
 /// The provider apps the sandbox reads through to.
 ///
-/// Only ENG and REG-LOCATION are here. CMS and MMS panels still read the
-/// sandbox's own participants, and giving them settings that nothing consumed
-/// would imply otherwise.
+/// Only ENG and REG-LOCATION are bound here, because only those two back a
+/// panel. The configuration section is wider than this class: day zero also
+/// reads <c>Providers:Cir:BaseUrl</c>, <c>Providers:Mms:BaseUrl</c> and
+/// <c>Providers:Cms:BaseUrl</c> directly, so that one setting per provider
+/// serves both read-through and reset. Adding them as properties here would
+/// imply a panel reads them.
 /// </summary>
 public sealed class ProviderOptions
 {

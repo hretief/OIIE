@@ -40,6 +40,6 @@
 
     "RegLocationEngineSweepSchedule": "0 */5 * * * *",
     "RegLocationEngineIngestSchedule": "*/10 * * * * *",
-    "RegLocationEngineSitesIngestSchedule": "0 */2 * * * *"
+    "RegLocationEngineSitesIngestSchedule": "*/15 * * * * *"
   }
 }

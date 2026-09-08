@@ -92,9 +92,16 @@ public sealed class EngSegmentsBuilder(IOptions<EngEngineOptions> options)
         // element 44732 could not say which iModel to open it in. Every element in
         // one publication comes from one iModel, so it belongs on the shared
         // InfoSource rather than repeated on each segment.
+        //
+        // Taken from the marker rather than from configuration. Provenance is a
+        // statement about the thing being published, so it has to come from the
+        // payload: the configured id is a poll filter, and the two are only equal
+        // by convention. When they disagreed the engine polled one model and
+        // stamped another -- which, unlike a stale id that fails the lookup
+        // outright, publishes successfully and is wrong.
         var infoSource = new InfoSource
         {
-            UUID = _options.IModelId,
+            UUID = marker.IModelId,
             ShortName = _options.SourceId
         };
 

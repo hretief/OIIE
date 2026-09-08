@@ -52,6 +52,13 @@ public sealed class SiteIngestionReport
     /// <summary>Messages left on the channel because handling them failed.</summary>
     public int Failed { get; set; }
 
+    /// <summary>
+    /// The stored session id named a subscription the broker no longer had, so
+    /// it was reopened during this drain. See the segment leg's report for why
+    /// this is worth surfacing.
+    /// </summary>
+    public bool SessionReopened { get; set; }
+
     public string? Note { get; set; }
 }
 
@@ -122,7 +129,31 @@ public sealed class SiteIngestionService(
 
         while (report.MessagesRead < _options.MaxMessagesPerPoll)
         {
-            var message = await isbm.ReadPublicationAsync(_sessionId, ct);
+            IsbmMessage? message;
+
+            try
+            {
+                message = await isbm.ReadPublicationAsync(_sessionId, ct);
+            }
+            catch (IsbmException ex) when (ex.IsSessionProblem)
+            {
+                // Same recovery as the segment leg: day zero deletes the channel
+                // and the stored id outlives the subscription it names. Here it
+                // matters more, because a site that is never registered has no
+                // scope, and every segment for that site is deferred behind it.
+                logger.LogWarning(
+                    ex,
+                    "Sites session {SessionId} is unusable ({Fault}); reopening on {Channel}.",
+                    _sessionId, ex.Fault ?? ex.Status.ToString(), _options.SitesChannelUri);
+
+                _sessionId = await isbm.OpenSubscriptionSessionAsync(
+                    _options.SitesChannelUri, _options.SitesTopics, ct,
+                    subscriberId: $"{_options.SourceId}:sites");
+
+                report.SessionReopened = true;
+
+                message = await isbm.ReadPublicationAsync(_sessionId, ct);
+            }
 
             // Null is the broker saying the queue is empty, not an error.
             if (message is null)
@@ -602,8 +633,9 @@ public sealed class SiteIngestionService(
 
             logger.LogInformation(
                 "CIR registration for site '{Name}' wrote {Written} entry(ies) " +
-                "(scope {ScopeId}, item {ItemId}).",
-                mapped.Name, written, scopeId, itemId);
+                "(internal scope {ScopeId}, internal item {ItemId}, " +
+                "federation id {FederationId}).",
+                mapped.Name, written, scopeId, itemId, mapped.SiteGuid.ToString("D"));
 
             return written;
         }
@@ -618,13 +650,21 @@ public sealed class SiteIngestionService(
     }
 
     /// <summary>
-    /// Provisions the per-iTwin channels this site's later traffic uses.
-    ///
-    /// Done here, at the moment the site becomes real, because the alternative
-    /// is provisioning them on first publication -- which means the first
-    /// SyncSegments for a new site fails against a channel that does not exist
-    /// yet, and looks like a broker fault rather than a missing bootstrap step.
+    /// Ensures the per-iTwin channels this site's later traffic uses exist.
     /// </summary>
+    /// <remarks>
+    /// A safety net, not the primary path. ENG provisions these channels when
+    /// the twin is created, which is the only moment anyone knows the twin
+    /// exists before a message about it is sent; by the time this runs they are
+    /// normally already there and every iteration is a no-op.
+    ///
+    /// Kept because the check is one lookup and the failure it covers is
+    /// expensive: a twin announced by an older ENG, or one whose channels were
+    /// removed out from under it by a day-zero reset, would otherwise leave
+    /// SyncSegments publishing into nothing with no obvious cause. It creates
+    /// only what is absent, so it cannot fight ENG for ownership -- if both run,
+    /// the second finds the channel and does nothing.
+    /// </remarks>
     private async Task<int> BootstrapChannelsAsync(SiteMappingResult mapped, CancellationToken ct)
     {
         var created = 0;

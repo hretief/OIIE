@@ -1284,6 +1284,10 @@ provider's existing REST surface.
   property of the registry rather than of engine state, so it survives the engine losing its
   state or the same location arriving on two channels — and a re-publication can never reopen a
   decision a steward has already made.
+  *Superseded in part by DR-028: a segment whose content differs from the newest row on file is
+  now a correction rather than a duplicate. Redelivery of identical content is still ignored,
+  and a steward's decision is still never reopened — the correction arrives as a new revision
+  beside it.*
 - **State is always `Proposed`, and always explicit.** `CreateTagRequest.State` defaults to
   `Approved` in the provider (chosen so the bootstrap seed kept working). Omitting it here would
   walk every published segment straight past the gate this leg exists to feed.
@@ -1320,7 +1324,7 @@ one person able to notice the table is wrong.
   silently. The one exception is content that will not parse as XML, which is discarded, since
   retrying cannot fix it and it would block the queue forever.
 - Revisions from ENG do not yet update anything, because matching is GUID-only and first
-  proposal wins.
+  proposal wins. *Superseded by DR-028.*
 
 ---
 
@@ -1668,5 +1672,113 @@ name the customer never used, and would have hidden this bug indefinitely.
   without a `subscriberId`** and will lose publications on restart the same way.
   Deliberately left alone here to keep the change scoped; its mapper should be
   checked against `FullName` at the same time.
+
+---
+
+## DR-028 — A correction to an approved location is a new revision, not an edit and not a duplicate
+
+**Status:** Decided
+**Date:** 2026-09-08
+
+**Context:** A new element travelled the whole SC01 route and produced CIR entries once
+approved. Editing two elements that had *already* been approved — `BHP-01` and `BHP-02` —
+produced nothing at all in REG-LOCATION. Nothing had failed: ENG published the corrections,
+the engine ingested both segments, and both were then discarded as already known.
+
+That was DR-021 working as designed. Matching was GUID-only and first-proposal-wins, so the
+one thing a registry most needs to hear about — the source system changing its mind — was
+the one thing it could not hear.
+
+### Decision
+
+Ingestion compares an incoming segment against the **highest revision on file for that
+federation GUID**, and does one of three things:
+
+- **Identical content** — a redelivery. Ignored, as before.
+- **Changed content, newest row still `Proposed`** — corrected in place. The steward has not
+  decided yet, so there is one pending decision whose content has been updated.
+- **Changed content, newest row already decided** — filed as a **new row: same federation
+  GUID, `revision = max + 1`, state `Proposed`**.
+
+The approved row is left exactly as it was. It is the evidence of what was decided, and
+overwriting it would let an unreviewed correction wear the authority of a decision somebody
+else made. Equally, dropping the correction would mean the registry silently disagrees with
+the source system forever. A new revision is the only option that keeps both the old answer
+and the new question.
+
+**Several rows sharing a federation GUID is the intended shape, not a duplicate.** The GUID
+identifies the location and deliberately survives revision (DR-017); the revision identifies
+what was said about it and when.
+
+**Downstream is told about the location, not about the row.** Because several revisions of one
+GUID can be approved at once, the outbound leg now publishes only the highest revision per
+GUID — in the sweep, by collapsing the candidates before batching, and on the approval
+notification, by substituting a newer publishable sibling if one exists. Without that, approving
+an older row after a newer one would walk the receiver back to superseded content, and a sweep
+would emit two `Sync` BODs for one location whose arrival order decided which won.
+
+### The trap: what the redelivery check compares against
+
+The comparison must be against the **newest** row, not against the revision slot the segment
+arrived in. ENG keeps republishing the same marker, and each redelivery still names revision 0.
+Matching that slot would find the superseded row, see a difference, and mint revision 2 — then
+3, then 4, once per poll, forever. This is the failure mode the design most easily produces and
+it is covered by a test.
+
+### Consequences
+
+- Revision handling is now implemented; the corresponding entry in `open-items.md` is closed.
+- A steward sees a correction as a fresh pending decision rather than as a changed row, which
+  is the honest presentation: they are being asked something new.
+- The registry can hold an approved revision and a proposed correction simultaneously. Nothing
+  downstream sees the correction until it too is approved, because only publishable rows are
+  candidates for the highest-revision selection.
+
+---
+
+## DR-029 — Day zero must clear engine state, and `code` is not available as a query parameter
+
+**Status:** Decided
+**Date:** 2026-09-08
+
+**Context:** Two smaller faults surfaced while diagnosing DR-028, both of which had been
+making the system lie about itself.
+
+**`publishedTags: 17` survived day zero.** `RegLocationEngine`'s published set is keyed by
+federation GUID and revision precisely so that it outlives the registry being rebuilt. That is
+right in normal operation and exactly wrong after a reset: REG-LOCATION comes back empty with
+its ids restarting from 1, while the engine still believes it has already published everything.
+The sandbox reset cleared the ENG engine but had no REG-LOCATION engine target at all, so the
+one thing guaranteed to suppress the next run was the one thing day zero never touched.
+
+**`GET /api/tags?code=<key>` returned `[]`.** The provider read `code` as a tag-code filter,
+but the Functions host reserves `code` for the API key. Authenticating that way was silently
+read as "tags whose code is the key" — an empty list, HTTP 200, no error. During the DR-028
+investigation this made REG-LOCATION appear to have ingested nothing, which pointed the
+diagnosis at the wrong leg entirely.
+
+### Decision
+
+- `IRegLocationEngineStateStore` gains `ClearAsync`, implemented as a blob delete, mirroring
+  `EngEngineStateStore`. `ReadAsync` already treats a missing blob as a first run, so removal
+  and reinitialisation are the same thing and no stale ETag survives.
+- `RegLocationEngine` gains `POST engine/reset`, matching ENG's. Not under `admin/` — the
+  Functions host reserves that prefix and a function claiming it fails indexing and is silently
+  disabled rather than rejected.
+- The sandbox day-zero target list gains a REG-LOCATION engine entry, configured by
+  `Sandbox__RegLocationEngineBaseUrl` and `Sandbox__RegLocationEngineKey`, both written by
+  `deploy/sandbox/deploy.ps1`.
+- `GetTags` renames its business filter to `tagCode`.
+
+### Consequences
+
+- Day zero now means a clean slate for the REG-LOCATION engine as well as its registry. The
+  two must be cleared together or the engine declines to republish work it believes it sent.
+- Any caller using `tags?code=` as a *filter* must move to `tagCode`. No in-repo caller did;
+  the engine looks tags up by GUID.
+- The general rule is worth stating once: **no Azure Functions query parameter may be named
+  `code`.** The collision produces an empty success rather than an error, which is the most
+  expensive kind of bug to find.
+
 
 

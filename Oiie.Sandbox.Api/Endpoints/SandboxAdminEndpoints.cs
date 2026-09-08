@@ -298,10 +298,6 @@ app.MapPost("/admin/reset/day-zero", async (
 
     providerProblems.AddRange(await engine.ResetAsync(ct));
 
-    var foreignRebuilt = rebuilt
-        .Where(r => r.GetType().GetProperty("ours")?.GetValue(r) is false)
-        .ToList();
-
     log.LogInformation(
         "Day zero complete: {Channels} channel(s) rebuilt, {Removed} removed, {Providers} provider problem(s)",
         rebuilt.Count, removed.Count, providerProblems.Count);
@@ -309,15 +305,11 @@ app.MapPost("/admin/reset/day-zero", async (
     // Warnings are assembled rather than listed literally: the wipe now removes
     // channels the registry never knew about, and which sessions that breaks
     // depends on what was actually found.
+    //
+    // The CIR provider's own sessions are not warned about here: ResetCirAsync
+    // reopens them over HTTP once the channels are back, and reports it itself
+    // if that fails.
     var actionRequired = new List<string>();
-
-    if (foreignRebuilt.Count > 0)
-    {
-        actionRequired.Add(
-            "The CIR provider's sessions were destroyed with its channel. Call " +
-            "POST {cirBaseUrl}/api/isbm/reset to make it re-open, or it will keep polling " +
-            "a session the broker no longer knows about.");
-    }
 
     if (removed.Count > 0)
     {

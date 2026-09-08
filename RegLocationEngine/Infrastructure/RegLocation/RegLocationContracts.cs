@@ -97,6 +97,15 @@ public sealed record UpdateTagRequest(
 
 // ---- Sites ---------------------------------------------------------------
 
+/// <summary>
+/// A scope, and the site GUID it stands for.
+///
+/// <see cref="Guid"/> is what makes an approved tag publishable without being
+/// told which twin it belongs to: a tag names its scope, and the scope names
+/// its site. Nullable, because a scope created outside the site bootstrap has
+/// none -- and a tag under such a scope cannot be routed, which is reported as
+/// a finding rather than guessed at.
+/// </summary>
 public sealed record RegScope(
     int ScopeId,
     string Name,
@@ -105,7 +114,8 @@ public sealed record RegScope(
     int? ContextObjectType,
     int? ParentId,
     bool IsEnabled,
-    int UsageCount);
+    int UsageCount,
+    Guid? Guid = null);
 
 /// <summary>
 /// What a cascaded scope delete removed.

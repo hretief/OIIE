@@ -190,9 +190,14 @@ GO
 IF OBJECT_ID('dbo.class_objects','U') IS NULL
 CREATE TABLE dbo.class_objects
 (
-    class_id      INT NOT NULL,
-    group_id      INT NOT NULL,
-    namespace_id  INT NOT NULL,
+    class_id            INT NOT NULL,
+    group_id            INT NOT NULL,
+    namespace_id        INT NOT NULL,
+    code                NVARCHAR(255)  NOT NULL,
+    name                NVARCHAR(255)  NOT NULL,
+    description         NVARCHAR(2000) NULL,
+    parent_class_id     INT            NULL,
+
 
     CONSTRAINT PK_class_objects
         PRIMARY KEY (class_id),
@@ -206,6 +211,7 @@ CREATE TABLE dbo.class_objects
         REFERENCES dbo.namespaces(namespace_id)
 );
 GO
+
 
 ------------------------------------------------------------
 -- items

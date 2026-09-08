@@ -8,9 +8,11 @@
 
    Seeds the minimal reference data the functional location registry needs:
    the Global namespace, the two class groups a location registry actually
-   uses, the mandatory transaction row, a couple of units, a small set of
-   functional location tags to hang a demo from, and the matching rows in the
-   objects master registry.
+   uses, the mandatory transaction row, a couple of units, and the matching
+   rows in the objects master registry.
+
+   No tags or items are seeded. Those are received from ENG over the bus, so
+   the register starts empty -- see the tags section below.
 
    Re-runnable. Every insert is guarded on the primary key -- or on the
    natural key where one exists -- so applying this twice leaves the same rows
@@ -55,12 +57,10 @@
    was not translated wholesale. schema.sql is deliberately a minimal
    TAGS domain model, whereas EIS-POPULATE targets the full product schema.
    It inserts columns that do not exist here (namespaces.name,
-   class_groups.object_type/name/status,
-   class_objects.code/name/sys_type/parent_class_id,
-   transactions.date_added/person_id), depends on tables this model omits
-   (settings, setting_defs, uom_dimensions, uom_unit_systems), and drives
-   everything through EIS stored procedures (ebps_drop, ebp_new_id,
-   ebp_add_unit).
+   class_groups.object_type/name/status, transactions.date_added/person_id),
+   depends on tables this model omits (settings, setting_defs,
+   uom_dimensions, uom_unit_systems), and drives everything through EIS
+   stored procedures (ebps_drop, ebp_new_id, ebp_add_unit).
 
    So most of the names below survive only as comments. That is a real
    limitation rather than a stylistic choice: this schema cannot store them,
@@ -68,13 +68,19 @@
    it is documented to be. The ids are the part that has to agree with EIS,
    and those are carried across exactly.
 
+   class_objects is now the exception. It holds code, name, description and
+   parent_class_id, so those values are inserted as data rather than left as
+   comments -- the class list is the vocabulary callers classify against, and a
+   vocabulary of bare integers cannot be used by anything that has to name a
+   class. The columns came from the customer's own DDL, so holding them does
+   not make this less of a faithful minimal model.
+
    The objects registry IS present here, so the object_type codes it records
    are carried as data rather than as comments -- see the objects section.
 
    EIS-POPULATE also contains no items or tags seed data at all -- in EIS
-   those are customer data, not populate content -- so the tags below are
-   sandbox fixtures chosen to match the reg-location personality pack rather
-   than harvested values.
+   those are customer data, not populate content. This script now matches
+   that: tags and items are received from ENG, not seeded here.
    ============================================================================ */
 
 SET QUOTED_IDENTIFIER ON;
@@ -143,18 +149,18 @@ GO
 
    hide_flags and lock_flags follow the source: reference data created by the
    populate scripts is locked against user modification (lock_flags 18 for
-   classes, 0 for class groups), whereas the tags and items below are ordinary
-   registry content and are left unlocked. TINYINT here, so the values must
-   stay within 0-255.
+   classes, 0 for class groups). Tags and items arriving over the bus are
+   ordinary registry content and are left unlocked. TINYINT here, so the
+   values must stay within 0-255.
 
    date_added and date_changed are nullable and deliberately left NULL rather
    than set to GETDATE(). This script is re-runnable and its output is
    compared between runs; stamping a wall-clock time would make two runs
    differ for no meaningful reason.
 
-   guid is the FederationGuid and is populated only for tags -- see the tag
-   objects note further down for why, and for the unresolved question about
-   who authors those values.
+   guid is the FederationGuid and applies only to tags, which this script no
+   longer seeds -- every row below is reference data and carries NULL. See the
+   tag federation identity note further down for who authors those values.
    ============================================================================ */
 INSERT INTO dbo.objects (object_id, object_type, guid, scope_id, hide_flags, lock_flags)
 SELECT v.object_id, v.object_type, v.guid, 1, 0, v.lock_flags
@@ -179,22 +185,13 @@ FROM (VALUES
     (1001, 185, 18, CONVERT(UNIQUEIDENTIFIER, NULL)),   -- rdl:FunctionalLocation
     (1002, 185, 18, CONVERT(UNIQUEIDENTIFIER, NULL)),   -- rdl:Site
     (1701, 185, 18, CONVERT(UNIQUEIDENTIFIER, NULL)),   -- rdl:Equipment
-    (1702, 185, 18, CONVERT(UNIQUEIDENTIFIER, NULL)),   -- rdl:Instrument
+    (1702, 185, 18, CONVERT(UNIQUEIDENTIFIER, NULL))    -- rdl:Instrument
 
-    -- Physical items (1)
-    (1,      1, 0,  CONVERT(UNIQUEIDENTIFIER, NULL)),   -- site
-    (2,      1, 0,  CONVERT(UNIQUEIDENTIFIER, NULL)),   -- process area
-    (3,      1, 0,  CONVERT(UNIQUEIDENTIFIER, NULL)),   -- separator
-    (4,      1, 0,  CONVERT(UNIQUEIDENTIFIER, NULL)),   -- temperature instrument
-    (5,      1, 0,  CONVERT(UNIQUEIDENTIFIER, NULL)),   -- temperature instrument
-
-    -- Tags (212), with federation identity
-    (1,    212, 0,  CONVERT(UNIQUEIDENTIFIER, '550e8400-e29b-41d4-a716-446655440001')),  -- ACME-NORTH
-    (2,    212, 0,  CONVERT(UNIQUEIDENTIFIER, '550e8400-e29b-41d4-a716-446655440002')),  -- ACME-NORTH-100
-    (3,    212, 0,  CONVERT(UNIQUEIDENTIFIER, '550e8400-e29b-41d4-a716-446655440003')),  -- V-101
-    (4,    212, 0,  CONVERT(UNIQUEIDENTIFIER, '550e8400-e29b-41d4-a716-446655440004')),  -- TIC-101 rev 1
-    (5,    212, 0,  CONVERT(UNIQUEIDENTIFIER, '550e8400-e29b-41d4-a716-446655440004')),  -- TIC-101 rev 2 -- same thing, same identity
-    (6,    212, 0,  CONVERT(UNIQUEIDENTIFIER, '550e8400-e29b-41d4-a716-446655440006'))   -- TI-102
+    -- No physical items (1) or tags (212) are registered here. Both are
+    -- received from ENG over the bus rather than authored by this provider --
+    -- see the note below the tags section. Registering ids for rows that no
+    -- longer exist would reserve 1-6 against the arrivals that should claim
+    -- them.
 ) AS v(object_id, object_type, lock_flags, guid)
 WHERE NOT EXISTS
 (
@@ -204,34 +201,22 @@ WHERE NOT EXISTS
 GO
 
 /* ============================================================================
-   Tag federation identity -- note on the GUIDs seeded above
+   Tag federation identity
 
    objects.guid is the FederationGuid described in
    docs/FederationId/federation-guid-guideline.md: the identity of the thing
    itself, which becomes the CIRID in the Common Interoperability Registry.
    This is the one place in this schema where a federated identifier can be
-   stored, which is what makes the tag rows different from the reference data.
+   stored, which is what makes tag rows different from the reference data
+   above.
 
-   Fixed literals rather than NEWID(): a re-run must reproduce the same
-   identity, and NEWID() would mint a fresh CIRID for the same tag on every
-   run, which is precisely the failure the guideline exists to prevent.
-
-   Revisions 1 and 2 of TIC-101 deliberately share one GUID. They are two
-   revisions of the same functional location, not two things, and the
-   guideline states the GUID survives revision -- a new one is minted only
-   when the physical asset is replaced.
-
-   NOTE -- unresolved, needs a decision before this is used beyond the sandbox.
-
-   Per the guideline the FederationGuid originates in the iModel and travels
-   with the published data; REG-LOCATION is a Subscriber on the Eng channel,
-   so in a real exchange it would RECEIVE these GUIDs from ENG rather than
-   author them. The values above are therefore placeholders that let the
-   registry stand up standalone. They do not currently correspond to any
-   element in ENG_BOOTSTRAP.SQL, so a demo spanning both participants will not
-   federate on identity until they are reconciled -- either by seeding the
-   matching FederationGuids here, or by leaving these NULL and letting the
-   inbound flow populate them.
+   Nothing is seeded with one here. Per the guideline the FederationGuid
+   originates in the iModel and travels with the published data, and
+   REG-LOCATION is a Subscriber on the Eng channel -- so it receives these
+   values rather than authoring them. Earlier revisions seeded placeholder
+   GUIDs to let the registry stand up standalone; they matched no element in
+   ENG_BOOTSTRAP.SQL, which is exactly why those tags appeared in the UI with
+   no ENG correlation.
    ============================================================================ */
 
 /* ============================================================================
@@ -360,15 +345,22 @@ GO
 
    class_id values are sandbox-local for the same reason as the unit ids:
    EIS mints them through ebp_new_id at run time.
+
+   code and name are inserted rather than carried as comments: the table now
+   holds them. rdl:Instrument names rdl:Equipment as its parent, which is the
+   edge the degradation scenario below depends on.
    ============================================================================ */
-INSERT INTO dbo.class_objects (class_id, group_id, namespace_id)
-SELECT v.class_id, v.group_id, v.namespace_id
+INSERT INTO dbo.class_objects (class_id, group_id, namespace_id, code, name, parent_class_id)
+SELECT v.class_id, v.group_id, v.namespace_id, v.code, v.name, v.parent_class_id
 FROM (VALUES
-    (1001, 5,  1),   -- rdl:FunctionalLocation -- Locations group
-    (1002, 5,  1),   -- rdl:Site               -- Locations group
-    (1701, 17, 1),   -- rdl:Equipment          -- Tags group
-    (1702, 17, 1)    -- rdl:Instrument         -- Tags group, child of rdl:Equipment in the pack
-) AS v(class_id, group_id, namespace_id)
+    -- 1702 names 1701 as its parent. Both arrive in the same INSERT, which is
+    -- safe: the self-referencing FK is validated once the statement completes,
+    -- not row by row, so the parent need not already be committed.
+    (1001, 5,  1, 'rdl:FunctionalLocation', 'Functional Location', NULL),   -- Locations group
+    (1002, 5,  1, 'rdl:Site',               'Site',                NULL),   -- Locations group
+    (1701, 17, 1, 'rdl:Equipment',          'Equipment',           NULL),   -- Tags group
+    (1702, 17, 1, 'rdl:Instrument',         'Instrument',          1701)    -- Tags group, child of rdl:Equipment
+) AS v(class_id, group_id, namespace_id, code, name, parent_class_id)
 WHERE NOT EXISTS
 (
     SELECT 1 FROM dbo.class_objects AS c WHERE c.class_id = v.class_id
@@ -376,60 +368,28 @@ WHERE NOT EXISTS
 GO
 
 /* ============================================================================
-   items
+   items and tags -- deliberately not seeded
 
-   tags.item_id is NOT NULL, and the unique constraint is on
-   (item_id, code, revision) rather than on code alone -- so an item is the
-   thing a tag is a revision *of*, and two tags may share a code only if they
-   sit under different items.
+   Earlier revisions of this file seeded six demo tags (ACME-NORTH,
+   ACME-NORTH-100, V-101, TIC-101 rev 1 and 2, TI-102) with fixed
+   FederationGuids, plus the five items beneath them.
 
-   One item per functional location below.
+   They are gone because they were orphans. Per
+   docs/FederationId/federation-guid-guideline.md the FederationGuid
+   originates in the iModel and travels with the published data, and
+   REG-LOCATION is a Subscriber on the Eng channel -- so in a real exchange
+   these arrive FROM ENG rather than being authored here. The seeded GUIDs
+   corresponded to no element in ENG_BOOTSTRAP.SQL, so the registry stood up
+   holding functional locations that nothing upstream could ever claim, and
+   they surfaced in the UI as tags with no ENG correlation.
+
+   Registered content therefore now arrives only over the bus. An empty
+   register is the honest starting state for a Subscriber: the alternative
+   is reference data pretending to be received data.
+
+   Reference data above (namespaces, class groups, units, classes) stays --
+   that is vocabulary this provider legitimately owns and does not receive.
    ============================================================================ */
-INSERT INTO dbo.items (item_id, namespace_id, unit_id, trn_id)
-SELECT v.item_id, v.namespace_id, v.unit_id, v.trn_id
-FROM (VALUES
-    (1, 1, 1, 0),   -- site
-    (2, 1, 1, 0),   -- process area
-    (3, 1, 1, 0),   -- separator
-    (4, 1, 2, 0),   -- temperature instrument -- degC
-    (5, 1, 2, 0)    -- temperature instrument -- degC
-) AS v(item_id, namespace_id, unit_id, trn_id)
-WHERE NOT EXISTS
-(
-    SELECT 1 FROM dbo.items AS i WHERE i.item_id = v.item_id
-);
-GO
-
-/* ============================================================================
-   tags
-
-   The functional locations themselves. Codes follow ISA-style plant
-   numbering so the demo reads as a real register.
-
-   Guarded on (item_id, code, revision) rather than tag_id, matching
-   UQ_tags_item_code_revision -- guarding on the surrogate alone would let a
-   re-run with a different tag_id violate the natural key instead of being
-   skipped.
-   ============================================================================ */
-INSERT INTO dbo.tags (tag_id, item_id, class_id, code, revision, name)
-SELECT v.tag_id, v.item_id, v.class_id, v.code, v.revision, v.name
-FROM (VALUES
-    (1, 1, 1002, N'ACME-NORTH',      1, N'Acme North Site'),
-    (2, 2, 1001, N'ACME-NORTH-100',  1, N'Separation Area 100'),
-    (3, 3, 1701, N'V-101',           1, N'Inlet Separator V-101'),
-    (4, 4, 1702, N'TIC-101',         1, N'Inlet Separator Temperature Control'),
-    -- Second revision of the same code under the same item: the revision
-    -- column exists precisely so a register can hold supersession, and a
-    -- fixture that never exercised it would leave that untested.
-    (5, 4, 1702, N'TIC-101',         2, N'Inlet Separator Temperature Control'),
-    (6, 5, 1702, N'TI-102',          1, N'Overhead Line Temperature Indicator')
-) AS v(tag_id, item_id, class_id, code, revision, name)
-WHERE NOT EXISTS
-(
-    SELECT 1 FROM dbo.tags AS t
-    WHERE t.item_id = v.item_id AND t.code = v.code AND t.revision = v.revision
-);
-GO
 
 /* ============================================================================
    Verification -- the objects invariant

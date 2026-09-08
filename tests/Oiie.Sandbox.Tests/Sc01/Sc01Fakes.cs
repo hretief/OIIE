@@ -181,6 +181,10 @@ internal sealed class FakeEngClient(
                 ? new EngIModel(iModelId, iTwinId, "TEST-MODEL", "Test iModel", DateTime.UtcNow)
                 : null);
 
+    public Task<IReadOnlyList<EngIModel>> GetIModelsAsync(CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<EngIModel>>(
+            [new EngIModel(iModelId, iTwinId, "TEST-MODEL", "Test iModel", DateTime.UtcNow)]);
+
     public Task<IReadOnlyList<EngITwin>> GetITwinsAsync(CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<EngITwin>>([]);
 
@@ -234,6 +238,14 @@ internal sealed class FakeRegLocationClient(Dictionary<Guid, int> scopesByGuid) 
 
     public List<(int TagId, UpdateTagRequest Request)> Corrected { get; } = [];
 
+    /// <summary>
+    /// Stands in for a steward's decision, so a test can put a filed tag into
+    /// the state that makes the next correction a new revision rather than an
+    /// in-place edit.
+    /// </summary>
+    public void Approve(int tagId) =>
+        _tags[tagId] = _tags[tagId] with { State = "Approved" };
+
     public Task<IReadOnlyList<RegTagDetail>> FindTagsByGuidAsync(Guid guid, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<RegTagDetail>>(
             [.. _tags
@@ -270,8 +282,25 @@ internal sealed class FakeRegLocationClient(Dictionary<Guid, int> scopesByGuid) 
     public Task<RegScope?> FindScopeByGuidAsync(Guid guid, CancellationToken ct) =>
         Task.FromResult(
             scopesByGuid.TryGetValue(guid, out var scopeId)
-                ? new RegScope(scopeId, "Test Site", 1, null, null, null, true, 0)
+                ? new RegScope(scopeId, "Test Site", 1, null, null, null, true, 0, guid)
                 : null);
+
+    // Answers with the site GUID, because the outbound leg derives the channel
+    // from it. A fake that returned a scope without one would make every
+    // approved tag look unroutable.
+    public Task<RegScope?> FindScopeAsync(int scopeId, CancellationToken ct)
+    {
+        foreach (var (guid, id) in scopesByGuid)
+        {
+            if (id == scopeId)
+            {
+                return Task.FromResult<RegScope?>(
+                    new RegScope(scopeId, "Test Site", 1, null, null, null, true, 0, guid));
+            }
+        }
+
+        return Task.FromResult<RegScope?>(null);
+    }
 
     private static RegTagDetail Detail(int tagId, CreateTagRequest r) =>
         new(new RegTag(tagId, r.ItemId, r.ClassId, r.Code, r.Revision, r.Name, r.State ?? "Proposed"),

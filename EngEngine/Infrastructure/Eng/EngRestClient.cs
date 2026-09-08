@@ -19,6 +19,21 @@ public interface IEngClient
     Task<EngIModel?> GetIModelAsync(Guid iModelId, CancellationToken ct);
 
     /// <summary>
+    /// Every iModel ENG holds, each already carrying the iTwin that owns it.
+    ///
+    /// What the engine publishes is decided by asking ENG rather than by
+    /// configuration. An iModel id is data ENG generates -- a reset mints new
+    /// ones -- so a setting naming one is stale from the next reset onwards,
+    /// and the engine that trusted it either failed the lookup or, worse,
+    /// polled one model while stamping another's provenance.
+    ///
+    /// Returned with the owning twin because the caller needs both and the
+    /// route already answers with it: the channel is rooted in the twin, so a
+    /// model without its twin cannot be published anywhere.
+    /// </summary>
+    Task<IReadOnlyList<EngIModel>> GetIModelsAsync(CancellationToken ct);
+
+    /// <summary>
     /// The iTwins ENG holds.
     ///
     /// SyncSites publishes the site itself rather than something inside it, so
@@ -74,6 +89,9 @@ public sealed class EngRestClient(HttpClient http) : IEngClient
 
         return await response.Content.ReadFromJsonAsync<EngIModel>(Json, ct);
     }
+
+    public async Task<IReadOnlyList<EngIModel>> GetIModelsAsync(CancellationToken ct) =>
+        await GetListAsync<EngIModel>("imodels", ct);
 
     public async Task<IReadOnlyList<EngITwin>> GetITwinsAsync(CancellationToken ct) =>
         await GetListAsync<EngITwin>("itwins", ct);

@@ -61,22 +61,147 @@ public sealed class EngPublicationService(
         if (string.IsNullOrWhiteSpace(_options.EngBaseUrl))
             return Failed("EngEngine__EngBaseUrl is not configured.");
 
-        if (_options.IModelId == Guid.Empty)
-            return Failed("EngEngine__IModelId is not configured.");
-
         if (string.IsNullOrWhiteSpace(_options.Enterprise))
             return Failed("EngEngine__Enterprise is not configured.");
 
-        // Which iTwin owns the model decides which channel this publishes onto,
-        // so it is resolved from ENG rather than configured. Configuring both
-        // would create a pair that can disagree, and the failure would be a
-        // handover delivered to the wrong twin's subscribers -- which looks like
-        // a successful publication from here.
-        var model = await eng.GetIModelAsync(_options.IModelId, ct);
+        // What to publish is discovered, not configured.
+        //
+        // An iModel id is data ENG generates rather than a deployment choice: a
+        // provider reset mints new ones, so a setting naming one is stale from
+        // that moment. Asking ENG makes the engine correct across a reset
+        // without anyone editing app settings, which is the same reasoning that
+        // already applies to the iTwin below -- and the same reasoning
+        // REG-LOCATION follows when it discovers sites from the broker.
+        IReadOnlyList<EngIModel> models;
 
-        if (model is null)
-            return Failed($"ENG does not have iModel '{_options.IModelId:D}'.");
+        try
+        {
+            models = await eng.GetIModelsAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            // Enumeration failing is not the same as there being nothing to
+            // publish. Reported rather than returned as an idle pass, which
+            // would look identical to a healthy engine with no new markers.
+            logger.LogError(ex, "Could not enumerate iModels, so nothing was published this pass.");
+            return Failed($"Could not enumerate iModels: {ex.Message}");
+        }
 
+        // The setting survives as an optional filter, for pinning a deployment
+        // to one model deliberately -- a focused test, say. What is gone is the
+        // requirement to set it, and its ability to go stale unnoticed.
+        if (_options.IModelId != Guid.Empty)
+        {
+            models = [.. models.Where(m => m.IModelId == _options.IModelId)];
+
+            if (models.Count == 0)
+                return Failed($"ENG does not have iModel '{_options.IModelId:D}'.");
+        }
+
+        if (models.Count == 0)
+        {
+            return new EngDrainReport
+            {
+                Skipped = ["ENG holds no iModels, so there is nothing to publish."]
+            };
+        }
+
+        var (state, etag) = await stateStore.ReadAsync(ct);
+
+        var run = new DrainRun
+        {
+            Published = new HashSet<Guid>(state.PublishedVersions),
+            Watermark = state.Watermark
+        };
+
+        // Sequential rather than concurrent: the run accumulates shared state,
+        // and several models under one twin publish onto the same channel, so
+        // parallel drains would race on both.
+        foreach (var model in models)
+        {
+            if (run.Errors.Count > 0)
+            {
+                // One model failing stops the pass. The watermark is shared, so
+                // continuing past a failure would advance it over markers a
+                // later model never got to publish.
+                break;
+            }
+
+            try
+            {
+                await DrainModelAsync(model, run, ct);
+            }
+            catch (Exception ex)
+            {
+                // Caught here so the state written below still records whatever
+                // earlier models managed to publish. Letting this escape would
+                // lose their watermark and re-publish them on the next pass.
+                logger.LogError(
+                    ex, "Draining iModel {IModelId:D} failed.", model.IModelId);
+                run.Errors.Add($"{model.IModelId:D}: {ex.Message}");
+            }
+        }
+
+        // Written even on failure, so the markers that did land are not sent
+        // again. The watermark only ever advanced over markers that were dealt
+        // with, because the loop breaks on the first failure.
+        if (run.PublishedCount > 0 || run.AlreadyPublished > 0 || run.Skipped.Count > 0)
+        {
+            var next = new EngEngineState
+            {
+                Watermark = run.Watermark,
+                PublishedVersions = run.Published
+            };
+
+            if (!await stateStore.TryWriteAsync(next, etag, CancellationToken.None))
+            {
+                logger.LogWarning(
+                    "Engine state was modified concurrently; this drain's watermark " +
+                    "was discarded. Published markers will be recognised on the next pass.");
+            }
+        }
+
+        return new EngDrainReport
+        {
+            MarkersSeen = run.MarkersSeen,
+            MarkersPublished = run.PublishedCount,
+            SegmentsPublished = run.SegmentCount,
+            AlreadyPublished = run.AlreadyPublished,
+            Errors = run.Errors,
+            Skipped = run.Skipped
+        };
+    }
+
+    /// <summary>
+    /// Everything one drain accumulates across the models it visits.
+    ///
+    /// Shared deliberately: the watermark and the published set describe the
+    /// engine's progress as a whole, not one model's, so they cannot be reset
+    /// per model without re-publishing every marker on every pass.
+    /// </summary>
+    private sealed class DrainRun
+    {
+        public required HashSet<Guid> Published { get; init; }
+        public DateTime? Watermark { get; set; }
+        public List<string> Errors { get; } = [];
+        public List<string> Skipped { get; } = [];
+        public int MarkersSeen { get; set; }
+        public int PublishedCount { get; set; }
+        public int SegmentCount { get; set; }
+        public int AlreadyPublished { get; set; }
+    }
+
+    /// <summary>
+    /// Publishes one iModel's outstanding markers onto its iTwin's channel.
+    ///
+    /// The channel is per-iTwin, not per-iModel: a twin may hold several models
+    /// representing different disciplines and they all publish onto the one
+    /// channel, with the discipline expressed as a topic. So two models under
+    /// one twin will open sessions on the same channel in the same pass, which
+    /// is correct and not a duplicate.
+    /// </summary>
+    private async Task DrainModelAsync(EngIModel model, DrainRun run, CancellationToken ct)
+    {
         // The topology is asked first, and answers with both the channel and the
         // topics -- they belong together. A channel resolved centrally but
         // topics taken from local settings would let a subscriber be found on
@@ -102,26 +227,20 @@ public sealed class EngPublicationService(
                 declared.Uri, _options.ChannelUriFor(model.ITwinId));
         }
 
-        var (state, etag) = await stateStore.ReadAsync(ct);
-
         // Rewound by the overlap window, because ENG's modifiedSince is inclusive
         // and it warns readers to overlap rather than resume exactly: a marker
         // committed during the previous query but stamped just before it would
         // otherwise never be seen. The published set absorbs the re-reads.
-        var since = state.Watermark?.Subtract(_options.PollOverlap);
+        var since = run.Watermark?.Subtract(_options.PollOverlap);
 
-        var markers = await eng.GetNamedVersionsAsync(_options.IModelId, since, ct);
+        var markers = await eng.GetNamedVersionsAsync(model.IModelId, since, ct);
+
+        run.MarkersSeen += markers.Count;
 
         if (markers.Count == 0)
         {
-            return new EngDrainReport();
+            return;
         }
-
-        var errors = new List<string>();
-        var skipped = new List<string>();
-        var published = new HashSet<Guid>(state.PublishedVersions);
-        var watermark = state.Watermark;
-        int publishedCount = 0, segmentCount = 0, alreadyPublished = 0;
 
         // Oldest first, so a drain that stops part-way leaves a watermark that is
         // behind rather than ahead. Behind costs a re-read; ahead loses a handover.
@@ -133,123 +252,89 @@ public sealed class EngPublicationService(
 
         string? sessionId = null;
 
-        try
+        foreach (var marker in ordered)
         {
-            foreach (var marker in ordered)
+            if (run.Published.Contains(marker.VersionGuid))
             {
-                if (published.Contains(marker.VersionGuid))
+                run.AlreadyPublished++;
+                run.Watermark = Later(run.Watermark, marker.ModifiedUtc);
+                continue;
+            }
+
+            try
+            {
+                var contents = await eng.GetNamedVersionElementsAsync(
+                    marker.NamedVersionId, ct);
+
+                // Only the federated ones. An element without a FederationGuid
+                // has no identity anyone outside ENG has agreed to, so there is
+                // nothing to say about it that a receiver could act on. The rest
+                // of the marker still goes: holding back a whole handover because
+                // one element was never federated would make a routine omission
+                // look like an outage.
+                var elements = contents
+                    .Where(EngSegmentsBuilder.IsPublishable)
+                    .ToList();
+
+                var unfederated = contents.Count - elements.Count;
+
+                if (unfederated > 0)
                 {
-                    alreadyPublished++;
-                    watermark = Later(watermark, marker.ModifiedUtc);
+                    logger.LogWarning(
+                        "Marker '{Marker}' has {Count} element(s) without a " +
+                        "FederationGuid; they were not published.",
+                        marker.Name, unfederated);
+                }
+
+                if (elements.Count == 0)
+                {
+                    // Recorded as published rather than retried forever. An empty
+                    // marker is a real thing an engineer can cut, and there is
+                    // nothing to send; leaving it unrecorded would make every
+                    // future drain re-examine it for as long as it exists.
+                    run.Skipped.Add($"{marker.Name}: contains no publishable elements.");
+                    run.Published.Add(marker.VersionGuid);
+                    run.Watermark = Later(run.Watermark, marker.ModifiedUtc);
                     continue;
                 }
 
-                try
-                {
-                    var contents = await eng.GetNamedVersionElementsAsync(
-                        marker.NamedVersionId, ct);
+                // Opened lazily: a drain that finds nothing to publish should not
+                // establish a session against the broker to prove it.
+                sessionId ??= await isbm.OpenPublicationSessionAsync(channelUri, ct);
 
-                    // Only the federated ones. An element without a FederationGuid
-                    // has no identity anyone outside ENG has agreed to, so there is
-                    // nothing to say about it that a receiver could act on. The rest
-                    // of the marker still goes: holding back a whole handover because
-                    // one element was never federated would make a routine omission
-                    // look like an outage.
-                    var elements = contents
-                        .Where(EngSegmentsBuilder.IsPublishable)
-                        .ToList();
+                var correlationId = Guid.NewGuid().ToString();
 
-                    var unfederated = contents.Count - elements.Count;
+                // The same twin the channel is rooted in, so what the message
+                // says about itself and where it was delivered cannot disagree.
+                var content = builder.Build(
+                    marker, elements, model.ITwinId, correlationId);
 
-                    if (unfederated > 0)
-                    {
-                        logger.LogWarning(
-                            "Marker '{Marker}' has {Count} element(s) without a " +
-                            "FederationGuid; they were not published.",
-                            marker.Name, unfederated);
-                    }
+                var messageId = await isbm.PostPublicationAsync(
+                    sessionId,
+                    content,
+                    topics,
+                    ct: ct);
 
-                    if (elements.Count == 0)
-                    {
-                        // Recorded as published rather than retried forever. An empty
-                        // marker is a real thing an engineer can cut, and there is
-                        // nothing to send; leaving it unrecorded would make every
-                        // future drain re-examine it for as long as it exists.
-                        skipped.Add($"{marker.Name}: contains no publishable elements.");
-                        published.Add(marker.VersionGuid);
-                        watermark = Later(watermark, marker.ModifiedUtc);
-                        continue;
-                    }
+                run.Published.Add(marker.VersionGuid);
+                run.Watermark = Later(run.Watermark, marker.ModifiedUtc);
+                run.PublishedCount++;
+                run.SegmentCount += elements.Count;
 
-                    // Opened lazily: a drain that finds nothing to publish should not
-                    // establish a session against the broker to prove it.
-                    sessionId ??= await isbm.OpenPublicationSessionAsync(channelUri, ct);
-
-                    var correlationId = Guid.NewGuid().ToString();
-
-                    // The same twin the channel is rooted in, so what the message
-                    // says about itself and where it was delivered cannot disagree.
-                    var content = builder.Build(
-                        marker, elements, model.ITwinId, correlationId);
-
-                    var messageId = await isbm.PostPublicationAsync(
-                        sessionId,
-                        content,
-                        topics,
-                        ct: ct);
-
-                    published.Add(marker.VersionGuid);
-                    watermark = Later(watermark, marker.ModifiedUtc);
-                    publishedCount++;
-                    segmentCount += elements.Count;
-
-                    logger.LogInformation(
-                        "Published marker '{Marker}' with {Count} segment(s) as {MessageId} " +
-                        "[{CorrelationId}].",
-                        marker.Name, elements.Count, messageId, correlationId);
-                }
-                catch (Exception ex)
-                {
-                    // The marker is left unrecorded, so the next drain retries it.
-                    // Publishing later is recoverable; recording a marker that never
-                    // reached the channel is not.
-                    logger.LogError(ex, "Publishing marker '{Marker}' failed.", marker.Name);
-                    errors.Add($"{marker.Name}: {ex.Message}");
-                    break;
-                }
+                logger.LogInformation(
+                    "Published marker '{Marker}' from iModel {IModelId:D} with {Count} " +
+                    "segment(s) as {MessageId} [{CorrelationId}].",
+                    marker.Name, model.IModelId, elements.Count, messageId, correlationId);
             }
-        }
-        finally
-        {
-            // Written even on failure, so the markers that did land are not sent
-            // again. The watermark only ever advanced over markers that were dealt
-            // with, because the loop breaks on the first failure.
-            if (publishedCount > 0 || alreadyPublished > 0 || skipped.Count > 0)
+            catch (Exception ex)
             {
-                var next = new EngEngineState
-                {
-                    Watermark = watermark,
-                    PublishedVersions = published
-                };
-
-                if (!await stateStore.TryWriteAsync(next, etag, CancellationToken.None))
-                {
-                    logger.LogWarning(
-                        "Engine state was modified concurrently; this drain's watermark " +
-                        "was discarded. Published markers will be recognised on the next pass.");
-                }
+                // The marker is left unrecorded, so the next drain retries it.
+                // Publishing later is recoverable; recording a marker that never
+                // reached the channel is not.
+                logger.LogError(ex, "Publishing marker '{Marker}' failed.", marker.Name);
+                run.Errors.Add($"{marker.Name}: {ex.Message}");
+                break;
             }
         }
-
-        return new EngDrainReport
-        {
-            MarkersSeen = markers.Count,
-            MarkersPublished = publishedCount,
-            SegmentsPublished = segmentCount,
-            AlreadyPublished = alreadyPublished,
-            Errors = errors,
-            Skipped = skipped
-        };
     }
 
     private static DateTime? Later(DateTime? current, DateTime candidate) =>

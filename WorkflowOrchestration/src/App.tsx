@@ -568,6 +568,37 @@ function Toast({ message, accent }: { message: string; accent: string }) {
   )
 }
 
+/**
+ * What a day-zero reset failed to do.
+ *
+ * Separate from Toast, and deliberately not on a timer. Each line names a
+ * system still holding the previous run's data; dismissing is the operator's
+ * decision, because the consequence surfaces later as an id collision that is
+ * hard to trace back to a reset that looked like it worked.
+ */
+function DayZeroReport({ problems, onDismiss }: { problems: string[]; onDismiss: () => void }) {
+  return (
+    <div style={{ position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)', maxWidth: 720, background: 'var(--bg-panel)', border: '1px solid #ef444488', borderRadius: '6px', padding: '14px 18px', fontFamily: 'var(--font-mono)', fontSize: '12px', boxShadow: 'var(--shadow-toast)', zIndex: 1001 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: problems.length ? 10 : 0 }}>
+        <span style={{ color: '#ef4444', fontWeight: 700, letterSpacing: '0.08em' }}>
+          DAY ZERO INCOMPLETE
+        </span>
+        <button
+          onClick={onDismiss}
+          style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: '11px', letterSpacing: '0.08em' }}
+        >
+          DISMISS
+        </button>
+      </div>
+      <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {problems.map((problem, i) => (
+          <li key={i} style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>{problem}</li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 // ─── Pipeline banner ──────────────────────────────────────────────────────────
 
 // One colour per persona, shared by the banner and the sidebar step list. Was
@@ -2054,6 +2085,12 @@ function Workspace({ user }: { user: CurrentUser }) {
   const [newAbIdx, setNewAbIdx] = useState(0)
   const [toast, setToast] = useState<{ msg: string; accent: string } | null>(null)
 
+  // A day-zero reset that did not fully succeed. Held separately from the toast
+  // because it must not disappear on a timer: each entry names a system that
+  // still holds the previous run's data, and an operator who misses it will hit
+  // a duplicate-id conflict later with nothing to connect it back to.
+  const [dayZeroReport, setDayZeroReport] = useState<string[] | null>(null)
+
   // ── Real sandbox data ────────────────────────────────────────────────────
   // ENG's segments in the selected twin. Unlike the seeded arrays above, these
   // are the sandbox's own records: authoring one here is a write the rest of the
@@ -2121,6 +2158,8 @@ function Workspace({ user }: { user: CurrentUser }) {
   // generation are worse than an empty table, because they still look valid.
   async function runDayZero() {
     try {
+      setDayZeroReport(null)
+
       const reset = await api.resetDayZero()
 
       await Promise.all([
@@ -2131,6 +2170,16 @@ function Workspace({ user }: { user: CurrentUser }) {
       // Local view state has no meaning against regenerated data.
       setSelectedProposals(new Set())
       setStewardshipError(null)
+
+      // A partial reset is reported as a failure, not decorated as a success.
+      // Every entry names a system that was not cleared, and the damage shows
+      // up much later: the systems that were reset restart their ids at 1 and
+      // collide with rows the untouched system still holds.
+      if (!reset.providersReset || reset.actionRequired.length > 0) {
+        setDayZeroReport(reset.actionRequired)
+        flash('Day zero INCOMPLETE — some systems were not reset')
+        return
+      }
 
       flash(`Day zero complete — ${reset.sessionsClosed} session(s) closed`)
     } catch (err) {
@@ -3227,6 +3276,9 @@ function Workspace({ user }: { user: CurrentUser }) {
       </div>
 
       {toast && <Toast message={toast.msg} accent={toast.accent} />}
+      {dayZeroReport && (
+        <DayZeroReport problems={dayZeroReport} onDismiss={() => setDayZeroReport(null)} />
+      )}
       <style>{`@keyframes fadeInUp { from { opacity:0; transform:translateX(-50%) translateY(8px) } to { opacity:1; transform:translateX(-50%) translateY(0) } }`}</style>
     </div>
   )

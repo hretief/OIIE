@@ -151,6 +151,83 @@ public class Sc01EndToEndTests
         Assert.Equal("Proposed", corrected.Tag.State);
     }
 
+    /// <summary>
+    /// The correction that used to vanish. Once a steward has approved a tag,
+    /// the row is a decision and must not be edited underneath them -- but
+    /// before this the alternative was to drop the correction as already known,
+    /// so an edit made in ENG after approval reached REG-LOCATION and stopped.
+    /// It is now a second row: same federation GUID, next revision, Proposed.
+    /// </summary>
+    [Fact]
+    public async Task A_correction_to_an_approved_tag_is_filed_as_a_new_revision()
+    {
+        var broker = new FakeIsbmBroker();
+        var topology = TopologyOverHttp();
+
+        var registry = await PublishFromEngAsync(broker, topology);
+        await IngestIntoRegLocationAsync(broker, topology, registry);
+
+        var filed = Assert.Single(await registry.FindTagsByGuidAsync(ElementGuid, CancellationToken.None));
+        registry.Approve(filed.Tag.TagId);
+
+        await RepublishAsync(broker, topology, Element() with { UserLabel = "Feed pump (corrected)" });
+
+        var second = await IngestIntoRegLocationAsync(broker, topology, registry);
+
+        Assert.Equal(1, second.TagsProposed);
+        Assert.Equal(0, second.AlreadyKnown);
+
+        // A new row, not an edit: the approved one is evidence of what was
+        // decided and survives untouched.
+        Assert.Empty(registry.Corrected);
+        Assert.Equal(2, registry.Created.Count);
+
+        var rows = await registry.FindTagsByGuidAsync(ElementGuid, CancellationToken.None);
+        Assert.Equal(2, rows.Count);
+
+        var superseded = Assert.Single(rows, t => t.Tag.TagId == filed.Tag.TagId);
+        Assert.Equal("Approved", superseded.Tag.State);
+        Assert.Equal("Feed pump", superseded.Tag.Name);
+
+        var correction = Assert.Single(rows, t => t.Tag.TagId != filed.Tag.TagId);
+        Assert.Equal(filed.Tag.Revision + 1, correction.Tag.Revision);
+        Assert.Equal("Feed pump (corrected)", correction.Tag.Name);
+
+        // Proposed, so the edit goes in front of a steward rather than past one.
+        Assert.Equal("Proposed", correction.Tag.State);
+    }
+
+    /// <summary>
+    /// The revision bump must be caused by a change, not by a poll. ENG keeps
+    /// republishing the same marker, and each redelivery still names the
+    /// original revision, so comparing against that slot instead of the newest
+    /// row would mint a revision every pass forever.
+    /// </summary>
+    [Fact]
+    public async Task Redelivering_a_correction_does_not_keep_bumping_the_revision()
+    {
+        var broker = new FakeIsbmBroker();
+        var topology = TopologyOverHttp();
+
+        var registry = await PublishFromEngAsync(broker, topology);
+        await IngestIntoRegLocationAsync(broker, topology, registry);
+
+        var filed = Assert.Single(await registry.FindTagsByGuidAsync(ElementGuid, CancellationToken.None));
+        registry.Approve(filed.Tag.TagId);
+
+        var corrected = Element() with { UserLabel = "Feed pump (corrected)" };
+
+        await RepublishAsync(broker, topology, corrected);
+        await IngestIntoRegLocationAsync(broker, topology, registry);
+
+        await RepublishAsync(broker, topology, corrected);
+        var third = await IngestIntoRegLocationAsync(broker, topology, registry);
+
+        Assert.Equal(0, third.TagsProposed);
+        Assert.Equal(1, third.AlreadyKnown);
+        Assert.Equal(2, (await registry.FindTagsByGuidAsync(ElementGuid, CancellationToken.None)).Count);
+    }
+
     [Fact]
     public async Task Segments_are_deferred_when_the_site_has_no_scope()
     {

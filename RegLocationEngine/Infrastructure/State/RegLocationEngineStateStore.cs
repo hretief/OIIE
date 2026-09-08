@@ -49,6 +49,22 @@ public interface IRegLocationEngineStateStore
     /// Replace, so a second publication of the same tag is a no-op downstream.
     /// </summary>
     Task<bool> TryWriteAsync(RegLocationEngineState state, ETag expected, CancellationToken ct);
+
+    /// <summary>
+    /// For day zero, and specifically because PublishedTags is keyed by
+    /// federation GUID and revision so that the engine's memory survives
+    /// REG-LOCATION being rebuilt. That is the right behaviour normally and
+    /// exactly wrong after a reset: the registry comes back empty, its ids
+    /// restart from 1, and the first tags approved afterwards are recognised as
+    /// already published and never sent. Clearing REG-LOCATION's database
+    /// without clearing this leaves an engine that publishes nothing and
+    /// reports no error.
+    ///
+    /// Unconditional rather than compare-and-swap: a reset is not racing a
+    /// sweep for correctness, and failing it over an ETag would leave the state
+    /// behind.
+    /// </summary>
+    Task ClearAsync(CancellationToken ct);
 }
 
 public sealed class BlobRegLocationEngineStateStore(
@@ -107,6 +123,15 @@ public sealed class BlobRegLocationEngineStateStore(
         {
             return false;
         }
+    }
+
+    public async Task ClearAsync(CancellationToken ct)
+    {
+        // Deleted rather than overwritten with an empty state: ReadAsync already
+        // treats a missing blob as a first run, so removal and reinitialisation
+        // are the same thing and there is no stale ETag left to reason about.
+        var blob = await GetBlobAsync(ct);
+        await blob.DeleteIfExistsAsync(cancellationToken: ct);
     }
 
     private async Task<BlobClient> GetBlobAsync(CancellationToken ct)

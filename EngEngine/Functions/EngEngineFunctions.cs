@@ -366,7 +366,18 @@ public sealed class EngEngineFunctions(
             pollOverlap = _options.PollOverlap,
             maxMarkersPerPoll = _options.MaxMarkersPerPoll,
             watermark = state.Watermark,
-            publishedMarkers = state.PublishedVersions.Count
+            publishedMarkers = state.PublishedVersions.Count,
+
+            // What ENG establishes for a twin before announcing it. Reported
+            // because both steps degrade quietly by design -- a missing
+            // CirBaseUrl skips registration rather than failing the publication
+            // -- and a silent skip is indistinguishable from a silent success
+            // unless the configuration is visible somewhere.
+            provisionITwinChannels = _options.ProvisionITwinChannels,
+            iTwinChannelDomains = _options.ITwinChannelDomains,
+            registerInCir = _options.RegisterInCir,
+            cirBaseUrl = _options.CirBaseUrl,
+            hasCirApiKey = !string.IsNullOrWhiteSpace(_options.CirApiKey)
         });
     }
 }

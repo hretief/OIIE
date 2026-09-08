@@ -50,8 +50,21 @@ public sealed class EngEngineOptions
     public string? EngApiKey { get; set; }
 
     /// <summary>
-    /// The iModel whose markers are published. Required: an engine that polled
-    /// every iModel would publish another project's design onto this channel.
+    /// Optional. Restricts the drain to a single iModel; left empty, the engine
+    /// publishes every iModel ENG holds, each onto its own iTwin's channel.
+    ///
+    /// A poll filter, and nothing more. It selects which markers this engine
+    /// reads; it does not describe what gets published. Provenance
+    /// (InfoSource.UUID) comes from the marker itself, because an iModel id is
+    /// data ENG generates rather than a deployment choice, and a reset
+    /// regenerates it. Reusing this value as data made a stale setting able to
+    /// mis-stamp a publication instead of merely failing the lookup.
+    ///
+    /// It is no longer required for the same reason: a setting naming
+    /// provider-generated data goes stale at the next reset, and an engine that
+    /// depended on it went quiet until someone noticed and edited it. Set it
+    /// only to pin a deployment to one model deliberately -- a focused test --
+    /// and expect to revisit it after any reset.
     /// </summary>
     public Guid IModelId { get; set; }
 
@@ -184,4 +197,86 @@ public sealed class EngEngineOptions
         !string.IsNullOrWhiteSpace(SitesChannelUriOverride)
             ? SitesChannelUriOverride
             : $"/{Enterprise}/enterprise/sites/publication";
+
+    // ---- Per-iTwin channel provisioning ------------------------------------
+
+    /// <summary>
+    /// The domains ENG provisions a per-iTwin publication channel for when a
+    /// twin is created.
+    /// </summary>
+    /// <remarks>
+    /// ENG provisions more than its own "engineering" domain, which looks like
+    /// overreach and is not. ENG creates elements, which are its own; but it
+    /// also creates Sites, and a Site is infrastructure for every participant.
+    /// The channels named for a site's federation id are part of that
+    /// infrastructure, so they come into being with the site rather than with
+    /// the first participant that happens to need one. REG-LOCATION still
+    /// publishes on "operations" and ENG never writes to it -- provisioning is
+    /// not ownership of the traffic.
+    ///
+    /// The alternative is what this replaces: each consumer creating its own
+    /// channel on first ingest, which means the channel does not exist until
+    /// someone has already needed it, and a publication sent a moment too early
+    /// has nowhere to land.
+    ///
+    /// A list rather than two members because the set grows -- CMS will want an
+    /// alerting domain on the same site -- and adding one should be a settings
+    /// change, not another method here.
+    /// </remarks>
+    public string[] ITwinChannelDomains { get; set; } = ["engineering", "operations"];
+
+    /// <summary>
+    /// Whether ENG provisions the per-iTwin channels at all.
+    ///
+    /// Separable from <see cref="RegisterInCir"/> deliberately: provisioning
+    /// channels and registering identity fail for different reasons, and an
+    /// environment where the broker is managed externally should be able to
+    /// turn off the former without losing the latter.
+    /// </summary>
+    public bool ProvisionITwinChannels { get; set; } = true;
+
+    /// <summary>
+    /// The per-iTwin channel URI for a given domain, per the same convention
+    /// <see cref="ChannelUriFor(Guid)"/> follows.
+    ///
+    /// Takes the domain explicitly because this is used to build channels for
+    /// other participants to read, where <see cref="Domain"/> -- ENG's own --
+    /// would be the wrong answer for all but one of them.
+    /// </summary>
+    public string ChannelUriFor(Guid iTwinFederationId, string domain) =>
+        $"/{Enterprise}/{iTwinFederationId:D}/{domain}/publication";
+
+    // ---- Downstream: CIR ---------------------------------------------------
+
+    /// <summary>Root of the CIR function app, e.g. https://host/api.</summary>
+    public string? CirBaseUrl { get; set; }
+
+    /// <summary>Function key for CIR, sent as x-functions-key.</summary>
+    public string? CirApiKey { get; set; }
+
+    /// <summary>
+    /// Whether ENG registers its twins in CIR as well as publishing them.
+    /// </summary>
+    /// <remarks>
+    /// ENG registers because it is the source of the identity, not because it
+    /// consumes one. The federation id it puts in the Cirid is the id every
+    /// other participant will correlate on, and it is ENG's row that says what
+    /// that GUID means upstream; a consumer registering it instead is recording
+    /// a fact it inferred rather than one it holds.
+    ///
+    /// Defaulted on but honoured everywhere, so an environment without a CIR
+    /// still publishes: registering an identity and announcing a twin are
+    /// different acts, and the second should not be blocked by the first.
+    /// </remarks>
+    public bool RegisterInCir { get; set; } = true;
+
+    /// <summary>
+    /// The CIR category ENG's twins are registered under.
+    ///
+    /// Distinct from REG-LOCATION's ITWIN-SITE: the two describe the same twin
+    /// from different systems, each keyed by its own primary key, which is
+    /// precisely the correlation CIR exists to hold. Collapsing them into one
+    /// category would discard the distinction that makes the entry useful.
+    /// </summary>
+    public string CirITwinCategory { get; set; } = "ITWIN";
 }

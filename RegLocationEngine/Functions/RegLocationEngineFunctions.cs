@@ -23,6 +23,42 @@ public sealed class RegLocationEngineFunctions(
     private readonly RegLocationEngineOptions _options = options.Value;
 
     /// <summary>
+    /// Forgets every tag this engine has published.
+    ///
+    /// Called by the Sandbox's day zero, alongside REG-LOCATION's own reset. The
+    /// two have to happen together: the published-tag set is keyed by federation
+    /// GUID and revision precisely so it survives the registry being rebuilt, so
+    /// a database reset on its own would leave the engine declining to republish
+    /// work it believes it has already sent -- which is what left publishedTags
+    /// counting up across resets.
+    ///
+    /// Not routed under admin/: the Functions host reserves that prefix, and a
+    /// function that claims it fails indexing and is silently disabled rather
+    /// than rejected at build time.
+    /// </summary>
+    [Function("RegLocationEngineReset")]
+    public async Task<IActionResult> RegLocationEngineReset(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "engine/reset")] HttpRequest req,
+        CancellationToken ct)
+    {
+        try
+        {
+            await stateStore.ClearAsync(ct);
+            logger.LogWarning("REG-LOCATION engine state cleared: published tags forgotten.");
+
+            return new OkObjectResult(new { reset = true });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "REG-LOCATION engine state reset failed.");
+            return new ObjectResult(new { reset = false, detail = ex.Message })
+            {
+                StatusCode = StatusCodes.Status500InternalServerError
+            };
+        }
+    }
+
+    /// <summary>
     /// Receives an approval from REG-LOCATION.
     ///
     /// Not gated by Enabled. The provider does not retry, so a notification
@@ -195,6 +231,12 @@ public sealed class RegLocationEngineFunctions(
     {
         var (state, _) = await stateStore.ReadAsync(ct);
 
+        // The sites actually being followed, resolved live rather than read from
+        // configuration. This is the question that used to be unanswerable: the
+        // engine reported a single derived channel URI and looked healthy while
+        // subscribed to a twin day zero had destroyed.
+        var sites = await ingestion.DiscoverSitesAsync(ct);
+
         return new OkObjectResult(new
         {
             enabled = _options.Enabled,
@@ -211,10 +253,24 @@ public sealed class RegLocationEngineFunctions(
             enterprise = _options.Enterprise,
             domain = _options.Domain,
             channelUriOverride = _options.ChannelUriOverride,
-            channelUri = _options.ChannelUriFor(_options.ITwinFederationId),
+            channelUri = _options.ITwinFederationId == Guid.Empty
+                ? null
+                : _options.ChannelUriFor(_options.ITwinFederationId),
 
             topics = _options.Topics,
-            iTwinFederationId = _options.ITwinFederationId,
+
+            // Pinning, not identity: empty is the normal case and means the
+            // engine follows whichever sites exist. A value here overrides that
+            // and restricts it to one twin.
+            iTwinFederationIdOverride =
+                _options.ITwinFederationId == Guid.Empty ? null : (Guid?)_options.ITwinFederationId,
+
+            // What is actually subscribed to, and the count first because zero
+            // is the reading that matters: no sites means nothing can arrive,
+            // whatever anyone publishes.
+            sitesFollowed = sites.Count,
+            inboundChannels = sites.Select(_options.InboundChannelUriFor).ToArray(),
+
             maxTagsPerSweep = _options.MaxTagsPerSweep,
             publishedTags = state.PublishedTags.Count,
 
@@ -225,7 +281,6 @@ public sealed class RegLocationEngineFunctions(
             // read side by side.
             ingestEnabled = _options.IngestEnabled,
             inboundDomain = _options.InboundDomain,
-            inboundChannelUri = _options.InboundChannelUriFor(_options.ITwinFederationId),
             inboundTopics = _options.InboundTopics,
             inboundItemId = _options.InboundItemId,
 

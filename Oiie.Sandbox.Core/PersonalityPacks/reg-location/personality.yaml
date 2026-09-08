@@ -10,21 +10,17 @@ identifierStyle: surrogate
 # Consumes engineering output, republishes what a steward approves. Two roles on
 # two different channels is the normal shape for a registry: it sits between.
 #
-# The subscriber leg follows the OIIE naming convention and must match the federation
-# id ENG publishes under. The publisher leg has not moved yet -- the operations
-# channel is shared with scenarios 2 and 11 and with MMS and CMS, so it converts when
-# they do rather than one participant at a time.
-channels:
-  - channelUri: /acme/8f2f5e1c-6a1e-4c8e-9a5c-2b0e7d3f4a11/engineering/publication
-    role: Subscriber
-    topics:
-      - Segments
-    useNotifications: false
-  - channelUri: /OIIE-SANDBOX/Enterprise/Site/OandM
-    role: Publisher
-    topics:
-      - Segments
-    useNotifications: false
+# Neither leg is declared here, because neither is enterprise-level. The
+# subscriber leg is a per-iTwin engineering channel, discovered from the sites
+# the engine is following; the publisher leg is the matching per-iTwin
+# operations channel. Both are provisioned by ENG when the twin is created, so
+# listing either here would ask day zero to rebuild a channel for a twin that no
+# longer exists.
+#
+# The literal /OIIE-SANDBOX/Enterprise/Site/OandM leg that used to sit here went
+# with them. It was a shared demo channel from before the per-iTwin convention,
+# kept alive only because the registry rebuilt it on every reset.
+channels: []
 
 isbm:
   baseUrl: https://acme-api-isbm-dev.azurewebsites.net/api

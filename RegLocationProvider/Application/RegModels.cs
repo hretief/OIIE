@@ -29,6 +29,13 @@ public sealed record RegObject(
 /// because in the table they are called object_id/object_type and are routinely
 /// mistaken for the scope's own registry row, which they are not. Both are
 /// supplied together or not at all.
+///
+/// <see cref="Guid"/> IS the scope's own registry row, and is the one the
+/// publisher named the site by. Exposed because a caller holding a tag can
+/// otherwise reach its scope but not the site that scope stands for, which left
+/// the outbound integration unable to work out where to publish. Nullable: a
+/// scope created without a GUID has none, and inventing one here would put a
+/// fabricated identity on a real row.
 /// </summary>
 public sealed record RegScope(
     int ScopeId,
@@ -38,7 +45,8 @@ public sealed record RegScope(
     int? ContextObjectType,
     int? ParentId,
     bool IsEnabled,
-    int UsageCount);
+    int UsageCount,
+    Guid? Guid = null);
 
 /// <summary>
 /// What a cascaded scope delete removed.
@@ -58,11 +66,25 @@ public sealed record ScopeCascadeResult(
 /// <summary>A classification group.</summary>
 public sealed record RegClassGroup(int GroupId);
 
-/// <summary>A class an item or tag may be created on.</summary>
+/// <summary>
+/// A class an item or tag may be created on.
+///
+/// <see cref="Code"/> is the vocabulary identifier a caller classifies against
+/// (rdl:Instrument); <see cref="Name"/> is what a person reads. Both are
+/// required, because a class that cannot be named is not usable reference data.
+///
+/// <see cref="ParentClassId"/> is the class this one specialises, or null for a
+/// root. It is what lets a tag classified against a leaf this registry does not
+/// hold bind at its nearest held ancestor instead of being rejected.
+/// </summary>
 public sealed record RegClass(
     int ClassId,
     int GroupId,
-    int NamespaceId);
+    int NamespaceId,
+    string Code,
+    string Name,
+    string? Description,
+    int? ParentClassId);
 
 /// <summary>A unit of measure.</summary>
 public sealed record RegUnit(int UnitId);

@@ -31,6 +31,11 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
     private const int TypeSerializedItem = 18;
     private const int TypeTag = 212;
     private const int TypeScope = 227;
+    private const int TypeClass = 185;
+
+    // The Global scope, seeded by bootstrap.sql. Registry-wide reference data
+    // lives here because it belongs to no single site.
+    private const int GlobalScopeId = 1;
 
     private async Task<SqlConnection> OpenAsync(CancellationToken ct)
     {
@@ -56,9 +61,20 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
 
     // ---- Scopes -----------------------------------------------------------
 
-    private const string ScopeColumns = """
+    // The scope's own registry GUID, which for a site-backed scope is the site
+    // GUID the publisher used. Expressed as a correlated subquery rather than a
+    // join so every query using these columns picks it up without restating the
+    // join -- and so a scope with no object row still reads, as NULL.
+    //
+    // The object_type filter is not optional: a site's Scope and its Serial
+    // deliberately carry the same GUID on rows that differ only by type, so
+    // without it this returns whichever the query reaches first. Same reasoning
+    // as FindScopeByGuidAsync below, and the two must agree.
+    private static readonly string ScopeColumns = $"""
         s.scope_id, s.name, s.namespace_id, s.object_id, s.object_type,
-        s.parent_id, s.is_enabled, s.usage_count
+        s.parent_id, s.is_enabled, s.usage_count,
+        (SELECT o.guid FROM dbo.objects AS o
+          WHERE o.object_id = s.scope_id AND o.object_type = {TypeScope}) AS scope_guid
         """;
 
     private static RegScope ReadScope(SqlDataReader r) => new(
@@ -69,7 +85,8 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
         r.IsDBNull(4) ? null : r.GetInt32(4),
         r.IsDBNull(5) ? null : r.GetInt32(5),
         r.GetString(6) == "Y",
-        r.GetInt32(7));
+        r.GetInt32(7),
+        r.IsDBNull(8) ? null : r.GetGuid(8));
 
     public async Task<IReadOnlyList<RegScope>> GetScopesAsync(CancellationToken ct)
     {
@@ -385,9 +402,8 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
     public async Task<IReadOnlyList<RegClass>> GetClassesAsync(int? namespaceId, CancellationToken ct)
     {
         await using var cn = await OpenAsync(ct);
-        await using var cmd = new SqlCommand("""
-            SELECT class_id, group_id, namespace_id
-            FROM dbo.class_objects
+        await using var cmd = new SqlCommand($"""
+            {ClassSelect}
             WHERE (@ns IS NULL OR namespace_id = @ns)
             ORDER BY class_id;
             """, cn);
@@ -395,10 +411,155 @@ public sealed class SqlRegLocationStore(IOptions<RegLocationOptions> options) : 
 
         var result = new List<RegClass>();
         await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct))
-            result.Add(new RegClass(r.GetInt32(0), r.GetInt32(1), r.GetInt32(2)));
+        while (await r.ReadAsync(ct)) result.Add(ReadClass(r));
         return result;
     }
+
+    public async Task<RegClass?> FindClassAsync(int classId, CancellationToken ct)
+    {
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand($"""
+            {ClassSelect}
+            WHERE class_id = @id;
+            """, cn);
+        cmd.Parameters.AddWithValue("@id", classId);
+
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        return await r.ReadAsync(ct) ? ReadClass(r) : null;
+    }
+
+    /// <summary>
+    /// Adds a class to the vocabulary.
+    ///
+    /// The class id is the caller's, not this registry's, so unlike every other
+    /// create here there is no NextIdAsync call. That makes a collision with an
+    /// existing class a real possibility rather than a theoretical one, which is
+    /// why it is checked explicitly: the primary key would catch it, but as a
+    /// duplicate-key message about tag codes, which is not what happened.
+    ///
+    /// Classes are locked (lock_flags 18) to match how the bootstrap and EIS's
+    /// own ebps_pop_announce_class_objs record them: vocabulary is not user-
+    /// editable through the generic object routes.
+    /// </summary>
+    public async Task<RegClass> CreateClassAsync(CreateClassRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Code) || string.IsNullOrWhiteSpace(request.Name))
+            throw new RegistryConflictException("A class requires both a code and a name.");
+
+        await using var cn = await OpenAsync(ct);
+        await using var tx = (SqlTransaction)await cn.BeginTransactionAsync(ct);
+
+        try
+        {
+            await using (var exists = new SqlCommand(
+                "SELECT 1 FROM dbo.class_objects WITH (UPDLOCK, HOLDLOCK) WHERE class_id = @id;", cn, tx))
+            {
+                exists.Parameters.AddWithValue("@id", request.ClassId);
+
+                if (await exists.ExecuteScalarAsync(ct) is not null)
+                    throw new RegistryConflictException($"Class '{request.ClassId}' already exists.");
+            }
+
+            // Vocabulary is registry-wide, so its registry row sits in the Global
+            // scope rather than in any site's. A class confined to one scope could
+            // not classify anything outside it.
+            await InsertObjectAsync(cn, tx, request.ClassId, TypeClass, GlobalScopeId, request.Guid, ct);
+
+            await using (var cmd = new SqlCommand("""
+                UPDATE dbo.objects
+                   SET lock_flags = 18
+                 WHERE object_id = @id AND object_type = @type;
+                """, cn, tx))
+            {
+                cmd.Parameters.AddWithValue("@id", request.ClassId);
+                cmd.Parameters.AddWithValue("@type", TypeClass);
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+
+            await using (var cmd = new SqlCommand("""
+                INSERT INTO dbo.class_objects
+                    (class_id, group_id, namespace_id, code, name, description, parent_class_id)
+                VALUES
+                    (@id, @group, @ns, @code, @name, @desc, @parent);
+                """, cn, tx))
+            {
+                cmd.Parameters.AddWithValue("@id", request.ClassId);
+                cmd.Parameters.AddWithValue("@group", request.GroupId);
+                cmd.Parameters.AddWithValue("@ns", request.NamespaceId);
+                cmd.Parameters.AddWithValue("@code", request.Code);
+                cmd.Parameters.AddWithValue("@name", request.Name);
+                cmd.Parameters.AddWithValue("@desc", (object?)request.Description ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@parent", (object?)request.ParentClassId ?? DBNull.Value);
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+
+            await tx.CommitAsync(ct);
+
+            return new RegClass(
+                request.ClassId, request.GroupId, request.NamespaceId,
+                request.Code, request.Name, request.Description, request.ParentClassId);
+        }
+        catch (SqlException ex) when (IsConstraintViolation(ex))
+        {
+            await tx.RollbackAsync(ct);
+            throw Translate(ex);
+        }
+    }
+
+    public async Task<RegClass?> UpdateClassAsync(int classId, UpdateClassRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Code) || string.IsNullOrWhiteSpace(request.Name))
+            throw new RegistryConflictException("A class requires both a code and a name.");
+
+        // A class that is its own parent is a cycle the foreign key cannot see,
+        // since the row it points at does exist. Refused here because the
+        // ancestor walk that resolves a degraded classification would not
+        // terminate.
+        if (request.ParentClassId == classId)
+            throw new RegistryConflictException("A class cannot be its own parent.");
+
+        await using var cn = await OpenAsync(ct);
+
+        try
+        {
+            await using var cmd = new SqlCommand("""
+                UPDATE dbo.class_objects
+                   SET code = @code,
+                       name = @name,
+                       description = @desc,
+                       parent_class_id = @parent
+                 WHERE class_id = @id;
+                """, cn);
+
+            cmd.Parameters.AddWithValue("@id", classId);
+            cmd.Parameters.AddWithValue("@code", request.Code);
+            cmd.Parameters.AddWithValue("@name", request.Name);
+            cmd.Parameters.AddWithValue("@desc", (object?)request.Description ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@parent", (object?)request.ParentClassId ?? DBNull.Value);
+
+            if (await cmd.ExecuteNonQueryAsync(ct) == 0) return null;
+        }
+        catch (SqlException ex) when (IsConstraintViolation(ex))
+        {
+            throw Translate(ex);
+        }
+
+        return await FindClassAsync(classId, ct);
+    }
+
+    private const string ClassSelect = """
+        SELECT class_id, group_id, namespace_id, code, name, description, parent_class_id
+        FROM dbo.class_objects
+        """;
+
+    private static RegClass ReadClass(SqlDataReader r) => new(
+        r.GetInt32(0),
+        r.GetInt32(1),
+        r.GetInt32(2),
+        r.GetString(3),
+        r.GetString(4),
+        r.IsDBNull(5) ? null : r.GetString(5),
+        r.IsDBNull(6) ? null : r.GetInt32(6));
 
     public async Task<IReadOnlyList<RegUnit>> GetUnitsAsync(CancellationToken ct)
     {

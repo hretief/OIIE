@@ -107,3 +107,36 @@ public sealed record CreateScopeRequest(
     int? ContextObjectId = null,
     int? ContextObjectType = null,
     Guid? Guid = null);
+
+/// <summary>
+/// What a caller supplies to add a class to the registry's vocabulary.
+///
+/// ClassId is supplied rather than minted, unlike scopes and tags. A class id
+/// has to agree with the id the same class carries in the participant's own
+/// system, so the caller is the only party that can know it; a registry-assigned
+/// id would name a class nothing else could recognise.
+/// </summary>
+public sealed record CreateClassRequest(
+    int ClassId,
+    int GroupId,
+    int NamespaceId,
+    string Code,
+    string Name,
+    string? Description = null,
+    int? ParentClassId = null,
+    Guid? Guid = null);
+
+/// <summary>
+/// What a caller supplies to update an existing class.
+///
+/// GroupId and NamespaceId are absent: moving a class into a different group or
+/// namespace is not an edit to that class, it is a different class. Code stays
+/// editable because a vocabulary can correct an identifier it got wrong, and
+/// ParentClassId because a hierarchy is routinely filled in after the classes
+/// themselves exist.
+/// </summary>
+public sealed record UpdateClassRequest(
+    string Code,
+    string Name,
+    string? Description = null,
+    int? ParentClassId = null);

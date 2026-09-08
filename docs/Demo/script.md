@@ -37,9 +37,13 @@ This calls `POST /admin/reset/day-zero`, which empties:
    `engine/reset`. Both are needed: the engine remembers published versions by
    VersionGuid, so clearing ENG's rows without clearing that memory yields an
    engine that silently declines to republish.
-5. **REG-LOCATION provider tables** — via `reglocation/reset`. Schema and
+5. **REG-LOCATION provider tables** and the **REG-LOCATION engine published
+   set** — via `reglocation/reset` and the engine's own `engine/reset`. Schema and
    `bootstrap.sql` are re-applied afterwards, because REG-LOCATION's bootstrap is
-   structural (classification scaffolding), not demo data.
+   structural (classification scaffolding), not demo data. As with ENG, both are
+   needed: the engine remembers what it has published by federation GUID and
+   revision, so clearing the registry alone leaves an engine that declines to
+   republish and a `publishedTags` count that survives day zero.
 6. **MMS provider tables** — via `mms/reset`, if configured.
 7. **CMS provider tables** — via `cms/reset`, if configured.
 

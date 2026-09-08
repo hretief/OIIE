@@ -98,8 +98,14 @@ public sealed class RegLocationEngineOptions
     public string[] Topics { get; set; } = ["oiie:sc01/ccom:SyncSegments"];
 
     /// <summary>
-    /// The iTwin the channel URI is built from. Required before anything can be
-    /// published, because the federation id is the channel's identity.
+    /// Optional. Pins every outbound publication to one iTwin's channel; left
+    /// empty, each approved tag is published onto the channel of the site its
+    /// scope names.
+    ///
+    /// No longer required. The site is a property of the tag -- tag names scope,
+    /// scope carries the site GUID -- so deriving it is both more accurate and
+    /// immune to a registry reset, which is what made a configured value here
+    /// stop the outbound leg dead once it went stale.
     ///
     /// An iTwin federation id, NOT an iModel id. An iModel is an ENG-internal
     /// container -- elements and named versions live in one, and REG-LOCATION

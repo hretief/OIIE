@@ -67,9 +67,23 @@ param(
     [string]$EngApp = 'acme-api-eng-dev',
     [string]$RegLocationApp = 'acme-api-reglocation-dev',
 
+    # CIR holds the identities of rows the other systems renumber from 1 on a
+    # day-zero reset, so it has to be reachable for a reset to be complete. MMS
+    # and CMS hold no data yet, but their reset endpoints exist and day zero
+    # calls them, so they are configured here rather than reported as failures.
+    [string]$CirApp = 'acme-api-cir-dev',
+    [string]$MmsApp = 'acme-api-mms-dev',
+    [string]$CmsApp = 'acme-api-cms-dev',
+
     # The integration engine behind ENG. Separate from the provider app: it
     # carries the SyncSites publish that add-iTwin triggers.
     [string]$EngEngineApp = 'acme-engn-eng-dev',
+
+    # The integration engine behind REG-LOCATION. Day zero has to reach it: its
+    # published-tag set is keyed so that it survives the registry being rebuilt,
+    # so resetting REG-LOCATION's database without clearing this leaves an
+    # engine that republishes nothing.
+    [string]$RegLocationEngineApp = 'acme-engn-reglocation-dev',
 
     [string]$PlanSku = 'B1',
 
@@ -279,6 +293,25 @@ Write-Host 'Configuring provider read-through...'
 Set-ProviderSettings -AppName $EngApp -SettingPrefix 'Providers__Eng' -Label 'ENG'
 Set-ProviderSettings -AppName $RegLocationApp -SettingPrefix 'Providers__RegLocation' -Label 'REG-LOCATION'
 
+# These three drive no panel: they exist so day zero can reach every system that
+# holds data. The reset reads Providers__*__BaseUrl as a fallback for its own
+# Sandbox__* names, so one setting per provider now serves both purposes --
+# previously REG-LOCATION was configured here and still skipped by the reset,
+# which read a different name and said nothing.
+Set-ProviderSettings -AppName $CirApp -SettingPrefix 'Providers__Cir' -Label 'CIR'
+Set-ProviderSettings -AppName $MmsApp -SettingPrefix 'Providers__Mms' -Label 'MMS'
+Set-ProviderSettings -AppName $CmsApp -SettingPrefix 'Providers__Cms' -Label 'CMS'
+
+# The registry day zero drops. Matches the Enterprise the engines are deployed
+# with in deploy/engines/deploy-engine.ps1; the sandbox has no way to derive it.
+Invoke-Az @(
+    'webapp', 'config', 'appsettings', 'set',
+    '--resource-group', $ResourceGroup,
+    '--name', $apiAppName,
+    '--settings', 'Sandbox__CirRegistryId=acme',
+    '-o', 'none'
+) -Because 'CIR registry id'
+
 # Read-through and the SyncSites bootstrap are configured separately: the
 # Providers__* settings above drive the panels, while EngEngineClient reads the
 # Sandbox__* pair below. Setting only the first leaves add-iTwin recording the
@@ -318,6 +351,41 @@ function Set-EngBootstrapSettings {
 }
 
 Set-EngBootstrapSettings -ProviderApp $EngApp -EngineApp $EngEngineApp
+
+# The REG-LOCATION engine is reached only by day zero, so it needs a base URL
+# and a key of its own rather than the ENG pair above.
+function Set-RegLocationEngineSettings {
+    param(
+        [Parameter(Mandatory)][string]$EngineApp
+    )
+
+    if ([string]::IsNullOrWhiteSpace($EngineApp)) {
+        Write-Host '  REG-LOCATION engine: not configured, day zero will report it as unreset'
+        return
+    }
+
+    $engineKey = & az functionapp keys list -g $ResourceGroup -n $EngineApp `
+        --query functionKeys.default -o tsv 2>$null
+
+    if ($LASTEXITCODE -ne 0 -or -not $engineKey) {
+        Write-Warning "  REG-LOCATION engine: could not read a function key for '$EngineApp'."
+        return
+    }
+
+    Invoke-Az @(
+        'webapp', 'config', 'appsettings', 'set',
+        '--resource-group', $ResourceGroup,
+        '--name', $apiAppName,
+        '--settings',
+        "Sandbox__RegLocationEngineBaseUrl=https://$EngineApp.azurewebsites.net/api",
+        "Sandbox__RegLocationEngineKey=$engineKey",
+        '-o', 'none'
+    ) -Because 'REG-LOCATION engine settings'
+
+    Write-Host "  REG-LOCATION engine: $EngineApp"
+}
+
+Set-RegLocationEngineSettings -EngineApp $RegLocationEngineApp
 
 # --- Build and deploy ------------------------------------------------------
 
@@ -471,12 +539,19 @@ function Publish-SandboxApp {
 
     Write-Host "`nDeploying $Label to $AppName..."
 
+    # --clean wipes wwwroot before unpacking, because zip deploy otherwise only
+    # overwrites and never removes. A personality pack deleted from the repo
+    # therefore stayed on the server and kept being loaded: PersonalityLoader
+    # walks every personality.yaml it finds, so a removed participant went on
+    # declaring channels that day zero dutifully recreated. The published output
+    # is complete on its own, so there is nothing on the server worth keeping.
     Invoke-Az @(
         'webapp', 'deploy',
         '--resource-group', $ResourceGroup,
         '--name', $AppName,
         '--src-path', $zipPath,
         '--type', 'zip',
+        '--clean', 'true',
         '--async', 'false'
     ) -Because "Deployment of $Label"
 }

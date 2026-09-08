@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure.Storage.Blobs;
 using EngEngine.Application;
+using EngEngine.Infrastructure.Cir;
 using EngEngine.Infrastructure.Eng;
 using EngEngine.Infrastructure.State;
 using Microsoft.Azure.Functions.Worker;
@@ -78,6 +79,28 @@ builder.Services.AddHttpClient<IIsbmClient, IsbmRestClient>((sp, http) =>
 // typed-client registration above cannot construct it unaided.
 builder.Services.AddTransient(sp =>
     sp.GetRequiredService<IOptions<IsbmClientOptions>>().Value);
+
+// --- Downstream: CIR -------------------------------------------------------
+//
+// Registered unconditionally even though CirBaseUrl may be absent. The service
+// checks RegisterInCir and reports a missing base address as a skipped step
+// rather than failing to resolve, so a deployment without a CIR still publishes
+// instead of failing to start.
+builder.Services.AddHttpClient<ICirClient, CirRestClient>((sp, http) =>
+{
+    var options = sp.GetRequiredService<IOptions<EngEngineOptions>>().Value;
+
+    if (!string.IsNullOrWhiteSpace(options.CirBaseUrl))
+    {
+        // Trailing slash for the same reason as the ENG client above.
+        http.BaseAddress = new Uri(options.CirBaseUrl.TrimEnd('/') + "/");
+    }
+
+    if (!string.IsNullOrWhiteSpace(options.CirApiKey))
+        http.DefaultRequestHeaders.Add("x-functions-key", options.CirApiKey);
+
+    http.Timeout = TimeSpan.FromSeconds(60);
+});
 
 // --- Topology --------------------------------------------------------------
 //

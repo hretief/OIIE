@@ -89,6 +89,22 @@ public interface IRegLocationStore
 
     Task<IReadOnlyList<RegClass>> GetClassesAsync(int? namespaceId, CancellationToken ct);
 
+    Task<RegClass?> FindClassAsync(int classId, CancellationToken ct);
+
+    /// <summary>
+    /// Adds a class to the registry's vocabulary.
+    ///
+    /// The class id comes from the request rather than being minted here,
+    /// because it has to match the id the participant's own system uses for the
+    /// same class.
+    /// </summary>
+    Task<RegClass> CreateClassAsync(CreateClassRequest request, CancellationToken ct);
+
+    /// <summary>
+    /// Edits an existing class. Returns null if no such class exists.
+    /// </summary>
+    Task<RegClass?> UpdateClassAsync(int classId, UpdateClassRequest request, CancellationToken ct);
+
     Task<IReadOnlyList<RegUnit>> GetUnitsAsync(CancellationToken ct);
 
     // ---- Items ------------------------------------------------------------

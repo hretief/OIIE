@@ -59,6 +59,16 @@ public sealed class RegLocationApprovalService(
     private readonly RegLocationEngineOptions _options = options.Value;
 
     /// <summary>
+    /// Scope id to site GUID, including scopes known to have none.
+    ///
+    /// A sweep publishes many tags from few sites, so this collapses what would
+    /// otherwise be one registry read per tag. Held for the lifetime of the
+    /// instance: a scope's site is assigned when the site is bootstrapped and
+    /// does not change afterwards.
+    /// </summary>
+    private readonly Dictionary<int, Guid?> _siteCache = [];
+
+    /// <summary>
     /// Handles one approval notification.
     ///
     /// The tag is read back rather than taken from the payload. The notification
@@ -76,6 +86,31 @@ public sealed class RegLocationApprovalService(
 
         if (detail is null)
             return Failed($"REG-LOCATION does not have tag '{notification.TagId}'.");
+
+        // A correction to an approved location is filed as a new row carrying the
+        // same federation GUID, so several rows can be approved for one location
+        // at once. Downstream is told about the location, not about the row, and
+        // the current answer is the highest revision -- approving an older row
+        // afterwards must not walk the receiver back to superseded content.
+        if (detail.Object.Guid is { } guid)
+        {
+            var siblings = await registry.FindTagsByGuidAsync(guid, ct);
+
+            var newest = siblings
+                .Where(RegLocationSegmentsBuilder.IsPublishable)
+                .MaxBy(t => t.Tag.Revision);
+
+            if (newest is not null && newest.Tag.Revision > detail.Tag.Revision)
+            {
+                logger.LogInformation(
+                    "Tag {TagId} rev {Revision} is superseded by tag {NewerTagId} rev {NewerRevision} " +
+                    "for {Guid}; the newer revision is published instead.",
+                    detail.Tag.TagId, detail.Tag.Revision,
+                    newest.Tag.TagId, newest.Tag.Revision, guid);
+
+                detail = newest;
+            }
+        }
 
         return await PublishAsync([detail], notification.DecidedBy, ct);
     }
@@ -101,9 +136,23 @@ public sealed class RegLocationApprovalService(
 
         var approved = await registry.GetApprovedTagsAsync(_options.ScopeId, ct);
 
+        // Collapsed to one row per federation GUID first. Corrections to approved
+        // locations are filed as additional rows sharing a GUID, so a sweep sees
+        // both the superseded and the current content; publishing both would send
+        // downstream two Sync BODs for one location whose order decides which
+        // wins. Only the highest revision is the location's present state.
+        //
+        // Rows without a GUID are left in as themselves: they are not publishable
+        // and are reported as skipped below, which is where that belongs.
+        var current = approved
+            .Where(t => t.Object.Guid is not null)
+            .GroupBy(t => t.Object.Guid!.Value)
+            .Select(g => g.MaxBy(t => t.Tag.Revision)!)
+            .Concat(approved.Where(t => t.Object.Guid is null));
+
         // Ordered by tag id so a sweep that stops part-way resumes predictably
         // rather than picking a different arbitrary subset next time.
-        var batch = approved
+        var batch = current
             .OrderBy(t => t.Tag.TagId)
             .Take(_options.MaxTagsPerSweep)
             .ToList();
@@ -118,7 +167,6 @@ public sealed class RegLocationApprovalService(
 
         var published = new HashSet<string>(state.PublishedTags);
         var skipped = new List<string>();
-        var errors = new List<string>();
         var toPublish = new List<RegTagDetail>();
         var alreadyPublished = 0;
 
@@ -157,56 +205,95 @@ public sealed class RegLocationApprovalService(
             };
         }
 
-        var entriesRegistered = 0;
+        var errors = new List<string>();
         var publishedCount = 0;
+        var entriesRegistered = 0;
 
-        try
+        // Grouped by the site each tag belongs to, because the channel is rooted
+        // in the site's GUID and a sweep can legitimately span several. One
+        // publication naming every site would be delivered to whichever site's
+        // subscribers happened to be on the configured channel, which is how
+        // this leg previously depended on a pinned twin.
+        var bySite = new Dictionary<Guid, List<RegTagDetail>>();
+
+        foreach (var detail in toPublish)
         {
-            var channelUri = _options.ChannelUriFor(_options.ITwinFederationId);
+            var site = await ResolveSiteAsync(detail, ct);
 
-            // Opened only once there is something to say. A pass that finds
-            // nothing should not establish a session against the broker to prove
-            // it.
-            var sessionId = await isbm.OpenPublicationSessionAsync(channelUri, ct);
-
-            var correlationId = Guid.NewGuid().ToString();
-            var content = builder.Build(toPublish, decidedBy, correlationId);
-
-            var messageId = await isbm.PostPublicationAsync(
-                sessionId,
-                content,
-                _options.Topics,
-                ct: ct);
-
-            publishedCount = toPublish.Count;
-
-            foreach (var detail in toPublish)
+            if (site is null)
             {
-                published.Add(
-                    RegLocationEngineState.KeyFor(detail.Object.Guid!.Value, detail.Tag.Revision));
+                // Left unrecorded so a later sweep retries it: a scope may
+                // acquire its site GUID after the fact, and recording the tag
+                // now would mean never looking at it again on the day it became
+                // routable.
+                skipped.Add(
+                    $"{detail.Tag.Code}: scope '{detail.Object.ScopeId}' names no site, " +
+                    "so there is no channel to publish it on.");
+                continue;
             }
 
-            logger.LogInformation(
-                "Published {Count} approved tag(s) as {MessageId} [{CorrelationId}].",
-                publishedCount, messageId, correlationId);
-
-            // Registration follows publication rather than preceding it. Both
-            // orders leave a window, and this is the better one: a tag on the
-            // channel but not yet in CIR is a receiver that has to ask again,
-            // whereas a CIRID for something never published is an identity for a
-            // location nobody has been told about.
-            if (_options.RegisterInCir && !string.IsNullOrWhiteSpace(_options.CirBaseUrl))
+            if (!bySite.TryGetValue(site.Value, out var group))
             {
-                entriesRegistered = await RegisterAsync(toPublish, ct);
+                bySite[site.Value] = group = [];
             }
+
+            group.Add(detail);
         }
-        catch (Exception ex)
+
+        foreach (var (site, tags) in bySite)
         {
-            // The tags are left unrecorded, so the next pass retries them.
-            // Publishing later is recoverable; recording a tag that never reached
-            // the channel is not.
-            logger.LogError(ex, "Publishing approved tags failed.");
-            errors.Add(ex.Message);
+            try
+            {
+                var channelUri = _options.ChannelUriFor(site);
+
+                // Opened only once there is something to say. A pass that finds
+                // nothing should not establish a session against the broker to prove
+                // it.
+                var sessionId = await isbm.OpenPublicationSessionAsync(channelUri, ct);
+
+                var correlationId = Guid.NewGuid().ToString();
+                var content = builder.Build(tags, decidedBy, correlationId);
+
+                var messageId = await isbm.PostPublicationAsync(
+                    sessionId,
+                    content,
+                    _options.Topics,
+                    ct: ct);
+
+                publishedCount += tags.Count;
+
+                foreach (var detail in tags)
+                {
+                    published.Add(
+                        RegLocationEngineState.KeyFor(detail.Object.Guid!.Value, detail.Tag.Revision));
+                }
+
+                logger.LogInformation(
+                    "Published {Count} approved tag(s) for site {Site} as {MessageId} [{CorrelationId}].",
+                    tags.Count, site, messageId, correlationId);
+
+                // Registration follows publication rather than preceding it. Both
+                // orders leave a window, and this is the better one: a tag on the
+                // channel but not yet in CIR is a receiver that has to ask again,
+                // whereas a CIRID for something never published is an identity for a
+                // location nobody has been told about.
+                if (_options.RegisterInCir && !string.IsNullOrWhiteSpace(_options.CirBaseUrl))
+                {
+                    entriesRegistered += await RegisterAsync(tags, ct);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Only this site's tags are left unrecorded, so the next pass
+                // retries them. Publishing later is recoverable; recording a tag
+                // that never reached the channel is not.
+                //
+                // Caught per site rather than around the whole loop: one site's
+                // channel being unreachable is not a reason to withhold another
+                // site's approvals.
+                logger.LogError(ex, "Publishing approved tags for site {Site} failed.", site);
+                errors.Add($"{site:D}: {ex.Message}");
+            }
         }
 
         if (publishedCount > 0)
@@ -232,6 +319,50 @@ public sealed class RegLocationApprovalService(
             Errors = errors,
             Skipped = skipped
         };
+    }
+
+    /// <summary>
+    /// The site a tag belongs to, or null when it cannot be established.
+    ///
+    /// A tag records the scope it lives in, and the scope carries the GUID the
+    /// publisher named the site by, so the route is tag -> scope -> site. That
+    /// is a lookup rather than configuration on purpose: the site is a property
+    /// of the tag, and a configured one goes stale the moment the registry is
+    /// reset, which previously stopped this leg running at all.
+    ///
+    /// The configured id still wins when set, so a deployment can be pinned to
+    /// one site deliberately.
+    /// </summary>
+    private async Task<Guid?> ResolveSiteAsync(RegTagDetail detail, CancellationToken ct)
+    {
+        if (_options.ITwinFederationId != Guid.Empty)
+            return _options.ITwinFederationId;
+
+        var scopeId = detail.Object.ScopeId;
+
+        if (_siteCache.TryGetValue(scopeId, out var cached))
+            return cached;
+
+        try
+        {
+            var scope = await registry.FindScopeAsync(scopeId, ct);
+
+            // Cached including the null, so a scope with no site is not looked
+            // up once per tag for every tag under it.
+            var site = scope?.Guid is { } guid && guid != Guid.Empty ? guid : (Guid?)null;
+
+            _siteCache[scopeId] = site;
+            return site;
+        }
+        catch (RegLocationClientException ex)
+        {
+            // Not cached: this is the registry being unreachable rather than the
+            // scope having no site, and the next sweep should ask again.
+            logger.LogWarning(
+                ex, "Could not read scope {ScopeId} to find its site.", scopeId);
+
+            return null;
+        }
     }
 
     /// <summary>
@@ -295,12 +426,6 @@ public sealed class RegLocationApprovalService(
         if (string.IsNullOrWhiteSpace(_options.RegLocationBaseUrl))
         {
             reason = "RegLocationEngine__RegLocationBaseUrl is not configured.";
-            return true;
-        }
-
-        if (_options.ITwinFederationId == Guid.Empty)
-        {
-            reason = "RegLocationEngine__ITwinFederationId is not configured.";
             return true;
         }
 

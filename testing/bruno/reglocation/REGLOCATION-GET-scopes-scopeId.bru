@@ -10,11 +10,19 @@ get {
   auth: none
 }
 
+params:query {
+  code: {{functionKey}}
+}
+
+vars:pre-request {
+  scopeId: 2
+}
+
 docs {
   GET /scopes/{scopeId:int}
   Function: GetScope
   Source: RegLocationFunctions.cs
-
+  
   Route parameters are Bruno variables. Set them in the environment or
   on the request before running.
 }

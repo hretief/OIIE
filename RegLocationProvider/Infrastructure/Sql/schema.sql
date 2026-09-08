@@ -200,9 +200,23 @@ GO
 IF OBJECT_ID('dbo.class_objects','U') IS NULL
 CREATE TABLE dbo.class_objects
 (
-    class_id      INT NOT NULL,
-    group_id      INT NOT NULL,
-    namespace_id  INT NOT NULL,
+    class_id         INT NOT NULL,
+    group_id         INT NOT NULL,
+    namespace_id     INT NOT NULL,
+
+    -- The class as the vocabulary names it. code is the identifier a caller
+    -- classifies against (rdl:Instrument); name is what a person reads. Both
+    -- are NOT NULL because a class nobody can name is not usable reference
+    -- data -- the point of the table is to be the vocabulary.
+    code             NVARCHAR(255)  NOT NULL,
+    name             NVARCHAR(255)  NOT NULL,
+    description      NVARCHAR(2000) NULL,
+
+    -- The class this one specialises, within the same table. Null means a
+    -- root. This is what lets a tag classified against a leaf the registry
+    -- does not hold bind at its nearest held ancestor instead of being
+    -- rejected.
+    parent_class_id  INT            NULL,
 
     CONSTRAINT PK_class_objects
         PRIMARY KEY (class_id),
@@ -213,7 +227,11 @@ CREATE TABLE dbo.class_objects
 
     CONSTRAINT FK_class_objects_namespace
         FOREIGN KEY (namespace_id)
-        REFERENCES dbo.namespaces(namespace_id)
+        REFERENCES dbo.namespaces(namespace_id),
+
+    CONSTRAINT FK_class_objects_parent
+        FOREIGN KEY (parent_class_id)
+        REFERENCES dbo.class_objects(class_id)
 );
 GO
 
@@ -462,6 +480,89 @@ IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_class_objects_obj
         ADD CONSTRAINT FK_class_objects_objects
             FOREIGN KEY (class_id, object_type)
             REFERENCES dbo.objects(object_id, object_type);
+GO
+
+/* ----------------------------------------------------------------------------
+   class_objects: code, name, description, parent_class_id
+
+   Added after the table shipped, so a deployed database already holds class
+   rows with none of them. Adding code and name as NOT NULL outright would fail
+   against those rows, so this goes in three moves: add nullable, backfill,
+   then tighten. Fresh databases get the columns from the CREATE TABLE above and
+   fall straight through every guard here.
+
+   The backfill values are the vocabulary these ids have always stood for --
+   they were carried as trailing comments on the bootstrap insert because the
+   schema had nowhere to put them. Any row outside that known set falls back to
+   its own id, which is not a good name but is a true one, and keeps the
+   NOT NULL tighten from failing on data this script did not create.
+---------------------------------------------------------------------------- */
+
+IF COL_LENGTH('dbo.class_objects','code') IS NULL
+    ALTER TABLE dbo.class_objects ADD code NVARCHAR(255) NULL;
+GO
+IF COL_LENGTH('dbo.class_objects','name') IS NULL
+    ALTER TABLE dbo.class_objects ADD name NVARCHAR(255) NULL;
+GO
+IF COL_LENGTH('dbo.class_objects','description') IS NULL
+    ALTER TABLE dbo.class_objects ADD description NVARCHAR(2000) NULL;
+GO
+IF COL_LENGTH('dbo.class_objects','parent_class_id') IS NULL
+    ALTER TABLE dbo.class_objects ADD parent_class_id INT NULL;
+GO
+
+UPDATE c
+SET code = v.code,
+    name = v.name
+FROM dbo.class_objects AS c
+INNER JOIN (VALUES
+    (1001, 'rdl:FunctionalLocation', 'Functional Location'),
+    (1002, 'rdl:Site',               'Site'),
+    (1701, 'rdl:Equipment',          'Equipment'),
+    (1702, 'rdl:Instrument',         'Instrument')
+) AS v(class_id, code, name)
+    ON v.class_id = c.class_id
+WHERE c.code IS NULL OR c.name IS NULL;
+GO
+
+UPDATE dbo.class_objects
+SET code = CONCAT('class:', class_id)
+WHERE code IS NULL;
+GO
+UPDATE dbo.class_objects
+SET name = CONCAT('Class ', class_id)
+WHERE name IS NULL;
+GO
+
+-- rdl:Instrument specialises rdl:Equipment. This is the edge the degradation
+-- path walks: a tag classified against a leaf the registry does not hold binds
+-- at its nearest held ancestor, and without a parent there is no ancestor to
+-- find.
+UPDATE dbo.class_objects
+SET parent_class_id = 1701
+WHERE class_id = 1702
+  AND parent_class_id IS NULL
+  AND EXISTS (SELECT 1 FROM dbo.class_objects AS p WHERE p.class_id = 1701);
+GO
+
+IF EXISTS (
+    SELECT 1 FROM sys.columns
+    WHERE object_id = OBJECT_ID('dbo.class_objects')
+      AND name = 'code' AND is_nullable = 1)
+    ALTER TABLE dbo.class_objects ALTER COLUMN code NVARCHAR(255) NOT NULL;
+GO
+IF EXISTS (
+    SELECT 1 FROM sys.columns
+    WHERE object_id = OBJECT_ID('dbo.class_objects')
+      AND name = 'name' AND is_nullable = 1)
+    ALTER TABLE dbo.class_objects ALTER COLUMN name NVARCHAR(255) NOT NULL;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_class_objects_parent')
+    ALTER TABLE dbo.class_objects
+        ADD CONSTRAINT FK_class_objects_parent
+            FOREIGN KEY (parent_class_id)
+            REFERENCES dbo.class_objects(class_id);
 GO
 
 IF COL_LENGTH('dbo.items','object_type') IS NULL

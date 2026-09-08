@@ -644,10 +644,19 @@ export interface DayZeroResult {
   channels: unknown[]
   participants: unknown[]
   /**
-   * Things the reset could not do for itself, in prose. Chiefly that the CIR
-   * provider must be told to re-open its sessions, and that the CIR registry
-   * keeps its CIRIDs. Surfaced verbatim rather than interpreted: they are
-   * warnings about state outside this deployment's reach.
+   * False when any provider refused, was unreachable, or was not configured.
+   *
+   * Worth showing prominently: a partial reset leaves one system holding the
+   * previous run's data while the others have restarted their ids from 1, and
+   * the collision surfaces much later as a duplicate-entry error that reads as
+   * a bug in registration rather than as leftover state.
+   */
+  providersReset: boolean
+  /**
+   * Things the reset could not do for itself, in prose. Providers that could
+   * not be reset, the CIR provider needing to re-open its sessions, channels
+   * that were removed but not recreated. Surfaced verbatim rather than
+   * interpreted: they name specific systems and settings.
    */
   actionRequired: string[]
 }
