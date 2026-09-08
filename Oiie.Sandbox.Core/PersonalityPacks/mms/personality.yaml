@@ -1,0 +1,46 @@
+participantId: mms
+displayName: MMS - Maintenance Management System
+sourceId: MMS
+sourceOwnerId: ACME-MAINTENANCE
+logicalId: urn:oiie-sandbox:mms
+accentColour: "#b45309"
+releaseMode: Manual
+identifierStyle: surrogate
+
+# MMS is a standalone participant now -- MmsEngine and MmsProvider, deployed and
+# run outside this process -- not a personality the sandbox emulates. This pack
+# exists only so day-zero provisioning knows a subscriber end belongs on the
+# enterprise sites channel: the ParticipantRegistry drives what
+# /admin/reset/day-zero recreates (see SandboxAdminEndpoints), and a participant
+# left undeclared here is a subscriber the reset step never rebuilds.
+#
+# No Fixtures/classes.yaml, deliberately: MMS holds no reference data, so
+# whatever it receives is retained unmapped rather than classified. See the
+# README's "Why the packs differ from each other".
+channels:
+  # The enterprise sites channel SyncSites travels on, the same one ENG
+  # publishes to and CMS and REG-LOCATION also subscribe from. MMS consumes
+  # only -- it publishes nothing back, so there is no Publisher entry here to
+  # mirror the ENG pack's.
+  - channelUri: /acme/enterprise/sites/publication
+    role: Subscriber
+    topics:
+      - Sites
+    useNotifications: false
+
+isbm:
+  baseUrl: https://acme-api-isbm-dev.azurewebsites.net/api
+  tokenSecretName: sandbox-isbm-token-mms
+
+cir:
+  # The CIR provider's own request channel and topic, taken from its deployed
+  # configuration rather than invented here, matching every other pack.
+  #
+  # This channel belongs to the CIR provider: reset ensures it exists but never
+  # deletes it, because deleting it would destroy the provider's long-lived
+  # provider-request session.
+  channelUri: /OIIE/CIR/Request
+  requestTopic: ws-CIR
+  baseUrl: https://acme-api-cir-dev.azurewebsites.net/api
+  registryId: acme
+  identityCacheTtl: 00:05:00

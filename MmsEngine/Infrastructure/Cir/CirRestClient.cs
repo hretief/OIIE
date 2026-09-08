@@ -39,6 +39,19 @@ public sealed record CirRegistry(
 
 public sealed record CreateRegistryRequest(IReadOnlyList<CirRegistry> Registry, bool CreateCirid);
 
+/// <summary>
+/// The shape CIR answers GetEntriesByCIRID with: a registry graph wrapped in a
+/// single property. Declared here rather than reusing the request records so a
+/// change to what this engine writes cannot silently change what it reads.
+/// </summary>
+internal sealed record CirRegistryResponse(IReadOnlyList<CirReadRegistry>? Registry);
+
+internal sealed record CirReadRegistry(IReadOnlyList<CirReadCategory>? Categories);
+
+internal sealed record CirReadCategory(IReadOnlyList<CirReadEntry>? Entries);
+
+internal sealed record CirReadEntry(string? IdInSource, string? SourceId, bool? Inactive);
+
 public interface ICirClient
 {
     /// <summary>
@@ -49,6 +62,18 @@ public interface ICirClient
     /// because it found its own previous work would never make progress.
     /// </summary>
     Task<int> RegisterEntriesAsync(CreateRegistryRequest request, CancellationToken ct);
+
+    /// <summary>
+    /// The identifier <paramref name="sourceId"/> already holds for the object
+    /// with this CIRID, or null if the registry has never been told of one.
+    ///
+    /// This is the first question the sites leg asks: MMS stores no CIRID of
+    /// its own -- SETUP_OWNER has no column for one -- so the registry is the
+    /// only place the site GUID is related to an OWNER_ID. Asking it before
+    /// matching on name is what lets a renamed site find its existing owner
+    /// instead of creating a second one.
+    /// </summary>
+    Task<string?> FindIdInSourceAsync(Guid cirid, string sourceId, CancellationToken ct);
 }
 
 public sealed class CirRestClient(HttpClient http) : ICirClient
@@ -81,6 +106,43 @@ public sealed class CirRestClient(HttpClient http) : ICirClient
 
         throw new CirClientException(
             $"CIR returned {(int)response.StatusCode} registering {count} entry(ies): {body}");
+    }
+
+    public async Task<string?> FindIdInSourceAsync(
+        Guid cirid, string sourceId, CancellationToken ct)
+    {
+        if (cirid == Guid.Empty)
+            return null;
+
+        var uri = $"entries?cirid={cirid:D}&targetSourceId={Uri.EscapeDataString(sourceId)}";
+
+        using var response = await http.GetAsync(uri, ct);
+
+        // A CIRID the registry has never seen is the ordinary case for a site
+        // arriving for the first time, not a fault.
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+
+            throw new CirClientException(
+                $"CIR returned {(int)response.StatusCode} resolving CIRID {cirid}: {body}");
+        }
+
+        var result = await response.Content.ReadFromJsonAsync<CirRegistryResponse>(Json, ct);
+
+        // targetSourceId already constrains the server side; SourceId is
+        // rechecked because that filter is a regex match and a source named as a
+        // prefix of another would otherwise be accepted.
+        return result?.Registry?
+            .SelectMany(r => r.Categories ?? [])
+            .SelectMany(c => c.Entries ?? [])
+            .Where(e => e.Inactive != true)
+            .FirstOrDefault(e => string.Equals(
+                e.SourceId, sourceId, StringComparison.OrdinalIgnoreCase))
+            ?.IdInSource;
     }
 }
 

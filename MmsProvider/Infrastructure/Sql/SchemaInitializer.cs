@@ -20,12 +20,6 @@ public sealed partial class SchemaInitializer(
 
     public async Task StartAsync(CancellationToken ct)
     {
-        if (!_options.AutoCreateSchema)
-        {
-            logger.LogInformation("Schema auto-creation disabled.");
-            return;
-        }
-
         if (string.IsNullOrWhiteSpace(_options.SqlConnectionString))
         {
             logger.LogWarning("Mms__SqlConnectionString is not configured; skipping schema initialization.");
@@ -34,20 +28,30 @@ public sealed partial class SchemaInitializer(
 
         try
         {
-            var ddl = await ReadEmbeddedAsync("MmsProvider.Infrastructure.Sql.schema.sql");
-
             await using var cn = new SqlConnection(_options.SqlConnectionString);
             await cn.OpenAsync(ct);
 
-            // SqlClient cannot execute GO; it is a batch separator, not T-SQL.
-            foreach (var batch in GoSeparator().Split(ddl))
+            if (_options.AutoCreateSchema)
             {
-                if (string.IsNullOrWhiteSpace(batch)) continue;
-                await using var cmd = new SqlCommand(batch, cn) { CommandTimeout = 120 };
-                await cmd.ExecuteNonQueryAsync(ct);
+                await ExecuteScriptAsync(cn, "MmsProvider.Infrastructure.Sql.schema.sql", ct);
+                logger.LogInformation("MMS schema verified.");
+            }
+            else
+            {
+                logger.LogInformation("Schema auto-creation disabled.");
             }
 
-            logger.LogInformation("MMS schema verified.");
+            // Order matters: refdata.sql inserts rows into tables the asset
+            // tables' foreign keys point at, so it must follow schema.sql.
+            if (_options.AutoSeedRefData)
+            {
+                await ExecuteScriptAsync(cn, "MmsProvider.Infrastructure.Sql.refdata.sql", ct);
+                logger.LogInformation("MMS reference data verified.");
+            }
+            else
+            {
+                logger.LogInformation("Reference data seeding disabled.");
+            }
         }
         catch (Exception ex)
         {
@@ -57,6 +61,19 @@ public sealed partial class SchemaInitializer(
     }
 
     public Task StopAsync(CancellationToken ct) => Task.CompletedTask;
+
+    private static async Task ExecuteScriptAsync(SqlConnection cn, string resourceName, CancellationToken ct)
+    {
+        var sql = await ReadEmbeddedAsync(resourceName);
+
+        // SqlClient cannot execute GO; it is a batch separator, not T-SQL.
+        foreach (var batch in GoSeparator().Split(sql))
+        {
+            if (string.IsNullOrWhiteSpace(batch)) continue;
+            await using var cmd = new SqlCommand(batch, cn) { CommandTimeout = 120 };
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+    }
 
     private static async Task<string> ReadEmbeddedAsync(string name)
     {

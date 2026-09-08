@@ -8,18 +8,19 @@ using Microsoft.Extensions.Logging;
 namespace MmsProvider.Functions;
 
 /// <summary>
-/// The MMS HTTP surface.
+/// The MMS HTTP surface, over the TAMS lighting domain.
 ///
-/// Routes are named in MMS's own terms — sites and assets — because that is what
-/// this system holds. There is no /segments route and no BOD anywhere in this
-/// project: a maintenance management system has never heard of either.
+/// Routes are named in TAMS's own terms -- light systems and light units --
+/// because that is what this system holds. There is no /segments route and no
+/// BOD anywhere in this project: a maintenance management system has never
+/// heard of either.
 /// </summary>
 public sealed class MmsFunctions(IMmsAssetStore store, ILogger<MmsFunctions> logger)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     /// <summary>
-    /// Day zero: empties MMS entirely.
+    /// Day zero: empties MMS entirely and reseeds its reference data.
     ///
     /// Routed under "mms/" rather than "admin/" because the Functions host
     /// reserves the admin prefix for its own endpoints. A function declared
@@ -35,7 +36,7 @@ public sealed class MmsFunctions(IMmsAssetStore store, ILogger<MmsFunctions> log
         try
         {
             await store.ResetAsync(ct);
-            logger.LogWarning("MMS data was reset; every table was dropped and recreated.");
+            logger.LogWarning("MMS data was reset; every table was dropped, recreated and reseeded.");
             return await OkAsync(req, new { reset = true }, ct);
         }
         catch (Exception ex)
@@ -46,32 +47,71 @@ public sealed class MmsFunctions(IMmsAssetStore store, ILogger<MmsFunctions> log
         }
     }
 
-    [Function("GetSites")]
-    public async Task<HttpResponseData> GetSites(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "sites")] HttpRequestData req,
+    [Function("GetLightSystems")]
+    public async Task<HttpResponseData> GetLightSystems(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "lightsystems")] HttpRequestData req,
         CancellationToken ct)
-        => await OkAsync(req, await store.GetSitesAsync(ct), ct);
+        => await OkAsync(req, await store.GetLightSystemsAsync(ct), ct);
 
-    /// <summary>
-    /// Creates or updates sites.
-    ///
-    /// The caller supplies SiteID, so nothing is allocated and nothing surprising
-    /// comes back. A site still has to be sent before any asset that references
-    /// it, because Asset.SiteID is NOT NULL behind a foreign key.
-    ///
-    /// Status semantics match UpsertAssets deliberately: a caller should not have
-    /// to learn two different conventions for the same customer system.
-    /// </summary>
-    [Function("UpsertSites")]
-    public async Task<HttpResponseData> UpsertSites(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "sites")] HttpRequestData req,
+    [Function("GetLightSystemById")]
+    public async Task<HttpResponseData> GetLightSystemById(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "lightsystems/{lightSystemId}")] HttpRequestData req,
+        string lightSystemId,
         CancellationToken ct)
     {
-        SiteUpsert[]? requested;
+        if (!long.TryParse(lightSystemId, out var id))
+        {
+            return await ProblemAsync(req, HttpStatusCode.BadRequest,
+                $"Light system identifier must be an integer, but was '{lightSystemId}'.", ct);
+        }
+
+        var system = await store.FindLightSystemAsync(id, ct);
+
+        return system is null
+            ? await ProblemAsync(req, HttpStatusCode.NotFound,
+                $"No light system with identifier '{id}'.", ct)
+            : await OkAsync(req, system, ct);
+    }
+
+    /// <summary>
+    /// Resolves a light system by the federation identifier its originating
+    /// system carries, for a caller that holds only that GUID.
+    /// </summary>
+    [Function("GetLightSystemByExtAssetId")]
+    public async Task<HttpResponseData> GetLightSystemByExtAssetId(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "lightsystems/by-ext/{extAssetId}")] HttpRequestData req,
+        string extAssetId,
+        CancellationToken ct)
+    {
+        if (!Guid.TryParse(extAssetId, out var id))
+        {
+            return await ProblemAsync(req, HttpStatusCode.BadRequest,
+                $"External asset identifier must be a UUID, but was '{extAssetId}'.", ct);
+        }
+
+        var system = await store.FindLightSystemByExtAssetIdAsync(id, ct);
+
+        return system is null
+            ? await ProblemAsync(req, HttpStatusCode.NotFound,
+                $"No light system with external asset identifier '{id}'.", ct)
+            : await OkAsync(req, system, ct);
+    }
+
+    /// <summary>
+    /// Creates or updates light systems, matched on the caller's own federation
+    /// identifier rather than TAMS's identity column, since the caller cannot
+    /// know that column's value before the first upsert.
+    /// </summary>
+    [Function("UpsertLightSystems")]
+    public async Task<HttpResponseData> UpsertLightSystems(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "lightsystems")] HttpRequestData req,
+        CancellationToken ct)
+    {
+        LightSystemUpsert[]? requested;
 
         try
         {
-            requested = await JsonSerializer.DeserializeAsync<SiteUpsert[]>(req.Body, Json, ct);
+            requested = await JsonSerializer.DeserializeAsync<LightSystemUpsert[]>(req.Body, Json, ct);
         }
         catch (JsonException ex)
         {
@@ -82,16 +122,16 @@ public sealed class MmsFunctions(IMmsAssetStore store, ILogger<MmsFunctions> log
         if (requested is null or { Length: 0 })
         {
             return await ProblemAsync(req, HttpStatusCode.BadRequest,
-                "The request carried no sites.", ct);
+                "The request carried no light systems.", ct);
         }
 
-        var result = await store.UpsertSitesAsync(requested, ct);
+        var result = await store.UpsertLightSystemsAsync(requested, ct);
 
         logger.LogInformation(
-            "MMS created {Created}, updated {Updated}, rejected {Rejected} of {Total} site(s).",
+            "MMS created {Created}, updated {Updated}, rejected {Rejected} of {Total} light system(s).",
             result.Created, result.Updated, result.Rejections.Count, requested.Length);
 
-        var allTransient = result.Sites.Count == 0
+        var allTransient = result.Systems.Count == 0
             && result.Rejections.Count > 0
             && result.Rejections.All(r => r.Transient);
 
@@ -100,52 +140,72 @@ public sealed class MmsFunctions(IMmsAssetStore store, ILogger<MmsFunctions> log
             : await OkAsync(req, result, ct);
     }
 
-    [Function("GetAssets")]
-    public async Task<HttpResponseData> GetAssets(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "assets")] HttpRequestData req,
+    [Function("GetLightUnits")]
+    public async Task<HttpResponseData> GetLightUnits(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "lightunits")] HttpRequestData req,
         CancellationToken ct)
     {
-        var siteIdRaw = System.Web.HttpUtility
-            .ParseQueryString(req.Url.Query)["siteId"];
+        var lightSystemIdRaw = System.Web.HttpUtility
+            .ParseQueryString(req.Url.Query)["lightSystemId"];
 
-        // An unparseable siteId is refused rather than ignored. Silently returning
-        // every asset in the plant to a caller who asked for one site's worth is
-        // worse than an error.
-        if (siteIdRaw is { Length: > 0 } && !Guid.TryParse(siteIdRaw, out _))
+        // An unparseable lightSystemId is refused rather than ignored. Silently
+        // returning every unit in TAMS to a caller who asked for one system's
+        // worth is worse than an error.
+        if (lightSystemIdRaw is { Length: > 0 } && !long.TryParse(lightSystemIdRaw, out _))
         {
             return await ProblemAsync(req, HttpStatusCode.BadRequest,
-                $"Query parameter 'siteId' must be a UUID, but was '{siteIdRaw}'.", ct);
+                $"Query parameter 'lightSystemId' must be an integer, but was '{lightSystemIdRaw}'.", ct);
         }
 
-        Guid? siteId = Guid.TryParse(siteIdRaw, out var parsed) ? parsed : null;
+        long? lightSystemId = long.TryParse(lightSystemIdRaw, out var parsed) ? parsed : null;
 
-        return await OkAsync(req, await store.GetAssetsAsync(siteId, ct), ct);
+        return await OkAsync(req, await store.GetLightUnitsAsync(lightSystemId, ct), ct);
     }
 
-    [Function("GetAssetById")]
-    public async Task<HttpResponseData> GetAssetById(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "assets/{assetId}")] HttpRequestData req,
-        string assetId,
+    [Function("GetLightUnitById")]
+    public async Task<HttpResponseData> GetLightUnitById(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "lightunits/{lightUnitId}")] HttpRequestData req,
+        string lightUnitId,
         CancellationToken ct)
     {
-        if (!Guid.TryParse(assetId, out var id))
+        if (!long.TryParse(lightUnitId, out var id))
         {
             return await ProblemAsync(req, HttpStatusCode.BadRequest,
-                $"Asset identifier must be a UUID, but was '{assetId}'.", ct);
+                $"Light unit identifier must be an integer, but was '{lightUnitId}'.", ct);
         }
 
-        var asset = await store.FindAssetAsync(id, ct);
+        var unit = await store.FindLightUnitAsync(id, ct);
 
-        return asset is null
+        return unit is null
             ? await ProblemAsync(req, HttpStatusCode.NotFound,
-                $"No asset with identifier '{id}'.", ct)
-            : await OkAsync(req, asset, ct);
+                $"No light unit with identifier '{id}'.", ct)
+            : await OkAsync(req, unit, ct);
+    }
+
+    [Function("GetLightUnitByExtAssetId")]
+    public async Task<HttpResponseData> GetLightUnitByExtAssetId(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "lightunits/by-ext/{extAssetId}")] HttpRequestData req,
+        string extAssetId,
+        CancellationToken ct)
+    {
+        if (!Guid.TryParse(extAssetId, out var id))
+        {
+            return await ProblemAsync(req, HttpStatusCode.BadRequest,
+                $"External asset identifier must be a UUID, but was '{extAssetId}'.", ct);
+        }
+
+        var unit = await store.FindLightUnitByExtAssetIdAsync(id, ct);
+
+        return unit is null
+            ? await ProblemAsync(req, HttpStatusCode.NotFound,
+                $"No light unit with external asset identifier '{id}'.", ct)
+            : await OkAsync(req, unit, ct);
     }
 
     /// <summary>
-    /// Creates or updates assets and returns the key MMS assigned to each.
+    /// Creates or updates light units and returns the key TAMS assigned to each.
     ///
-    /// Returns 200 for a partial result rather than 207 or 400: the assets that
+    /// Returns 200 for a partial result rather than 207 or 400: the units that
     /// landed are genuinely in the database, and the rejections are named in the
     /// body. A caller that treats any rejection as total failure would redeliver
     /// work that has already been done.
@@ -153,16 +213,16 @@ public sealed class MmsFunctions(IMmsAssetStore store, ILogger<MmsFunctions> log
     /// 503 when every rejection is transient, so a caller can distinguish "MMS is
     /// briefly unavailable, try again" from "MMS understood you and said no".
     /// </summary>
-    [Function("UpsertAssets")]
-    public async Task<HttpResponseData> UpsertAssets(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "assets")] HttpRequestData req,
+    [Function("UpsertLightUnits")]
+    public async Task<HttpResponseData> UpsertLightUnits(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "lightunits")] HttpRequestData req,
         CancellationToken ct)
     {
-        AssetUpsert[]? requested;
+        LightUnitUpsert[]? requested;
 
         try
         {
-            requested = await JsonSerializer.DeserializeAsync<AssetUpsert[]>(req.Body, Json, ct);
+            requested = await JsonSerializer.DeserializeAsync<LightUnitUpsert[]>(req.Body, Json, ct);
         }
         catch (JsonException ex)
         {
@@ -173,16 +233,16 @@ public sealed class MmsFunctions(IMmsAssetStore store, ILogger<MmsFunctions> log
         if (requested is null or { Length: 0 })
         {
             return await ProblemAsync(req, HttpStatusCode.BadRequest,
-                "The request carried no assets.", ct);
+                "The request carried no light units.", ct);
         }
 
-        var result = await store.UpsertAssetsAsync(requested, ct);
+        var result = await store.UpsertLightUnitsAsync(requested, ct);
 
         logger.LogInformation(
-            "MMS created {Created}, updated {Updated}, rejected {Rejected} of {Total} asset(s).",
+            "MMS created {Created}, updated {Updated}, rejected {Rejected} of {Total} light unit(s).",
             result.Created, result.Updated, result.Rejections.Count, requested.Length);
 
-        var allTransient = result.Assets.Count == 0
+        var allTransient = result.Units.Count == 0
             && result.Rejections.Count > 0
             && result.Rejections.All(r => r.Transient);
 
@@ -191,57 +251,90 @@ public sealed class MmsFunctions(IMmsAssetStore store, ILogger<MmsFunctions> log
             : await OkAsync(req, result, ct);
     }
 
-    [Function("GetAssetTypes")]
-    public async Task<HttpResponseData> GetAssetTypes(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "assettypes")] HttpRequestData req,
-        CancellationToken ct)
-        => await OkAsync(req, await store.GetAssetTypesAsync(ct), ct);
+    // ---- Owners ---------------------------------------------------------
 
     /// <summary>
-    /// Resolves a site by the code a person would use, for a caller that holds a
-    /// code but not a key.
-    /// </summary>
-    [Function("GetSiteByCode")]
-    public async Task<HttpResponseData> GetSiteByCode(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "sites/by-code/{siteCode}")] HttpRequestData req,
-        string siteCode,
-        CancellationToken ct)
-    {
-        var site = await store.FindSiteByCodeAsync(siteCode, ct);
-
-        return site is null
-            ? await ProblemAsync(req, HttpStatusCode.NotFound,
-                $"No site with code '{siteCode}'.", ct)
-            : await OkAsync(req, site, ct);
-    }
-
-    /// <summary>
-    /// Resolves an asset by its number within a site.
+    /// Creates or renames owners and returns the OWNER_ID TAMS assigned to each.
     ///
-    /// The site is part of the route rather than optional because AssetNumber is
-    /// only unique within one. A global lookup would have to pick a winner, and
-    /// there is no correct way to choose.
+    /// A write onto what is otherwise a lookup table, because SETUP_OWNER is
+    /// where an incoming site lands: a site is the context a work order is
+    /// raised within, and TAMS spells that as an owner. The caller cannot
+    /// supply OWNER_ID on first contact -- it is IDENTITY-assigned -- which is
+    /// the whole reason this returns it.
+    ///
+    /// Same partial-success and 503-on-all-transient convention as the light
+    /// system and unit paths, so the ingest leg's retry behaviour does not have
+    /// to special-case owners.
     /// </summary>
-    [Function("GetAssetByNumber")]
-    public async Task<HttpResponseData> GetAssetByNumber(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "sites/{siteId}/assets/{assetNumber}")] HttpRequestData req,
-        string siteId,
-        string assetNumber,
+    [Function("UpsertOwners")]
+    public async Task<HttpResponseData> UpsertOwners(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "owners")] HttpRequestData req,
         CancellationToken ct)
     {
-        if (!Guid.TryParse(siteId, out var id))
+        OwnerUpsert[]? requested;
+
+        try
+        {
+            requested = await JsonSerializer.DeserializeAsync<OwnerUpsert[]>(req.Body, Json, ct);
+        }
+        catch (JsonException ex)
         {
             return await ProblemAsync(req, HttpStatusCode.BadRequest,
-                $"Site identifier must be a UUID, but was '{siteId}'.", ct);
+                $"Malformed request body: {ex.Message}", ct);
         }
 
-        var asset = await store.FindAssetByNumberAsync(id, assetNumber, ct);
+        if (requested is null or { Length: 0 })
+        {
+            return await ProblemAsync(req, HttpStatusCode.BadRequest,
+                "The request carried no owners.", ct);
+        }
 
-        return asset is null
-            ? await ProblemAsync(req, HttpStatusCode.NotFound,
-                $"No asset numbered '{assetNumber}' at site '{id}'.", ct)
-            : await OkAsync(req, asset, ct);
+        var result = await store.UpsertOwnersAsync(requested, ct);
+
+        logger.LogInformation(
+            "MMS created {Created}, updated {Updated}, rejected {Rejected} of {Total} owner(s).",
+            result.Created, result.Updated, result.Rejections.Count, requested.Length);
+
+        var allTransient = result.Owners.Count == 0
+            && result.Rejections.Count > 0
+            && result.Rejections.All(r => r.Transient);
+
+        return allTransient
+            ? await WriteAsync(req, HttpStatusCode.ServiceUnavailable, result, ct)
+            : await OkAsync(req, result, ct);
     }
+
+    // ---- Lookups --------------------------------------------------------
+
+    [Function("GetLightSystemClassCodes")]
+    public async Task<HttpResponseData> GetLightSystemClassCodes(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "lookups/lightsystemclasscodes")] HttpRequestData req,
+        CancellationToken ct)
+        => await OkAsync(req, await store.GetLightSystemClassCodesAsync(ct), ct);
+
+    [Function("GetAssetStatuses")]
+    public async Task<HttpResponseData> GetAssetStatuses(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "lookups/assetstatuses")] HttpRequestData req,
+        CancellationToken ct)
+        => await OkAsync(req, await store.GetAssetStatusesAsync(ct), ct);
+
+    [Function("GetOwners")]
+    public async Task<HttpResponseData> GetOwners(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "lookups/owners")] HttpRequestData req,
+        CancellationToken ct)
+        => await OkAsync(req, await store.GetOwnersAsync(ct), ct);
+
+    [Function("GetCounties")]
+    public async Task<HttpResponseData> GetCounties(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "lookups/counties")] HttpRequestData req,
+        CancellationToken ct)
+        => await OkAsync(req, await store.GetCountiesAsync(ct), ct);
+
+    [Function("GetJurisdictionCodes")]
+    public async Task<HttpResponseData> GetJurisdictionCodes(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "lookups/jurisdictioncodes")] HttpRequestData req,
+        CancellationToken ct)
+        => await OkAsync(req, await store.GetJurisdictionCodesAsync(ct), ct);
 
     [Function("Health")]
     public async Task<HttpResponseData> Health(
@@ -250,8 +343,8 @@ public sealed class MmsFunctions(IMmsAssetStore store, ILogger<MmsFunctions> log
     {
         try
         {
-            var sites = await store.GetSitesAsync(ct);
-            return await OkAsync(req, new { status = "healthy", sites = sites.Count }, ct);
+            var systems = await store.GetLightSystemsAsync(ct);
+            return await OkAsync(req, new { status = "healthy", lightSystems = systems.Count }, ct);
         }
         catch (Exception ex)
         {

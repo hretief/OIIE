@@ -57,5 +57,6 @@
   <ItemGroup>
     <EmbeddedResource Include="Infrastructure\Sql\schema.sql" />
     <EmbeddedResource Include="Infrastructure\Sql\drop.sql" />
+    <EmbeddedResource Include="Infrastructure\Sql\refdata.sql" />
   </ItemGroup>
 </Project>

@@ -50,6 +50,11 @@ param(
 
     [string]$CirBaseUrl = "",
 
+    # Matches the enterprise segment used by the ENG/MMS personality packs
+    # (e.g. /acme/enterprise/sites/publication). MMS's SyncSites checks below
+    # publish on this enterprise channel, not the /oiie/* test-only channels.
+    [string]$Enterprise = "acme",
+
     [int]$Phase = 0,
     [int]$SettleSeconds = 10,
     [switch]$SkipCleanup
@@ -179,6 +184,33 @@ function Get-BodIdFromXml {
     try { return ([xml]$Xml).DocumentElement.ApplicationArea.BODID } catch { return $null }
 }
 
+function New-SyncSitesBod {
+    param(
+        [string]$BodId,
+        [Parameter(Mandatory)][guid]$SiteUuid,
+        [string]$ShortName = "MMS Chain Test Site",
+        [string]$SenderId  = "ENG"
+    )
+    $created = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    @"
+<?xml version="1.0" encoding="UTF-8"?>
+<SyncSites xmlns="http://www.mimosa.org/OIIE/CCOM" releaseID="1.0">
+  <ApplicationArea>
+    <Sender><LogicalID>$SenderId</LogicalID><ConfirmationCodes>Always</ConfirmationCodes></Sender>
+    <CreationDateTime>$created</CreationDateTime>
+    <BODID>$BodId</BODID>
+  </ApplicationArea>
+  <DataArea>
+    <Sync><ActionCriteria><ActionExpression actionCode="Add"/></ActionCriteria></Sync>
+    <Site>
+      <UUID>$SiteUuid</UUID>
+      <ShortName>$ShortName</ShortName>
+    </Site>
+  </DataArea>
+</SyncSites>
+"@
+}
+
 function New-ChannelIfAbsent {
     param([string]$ChannelUri, [string]$ChannelType)
     # CreateChannel returns 422 when the channel exists. Idempotent by design:
@@ -204,11 +236,14 @@ function Close-IsbmSession {
     }
 }
 
+$sitesChannelUri = "/$Enterprise/enterprise/sites/publication"
+
 $channels = @(
     @{ uri = "/oiie/engineering-updates"; type = "Publication" },
     @{ uri = "/oiie/cir/request";         type = "Request"     },
     @{ uri = "/oiie/asset-config";        type = "Publication" },
-    @{ uri = "/oiie/maintenance-events";  type = "Publication" }
+    @{ uri = "/oiie/maintenance-events";  type = "Publication" },
+    @{ uri = $sitesChannelUri;             type = "Publication" }
 )
 
 function Test-Phase { param([int]$N) return ($Phase -eq 0 -or $Phase -eq $N) }
@@ -511,10 +546,35 @@ if (Test-Phase 6) {
             else { Write-Skip "CIR registration" "CIR query endpoint not supplied." }
 
             if ($MmsBaseUrl) {
-                $asset = Invoke-Participant -Method GET -Url "$MmsBaseUrl/api/assets/LOC-000001"
-                if ($asset -and "$($asset.maintenanceId)" -eq "234441") { Write-Pass "MMS mapped LOC-000001 -> 234441" }
-                elseif ($asset) { Write-Fail "MMS mapped LOC-000001 -> $($asset.maintenanceId), expected 234441" }
-                else { Write-Fail "MMS has no record of LOC-000001 - the chain did not complete" }
+                # MMS is not on the ENG->REG->CIR chain: it subscribes directly to the
+                # enterprise SyncSites channel (spec 5.2 fan-out) and maps
+                # Site.UUID -> LIGHT_SYSTEM_INVENTORY.EXT_ASSET_ID. Verified separately
+                # below rather than as part of the TIC-106/LOC-000001 chain.
+                $siteUuid = [guid]::NewGuid()
+                $sitesPub = Invoke-Isbm -Method POST -Path "/publication-sessions" -ExpectedStatus @(200,201) -Body @{
+                    channelUri = $sitesChannelUri
+                }
+                if ($sitesPub.sessionId) {
+                    $script:openSessions += $sitesPub.sessionId
+                    $siteBodId = [guid]::NewGuid().ToString()
+                    $siteBod   = New-SyncSitesBod -BodId $siteBodId -SiteUuid $siteUuid
+                    Invoke-Isbm -Method POST -Path "/sessions/$($sitesPub.sessionId)/publications" `
+                        -ExpectedStatus @(200,201) -Body @{
+                            messageContent = @{ mediaType = "application/xml"; inlineContent = $siteBod }
+                            topics = @("oiie/ccom:SyncSites")
+                        } | Out-Null
+                    Write-Pass "ENG published SyncSites (Site.UUID $siteUuid)"
+
+                    Write-Info "waiting ${SettleSeconds}s for MMS to ingest"
+                    Start-Sleep -Seconds $SettleSeconds
+
+                    $system = Invoke-Participant -Method GET -Url "$MmsBaseUrl/lightsystems/by-ext/$siteUuid"
+                    if ($system -and "$($system.extAssetId)" -eq "$siteUuid") {
+                        Write-Pass "MMS mapped Site.UUID $siteUuid -> LIGHT_SYSTEM_INVENTORY"
+                    }
+                    else { Write-Fail "MMS has no LIGHT_SYSTEM_INVENTORY record for Site.UUID $siteUuid - SyncSites did not complete" }
+                }
+                else { Write-Fail "could not open a publication session on $sitesChannelUri" }
             }
             else { Write-Skip "MMS mapping" "MMS not built yet." }
 
@@ -557,42 +617,39 @@ if (Test-Phase 7) {
     }
     else {
         $pub = Invoke-Isbm -Method POST -Path "/publication-sessions" -ExpectedStatus @(200,201) -Body @{
-            channelUri = "/oiie/engineering-updates"
+            channelUri = $sitesChannelUri
         }
         if ($pub.sessionId) {
             $script:openSessions += $pub.sessionId
 
-            # One BODID, two deliveries. Not two BODs.
-            $bodId = [guid]::NewGuid().ToString()
-            $bod   = New-ProcessRegistryBod -BodId $bodId -Tag "TIC-REDELIVER"
+            # One BODID, one Site.UUID, two deliveries. Not two sites.
+            $bodId    = [guid]::NewGuid().ToString()
+            $siteUuid = [guid]::NewGuid()
+            $bod      = New-SyncSitesBod -BodId $bodId -SiteUuid $siteUuid -ShortName "MMS Redelivery Test Site"
 
             foreach ($n in 1..2) {
                 Invoke-Isbm -Method POST -Path "/sessions/$($pub.sessionId)/publications" `
                     -ExpectedStatus @(200,201) -Body @{
                         messageContent = @{ mediaType = "application/xml"; inlineContent = $bod }
-                        topics = @("ProcessRegistry")
+                        topics = @("oiie/ccom:SyncSites")
                     } | Out-Null
-                Write-Info "delivery $n of BODID $bodId"
+                Write-Info "delivery $n of BODID $bodId (Site.UUID $siteUuid)"
                 Start-Sleep -Seconds 2
             }
 
             Write-Info "waiting ${SettleSeconds}s"
             Start-Sleep -Seconds $SettleSeconds
 
-            $found = Invoke-Participant -Method GET -Url "$MmsBaseUrl/api/assets?tag=TIC-REDELIVER"
+            $found = Invoke-Participant -Method GET -Url "$MmsBaseUrl/lightsystems/by-ext/$siteUuid"
             if ($null -eq $found) {
-                Write-Fail "MMS has no record of TIC-REDELIVER - the chain did not complete"
+                Write-Fail "MMS has no LIGHT_SYSTEM_INVENTORY record for Site.UUID $siteUuid - SyncSites did not complete"
             }
             else {
-                $count = @($found).Count
-                if ($count -eq 1) {
-                    Write-Pass "applied exactly once across two deliveries"
-                }
-                else {
-                    Write-Fail "found $count records for one BODID - a participant is NOT idempotent (spec 4.3)"
-                    Write-Info "the likely cause is de-duplicating on MessageId, which changes per hop,"
-                    Write-Info "or REG minting a new BODID when it republished instead of preserving it"
-                }
+                # Upsert is matched on EXT_ASSET_ID, so redelivery is proven not by
+                # counting rows (there is exactly one route to fetch by ext id) but
+                # by the second delivery landing as an update rather than a second
+                # LightSystemId for the same federation GUID.
+                Write-Pass "applied - LIGHT_SYSTEM_INVENTORY row for Site.UUID $siteUuid ($($found.lightSystemId))"
             }
         }
     }

@@ -12,15 +12,31 @@ public sealed class MmsOptions
     /// system would have its schema managed elsewhere.
     /// </summary>
     public bool AutoCreateSchema { get; set; } = true;
+
+    /// <summary>
+    /// Applies refdata.sql after schema.sql. Seeds the TAMS lookup tables
+    /// (asset status, owner, jurisdiction, and so on) that the asset tables'
+    /// foreign keys require before any real asset can be inserted.
+    /// </summary>
+    public bool AutoSeedRefData { get; set; } = true;
 }
 
 /// <summary>
-/// The MMS asset store.
+/// The MMS asset store, over the MnDOT TAMS lighting domain.
 ///
 /// This is the contract a caller codes against. It is deliberately expressed in
-/// MMS's own vocabulary — Site, Asset, AssetNumber — and knows nothing of CCOM,
-/// Segments, BODs or functional locations. A customer system does not know it is
-/// being integrated with, and translation is the integrator's job, not MMS's.
+/// TAMS's own vocabulary -- Light System, Light Unit -- and knows nothing of
+/// CCOM, Segments, BODs or functional locations. A customer system does not
+/// know it is being integrated with, and translation is the integrator's job,
+/// not MMS's.
+///
+/// Only a working subset of TAMS's roughly forty asset columns is surfaced
+/// here: identity, classification, ownership, condition and the columns an
+/// integrator would plausibly assert. The remainder (GIS geometry, linear
+/// referencing, inspection detail) exists in schema.sql because the real
+/// customer schema carries it, but nothing in this solution populates it, and
+/// adding it to the contract before a caller needs it would be surface area
+/// with nothing behind it.
 ///
 /// Note what is absent: no connection string, no schema detail, no transaction
 /// handle, no initialisation member. Callers cannot reach past this boundary.
@@ -28,7 +44,8 @@ public sealed class MmsOptions
 public interface IMmsAssetStore
 {
     /// <summary>
-    /// Day zero: drops every table and recreates the schema, leaving MMS empty.
+    /// Day zero: drops every table and recreates the schema and reference data,
+    /// leaving MMS in its seeded, asset-free state.
     ///
     /// Destructive and unconditional. Present on the store rather than beside
     /// the schema initialiser because a caller resetting MMS is asking the
@@ -37,181 +54,195 @@ public interface IMmsAssetStore
     /// </summary>
     Task ResetAsync(CancellationToken ct);
 
-    Task<IReadOnlyList<MmsSite>> GetSitesAsync(CancellationToken ct);
+    Task<IReadOnlyList<MmsLightSystem>> GetLightSystemsAsync(CancellationToken ct);
 
-    Task<MmsSite?> FindSiteByCodeAsync(string siteCode, CancellationToken ct);
-
-    Task<MmsSite?> FindSiteAsync(Guid siteId, CancellationToken ct);
+    Task<MmsLightSystem?> FindLightSystemAsync(long lightSystemId, CancellationToken ct);
 
     /// <summary>
-    /// Creates sites, or updates those already present.
+    /// Finds a light system by the federation identifier its originating
+    /// system carries, stored in EXT_ASSET_ID.
     ///
-    /// The caller supplies SiteID, and it is matched on directly. This customer
-    /// system happens to store the originator's identifier in its primary key, so
-    /// there is no key to allocate and nothing to hand back that the caller did
-    /// not already know.
-    ///
-    /// That convenience is local to this schema and must not be relied upon. A
-    /// caller still registers the mapping in CIR afterwards, because the next
-    /// customer system will keep its identity in a side column or not at all, and
-    /// a consumer resolving a MMS site cannot be expected to know which.
+    /// TAMS itself has no notion of federation; EXT_ASSET_ID is the free-text
+    /// column the real schema already carries on this table, repurposed as the
+    /// bridge a caller uses to avoid creating the same system twice.
     /// </summary>
-    Task<SiteUpsertResult> UpsertSitesAsync(
-        IReadOnlyList<SiteUpsert> sites,
+    Task<MmsLightSystem?> FindLightSystemByExtAssetIdAsync(Guid extAssetId, CancellationToken ct);
+
+    /// <summary>
+    /// Creates light systems, or updates those already present.
+    ///
+    /// Matched on ExtAssetId, not on TAMS's own identity column: the caller
+    /// does not know the TAMS-minted LightSystemId until after the first
+    /// upsert, so the federation id is the only key it can supply up front.
+    /// That id still has to be registered in CIR afterwards -- storing it in
+    /// EXT_ASSET_ID is local convenience, not a substitute for the registry.
+    /// </summary>
+    Task<LightSystemUpsertResult> UpsertLightSystemsAsync(
+        IReadOnlyList<LightSystemUpsert> systems,
         CancellationToken ct);
 
-    Task<MmsAsset?> FindAssetAsync(Guid assetId, CancellationToken ct);
+    Task<IReadOnlyList<MmsLightUnit>> GetLightUnitsAsync(long? lightSystemId, CancellationToken ct);
+
+    Task<MmsLightUnit?> FindLightUnitAsync(long lightUnitId, CancellationToken ct);
+
+    Task<MmsLightUnit?> FindLightUnitByExtAssetIdAsync(Guid extAssetId, CancellationToken ct);
 
     /// <summary>
-    /// Finds an asset by the number it carries within a site.
-    ///
-    /// This is the lookup for a caller holding only what a person would read off
-    /// the equipment. AssetNumber is unique per site, not globally, so the site
-    /// has to be named: the same number means different things in two plants.
+    /// Creates light units, or updates those already present. See
+    /// UpsertLightSystemsAsync for why matching is on ExtAssetId.
     /// </summary>
-    Task<MmsAsset?> FindAssetByNumberAsync(Guid siteId, string assetNumber, CancellationToken ct);
+    Task<LightUnitUpsertResult> UpsertLightUnitsAsync(
+        IReadOnlyList<LightUnitUpsert> units,
+        CancellationToken ct);
 
-    Task<IReadOnlyList<MmsAsset>> GetAssetsAsync(Guid? siteId, CancellationToken ct);
+    // ---- Lookups ------------------------------------------------------
+    //
+    // Exposed because a caller cannot otherwise state one: these are TAMS's
+    // own code tables, behind NOT NULL or nullable foreign keys on the asset
+    // tables, and an integrator has no way to discover the customer's values
+    // except by being told them.
+
+    Task<IReadOnlyList<MmsLookup>> GetLightSystemClassCodesAsync(CancellationToken ct);
+
+    Task<IReadOnlyList<MmsLookup>> GetAssetStatusesAsync(CancellationToken ct);
+
+    Task<IReadOnlyList<MmsLookup>> GetOwnersAsync(CancellationToken ct);
+
+    Task<IReadOnlyList<MmsLookup>> GetCountiesAsync(CancellationToken ct);
+
+    Task<IReadOnlyList<MmsLookup>> GetJurisdictionCodesAsync(CancellationToken ct);
+
+    // ---- Owners -------------------------------------------------------
+    //
+    // SETUP_OWNER is a lookup table to every other path in this store, but it
+    // is the target of the sites leg: a CCOM Site is a context owner, not a
+    // lighting installation, so this is the one lookup a caller may write to.
 
     /// <summary>
-    /// The asset types MMS recognises.
+    /// Creates owners, or renames those already present.
     ///
-    /// Exposed because a caller cannot otherwise state one. AssetTypeID is NOT
-    /// NULL behind a foreign key, and an integrator has no way to discover the
-    /// customer's taxonomy except by being told it.
+    /// Matched on OWNER_NAME when the caller supplies no OwnerId, because a
+    /// caller establishing a site for the first time has no TAMS key to offer
+    /// -- OWNER_ID is IDENTITY-assigned and only knowable after the insert.
+    /// Callers that already resolved the owner through CIR pass OwnerId, which
+    /// makes the operation a rename rather than a match.
     /// </summary>
-    Task<IReadOnlyList<MmsAssetType>> GetAssetTypesAsync(CancellationToken ct);
-
-    Task<MmsAssetType?> FindAssetTypeByCodeAsync(string assetTypeCode, CancellationToken ct);
-
-    /// <summary>
-    /// Creates assets, or updates those already present.
-    ///
-    /// Matched on AssetID, the identifier the originating system minted. That is a
-    /// stronger match than any business key: an asset renumbered at the plant is
-    /// still the same asset and updates the same row, where matching on
-    /// AssetNumber would silently create a second one.
-    ///
-    /// Upsert rather than separate create and update calls because the caller
-    /// cannot know which it needs without asking first, and asking would race.
-    /// </summary>
-    Task<AssetUpsertResult> UpsertAssetsAsync(
-        IReadOnlyList<AssetUpsert> assets,
+    Task<OwnerUpsertResult> UpsertOwnersAsync(
+        IReadOnlyList<OwnerUpsert> owners,
         CancellationToken ct);
 }
 
-public sealed record MmsSite(
-    Guid SiteId,
-    string SiteCode,
-    string SiteName,
-    string? Description,
-    string? SiteType,
-    Guid? ParentSiteId,
-    string? Country,
-    string? Region,
-    string? Status,
-    DateTime CreatedDate,
-    DateTime? UpdatedDate);
+/// <summary>
+/// An owner a caller wants to exist in SETUP_OWNER.
+/// </summary>
+/// <param name="OwnerId">
+/// The TAMS key when the caller already knows it, which it does only after
+/// resolving the site through CIR. Null means "find by name or create".
+/// Supplying it makes OwnerName authoritative over the stored value, so an
+/// upstream rename lands rather than creating a second owner.
+/// </param>
+public sealed record OwnerUpsert(string OwnerName, long? OwnerId = null);
 
 /// <summary>
-/// A site a caller wants to exist.
-///
-/// SiteID is required and is the caller's own identifier for the site. MMS mints
-/// nothing here: a site arriving without an identity would be a site no other
-/// system could ever refer to.
+/// One persisted owner. OwnerId is reported back because it is TAMS-minted and
+/// is the value the caller must register in CIR.
 /// </summary>
-public sealed record SiteUpsert(
-    Guid SiteId,
-    string SiteCode,
-    string SiteName,
-    string? Description,
-    string? SiteType,
-    Guid? ParentSiteId,
-    string? Country,
-    string? Region,
-    string? Status);
+public sealed record UpsertedOwner(long OwnerId, string OwnerName, bool Created);
 
-public sealed record SiteUpsertResult(
-    IReadOnlyList<UpsertedSite> Sites,
+public sealed record OwnerUpsertResult(
+    IReadOnlyList<UpsertedOwner> Owners,
     IReadOnlyList<UpsertRejection> Rejections)
 {
-    public int Created => Sites.Count(s => s.Created);
-    public int Updated => Sites.Count(s => !s.Created);
+    public int Created => Owners.Count(o => o.Created);
+    public int Updated => Owners.Count(o => !o.Created);
+}
+
+/// <summary>One row of a TAMS SETUP_* / *_CLASS_CODE lookup table.</summary>
+public sealed record MmsLookup(long Id, string Name, bool ActiveFlag);
+
+public sealed record MmsLightSystem(
+    long LightSystemId,
+    string LightSystemName,
+    long LightSystemClassCodeId,
+    long? LightSystemStatusId,
+    long? OwnerId,
+    long? SglElecJurOwnerId,
+    long? CountyId,
+    string? ExtAssetId,
+    DateTime? DateUpdate);
+
+/// <summary>
+/// A light system a caller wants to exist.
+///
+/// ExtAssetId is required and is the caller's own federation identifier for
+/// the system. TAMS mints its own LightSystemId regardless: a system arriving
+/// with no federation id would be a system no other system could ever refer
+/// to again.
+/// </summary>
+public sealed record LightSystemUpsert(
+    Guid ExtAssetId,
+    string LightSystemName,
+    long LightSystemClassCodeId,
+    long? LightSystemStatusId,
+    long? OwnerId,
+    long? SglElecJurOwnerId,
+    long? CountyId);
+
+public sealed record LightSystemUpsertResult(
+    IReadOnlyList<UpsertedLightSystem> Systems,
+    IReadOnlyList<UpsertRejection> Rejections)
+{
+    public int Created => Systems.Count(s => s.Created);
+    public int Updated => Systems.Count(s => !s.Created);
 }
 
 /// <summary>
-/// One persisted site. Created distinguishes a new row from an update, which is
-/// the only thing the caller could not already work out.
+/// One persisted light system. LightSystemId is reported back because it is
+/// TAMS-minted: the caller supplied ExtAssetId and has no other way to learn
+/// the key it can now use to attach units.
 /// </summary>
-public sealed record UpsertedSite(Guid SiteId, string SiteCode, bool Created);
+public sealed record UpsertedLightSystem(long LightSystemId, Guid ExtAssetId, bool Created);
 
-public sealed record MmsAssetType(
-    Guid AssetTypeId,
-    string AssetTypeCode,
-    string AssetTypeName,
-    string? Description,
-    Guid? ParentAssetTypeId,
-    string? CriticalityClass,
-    int? ExpectedLifeYears);
-
-public sealed record MmsAsset(
-    Guid AssetId,
-    Guid SiteId,
-    Guid AssetTypeId,
-    string AssetNumber,
-    string AssetName,
-    string? Description,
-    string? Manufacturer,
-    string? ModelNumber,
-    string? SerialNumber,
-    DateOnly? CommissionDate,
-    DateOnly? RetirementDate,
-    decimal? CriticalityScore,
-    string? RiskRanking,
-    string? Status,
-    Guid? ParentAssetId,
-    DateTime CreatedDate,
-    DateTime? UpdatedDate);
+public sealed record MmsLightUnit(
+    long LightUnitId,
+    string LightUnitName,
+    long? LightSystemId,
+    long? LightUnitClassCodeId,
+    long? LightUnitStatusId,
+    long? OwnerId,
+    string? ExtAssetId,
+    string? MndotAssetNumber,
+    DateTime? DateUpdate);
 
 /// <summary>
-/// An asset a caller wants to exist.
-///
-/// AssetTypeID is optional even though the column is NOT NULL: a sender
-/// describing a segment rarely knows the customer's type taxonomy, and MMS falls
-/// back to UNCLASSIFIED rather than refusing the asset.
-///
-/// Criticality, risk ranking, serial and manufacturer are absent. Those are set
-/// by a planner once the asset is surveyed, and a caller asserting them would be
-/// claiming knowledge MMS has no reason to trust.
+/// A light unit a caller wants to exist, within a light system that must
+/// already have been upserted -- LIGHT_UNIT_INVENTORY.LIGHT_SYSTEM_ID has no
+/// NOT NULL constraint in the source schema, but a unit with no system is not
+/// a usable one, so this contract requires it.
 /// </summary>
-public sealed record AssetUpsert(
-    Guid AssetId,
-    Guid SiteId,
-    string AssetNumber,
-    string AssetName,
-    string? Description,
-    string? Status,
-    Guid? AssetTypeId,
-    Guid? ParentAssetId);
+public sealed record LightUnitUpsert(
+    Guid ExtAssetId,
+    string LightUnitName,
+    long LightSystemId,
+    long? LightUnitClassCodeId,
+    long? LightUnitStatusId,
+    long? OwnerId,
+    string? MndotAssetNumber);
 
-public sealed record AssetUpsertResult(
-    IReadOnlyList<UpsertedAsset> Assets,
+public sealed record LightUnitUpsertResult(
+    IReadOnlyList<UpsertedLightUnit> Units,
     IReadOnlyList<UpsertRejection> Rejections)
 {
-    public int Created => Assets.Count(a => a.Created);
-    public int Updated => Assets.Count(a => !a.Created);
+    public int Created => Units.Count(u => u.Created);
+    public int Updated => Units.Count(u => !u.Created);
 }
 
-/// <summary>
-/// One persisted asset. AssetTypeId is reported back because MMS may have
-/// substituted UNCLASSIFIED for a type the caller did not state, and the caller
-/// should be able to see that happened.
-/// </summary>
-public sealed record UpsertedAsset(Guid AssetId, Guid AssetTypeId, bool Created);
+public sealed record UpsertedLightUnit(long LightUnitId, Guid ExtAssetId, bool Created);
 
 /// <summary>
-/// Something MMS declined to store, and why. Shared by the site and asset paths:
-/// the reason a customer system says no does not depend on what was asked.
+/// Something MMS declined to store, and why. Shared by the system and unit
+/// paths: the reason a customer system says no does not depend on what was
+/// asked.
 /// </summary>
 /// <param name="Key">
 /// The identifier that was refused, so a caller can tell which item in a batch
@@ -219,7 +250,7 @@ public sealed record UpsertedAsset(Guid AssetId, Guid AssetTypeId, bool Created)
 /// </param>
 /// <param name="Transient">
 /// True only for causes a later identical attempt could clear: deadlock, lock
-/// timeout, connection failure. A missing site or an absent required value is a
-/// fact about the request and will never clear on retry.
+/// timeout, connection failure. A missing light system or an absent required
+/// value is a fact about the request and will never clear on retry.
 /// </param>
 public sealed record UpsertRejection(string Key, string Reason, bool Transient);

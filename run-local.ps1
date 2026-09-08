@@ -137,10 +137,14 @@ $started = @()
 foreach ($h in $hosts) {
     if ($Include -notcontains $h.Name) { continue }
 
-    $dir = Join-Path $root $h.Project
+    # func start --no-build must run from the actual build output directory:
+    # given the project directory it looks for .azurefunctions directly under
+    # bin\, and .NET's per-TFM output layout (bin\Debug\net10.0\) means it
+    # never finds it there, silently loading zero functions.
+    $dir = Join-Path $root "$($h.Project)\bin\Debug\net10.0"
 
     if (-not (Test-Path $dir)) {
-        Write-Warning "$($h.Name): project directory not found at $dir; skipping."
+        Write-Warning "$($h.Name): build output not found at $dir; skipping."
         continue
     }
 

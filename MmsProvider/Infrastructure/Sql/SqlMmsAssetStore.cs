@@ -5,7 +5,7 @@ using Microsoft.Extensions.Options;
 namespace MmsProvider.Infrastructure.Sql;
 
 /// <summary>
-/// IMmsAssetStore over Azure SQL.
+/// IMmsAssetStore over Azure SQL, against the TAMS lighting-domain schema.
 ///
 /// Hand-written ADO.NET rather than EF: this project emulates a customer system,
 /// and a customer system's data access is not the integrator's to model.
@@ -14,13 +14,6 @@ public sealed class SqlMmsAssetStore(
     IOptions<MmsOptions> options) : IMmsAssetStore
 {
     private readonly MmsOptions _options = options.Value;
-
-    /// <summary>
-    /// The seeded fallback type. Declared here as well as in schema.sql because
-    /// the insert path needs it before any caller has had a chance to state one.
-    /// </summary>
-    private static readonly Guid UnclassifiedAssetType =
-        new("00000000-0000-0000-0000-0000000000FF");
 
     private async Task<SqlConnection> OpenAsync(CancellationToken ct)
     {
@@ -40,78 +33,97 @@ public sealed class SqlMmsAssetStore(
         // system rather than an empty one.
         await SqlScriptRunner.ExecuteAsync(
             _options.SqlConnectionString, "MmsProvider.Infrastructure.Sql.schema.sql", ct);
+
+        // Reference data follows schema for the same reason SchemaInitializer
+        // orders them this way: the asset tables' foreign keys point at these
+        // lookup tables, and a day-zero reset that left them empty would leave
+        // MMS unable to accept a single asset until an operator seeded them by
+        // hand.
+        await SqlScriptRunner.ExecuteAsync(
+            _options.SqlConnectionString, "MmsProvider.Infrastructure.Sql.refdata.sql", ct);
     }
 
-    public async Task<IReadOnlyList<MmsSite>> GetSitesAsync(CancellationToken ct)
+    private const string LightSystemSelect = """
+        SELECT LIGHT_SYSTEM_ID, LIGHT_SYSTEM_NAME, LIGHT_SYSTEM_CLASS_CODE_ID,
+               LIGHT_SYSTEM_STATUS_ID, OWNER_ID, SGL_ELEC_JUR_OWNER_ID, COUNTY_ID,
+               EXT_ASSET_ID, DATE_UPDATE
+        FROM dbo.LIGHT_SYSTEM_INVENTORY
+        """;
+
+    private static MmsLightSystem ReadLightSystem(SqlDataReader r) => new(
+        LightSystemId: r.GetInt64(0),
+        LightSystemName: r.GetString(1),
+        LightSystemClassCodeId: r.GetInt64(2),
+        LightSystemStatusId: r.IsDBNull(3) ? null : r.GetInt64(3),
+        OwnerId: r.IsDBNull(4) ? null : r.GetInt64(4),
+        SglElecJurOwnerId: r.IsDBNull(5) ? null : r.GetInt64(5),
+        CountyId: r.IsDBNull(6) ? null : r.GetInt64(6),
+        ExtAssetId: r.IsDBNull(7) ? null : r.GetString(7),
+        DateUpdate: r.IsDBNull(8) ? null : r.GetDateTime(8));
+
+    public async Task<IReadOnlyList<MmsLightSystem>> GetLightSystemsAsync(CancellationToken ct)
     {
         await using var cn = await OpenAsync(ct);
-        await using var cmd = new SqlCommand($"{SiteSelect} ORDER BY SiteCode;", cn);
+        await using var cmd = new SqlCommand($"{LightSystemSelect} ORDER BY LIGHT_SYSTEM_NAME;", cn);
 
-        var sites = new List<MmsSite>();
+        var systems = new List<MmsLightSystem>();
         await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct)) sites.Add(ReadSite(reader));
-        return sites;
+        while (await reader.ReadAsync(ct)) systems.Add(ReadLightSystem(reader));
+        return systems;
     }
 
-    public async Task<MmsSite?> FindSiteByCodeAsync(string siteCode, CancellationToken ct)
+    public async Task<MmsLightSystem?> FindLightSystemAsync(long lightSystemId, CancellationToken ct)
     {
         await using var cn = await OpenAsync(ct);
-        await using var cmd = new SqlCommand($"{SiteSelect} WHERE SiteCode = @code;", cn);
-        cmd.Parameters.AddWithValue("@code", siteCode);
+        await using var cmd = new SqlCommand($"{LightSystemSelect} WHERE LIGHT_SYSTEM_ID = @id;", cn);
+        cmd.Parameters.AddWithValue("@id", lightSystemId);
 
         await using var reader = await cmd.ExecuteReaderAsync(ct);
-        return await reader.ReadAsync(ct) ? ReadSite(reader) : null;
+        return await reader.ReadAsync(ct) ? ReadLightSystem(reader) : null;
     }
 
-    public async Task<MmsSite?> FindSiteAsync(Guid siteId, CancellationToken ct)
+    public async Task<MmsLightSystem?> FindLightSystemByExtAssetIdAsync(Guid extAssetId, CancellationToken ct)
     {
         await using var cn = await OpenAsync(ct);
-        await using var cmd = new SqlCommand($"{SiteSelect} WHERE SiteID = @id;", cn);
-        cmd.Parameters.AddWithValue("@id", siteId);
+        await using var cmd = new SqlCommand($"{LightSystemSelect} WHERE EXT_ASSET_ID = @ext;", cn);
+        cmd.Parameters.AddWithValue("@ext", extAssetId.ToString());
 
         await using var reader = await cmd.ExecuteReaderAsync(ct);
-        return await reader.ReadAsync(ct) ? ReadSite(reader) : null;
+        return await reader.ReadAsync(ct) ? ReadLightSystem(reader) : null;
     }
 
-    public async Task<SiteUpsertResult> UpsertSitesAsync(
-        IReadOnlyList<SiteUpsert> sites, CancellationToken ct)
+    public async Task<LightSystemUpsertResult> UpsertLightSystemsAsync(
+        IReadOnlyList<LightSystemUpsert> systems, CancellationToken ct)
     {
-        var upserted = new List<UpsertedSite>();
+        var upserted = new List<UpsertedLightSystem>();
         var rejections = new List<UpsertRejection>();
 
-        if (sites.Count == 0) return new SiteUpsertResult(upserted, rejections);
+        if (systems.Count == 0) return new LightSystemUpsertResult(upserted, rejections);
 
         await using var cn = await OpenAsync(ct);
         await using var tx = (SqlTransaction)await cn.BeginTransactionAsync(ct);
 
         try
         {
-            foreach (var site in sites)
+            foreach (var system in systems)
             {
-                if (site.SiteId == Guid.Empty)
+                if (system.ExtAssetId == Guid.Empty)
                 {
                     rejections.Add(new UpsertRejection(
-                        site.SiteCode ?? string.Empty,
-                        "SiteID is required: MMS does not mint site identifiers.",
+                        system.LightSystemName ?? string.Empty,
+                        "ExtAssetId is required: MMS matches light systems by federation id.",
                         false));
                     continue;
                 }
 
-                if (string.IsNullOrWhiteSpace(site.SiteCode))
+                if (string.IsNullOrWhiteSpace(system.LightSystemName))
                 {
                     rejections.Add(new UpsertRejection(
-                        site.SiteId.ToString(), "SiteCode is required.", false));
+                        system.ExtAssetId.ToString(), "LightSystemName is required.", false));
                     continue;
                 }
 
-                if (string.IsNullOrWhiteSpace(site.SiteName))
-                {
-                    rejections.Add(new UpsertRejection(
-                        site.SiteCode, "SiteName is required.", false));
-                    continue;
-                }
-
-                upserted.Add(await UpsertOneSiteAsync(cn, tx, site, ct));
+                upserted.Add(await UpsertOneLightSystemAsync(cn, tx, system, ct));
             }
 
             await tx.CommitAsync(ct);
@@ -120,205 +132,168 @@ public sealed class SqlMmsAssetStore(
         {
             await tx.RollbackAsync(ct);
 
-            return new SiteUpsertResult(
+            return new LightSystemUpsertResult(
                 [],
-                [.. sites.Select(s => new UpsertRejection(
-                    s.SiteCode ?? s.SiteId.ToString(), ex.Message, IsTransient(ex)))]);
+                [.. systems.Select(s => new UpsertRejection(
+                    s.ExtAssetId.ToString(), ex.Message, IsTransient(ex)))]);
         }
 
-        return new SiteUpsertResult(upserted, rejections);
+        return new LightSystemUpsertResult(upserted, rejections);
     }
 
     /// <summary>
-    /// Matched on SiteID alone. The caller supplied the key, so there is no
-    /// lookup to race against and no identifier to allocate.
+    /// Matched on ExtAssetId: the caller does not know the TAMS-minted
+    /// LightSystemId until this method returns one.
     /// </summary>
-    private static async Task<UpsertedSite> UpsertOneSiteAsync(
-        SqlConnection cn, SqlTransaction tx, SiteUpsert site, CancellationToken ct)
+    private static async Task<UpsertedLightSystem> UpsertOneLightSystemAsync(
+        SqlConnection cn, SqlTransaction tx, LightSystemUpsert system, CancellationToken ct)
     {
+        var extAssetId = system.ExtAssetId.ToString();
+
         await using var update = new SqlCommand(
             """
-            UPDATE dbo.Site
-            SET SiteCode     = @code,
-                SiteName     = @name,
-                Description  = COALESCE(@description, Description),
-                SiteType     = COALESCE(@type, SiteType),
-                ParentSiteID = COALESCE(@parent, ParentSiteID),
-                Country      = COALESCE(@country, Country),
-                Region       = COALESCE(@region, Region),
-                Status       = COALESCE(@status, Status),
-                UpdatedDate  = SYSUTCDATETIME()
-            WHERE SiteID = @id;
+            UPDATE dbo.LIGHT_SYSTEM_INVENTORY
+            SET LIGHT_SYSTEM_NAME          = @name,
+                LIGHT_SYSTEM_CLASS_CODE_ID = @classCode,
+                LIGHT_SYSTEM_STATUS_ID     = COALESCE(@statusId, LIGHT_SYSTEM_STATUS_ID),
+                OWNER_ID                   = COALESCE(@ownerId, OWNER_ID),
+                SGL_ELEC_JUR_OWNER_ID      = COALESCE(@jurOwnerId, SGL_ELEC_JUR_OWNER_ID),
+                COUNTY_ID                  = COALESCE(@countyId, COUNTY_ID),
+                DATE_UPDATE                = SYSUTCDATETIME()
+            OUTPUT INSERTED.LIGHT_SYSTEM_ID
+            WHERE EXT_ASSET_ID = @ext;
             """, cn, tx);
 
-        BindSite(update, site);
+        BindLightSystem(update, system, extAssetId);
 
-        if (await update.ExecuteNonQueryAsync(ct) > 0)
+        var updatedId = await update.ExecuteScalarAsync(ct);
+        if (updatedId is long id)
         {
-            return new UpsertedSite(site.SiteId, site.SiteCode, Created: false);
+            return new UpsertedLightSystem(id, system.ExtAssetId, Created: false);
         }
 
         await using var insert = new SqlCommand(
             """
-            INSERT INTO dbo.Site
-                (SiteID, SiteCode, SiteName, Description, SiteType,
-                 ParentSiteID, Country, Region, Status)
+            INSERT INTO dbo.LIGHT_SYSTEM_INVENTORY
+                (LIGHT_SYSTEM_NAME, LIGHT_SYSTEM_CLASS_CODE_ID, LIGHT_SYSTEM_STATUS_ID,
+                 OWNER_ID, SGL_ELEC_JUR_OWNER_ID, COUNTY_ID, EXT_ASSET_ID, DATE_UPDATE)
+            OUTPUT INSERTED.LIGHT_SYSTEM_ID
             VALUES
-                (@id, @code, @name, @description, @type,
-                 @parent, @country, @region, @status);
+                (@name, @classCode, @statusId, @ownerId, @jurOwnerId, @countyId, @ext, SYSUTCDATETIME());
             """, cn, tx);
 
-        BindSite(insert, site);
-        await insert.ExecuteNonQueryAsync(ct);
+        BindLightSystem(insert, system, extAssetId);
 
-        return new UpsertedSite(site.SiteId, site.SiteCode, Created: true);
+        var newId = (long)(await insert.ExecuteScalarAsync(ct))!;
+        return new UpsertedLightSystem(newId, system.ExtAssetId, Created: true);
     }
 
-    private static void BindSite(SqlCommand cmd, SiteUpsert site)
+    private static void BindLightSystem(SqlCommand cmd, LightSystemUpsert system, string extAssetId)
     {
-        cmd.Parameters.AddWithValue("@id", site.SiteId);
-        cmd.Parameters.AddWithValue("@code", site.SiteCode);
-        cmd.Parameters.AddWithValue("@name", site.SiteName);
-        cmd.Parameters.AddWithValue("@description", (object?)site.Description ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@type", (object?)site.SiteType ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@parent", (object?)site.ParentSiteId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@country", (object?)site.Country ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@region", (object?)site.Region ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@status", (object?)site.Status ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@ext", extAssetId);
+        cmd.Parameters.AddWithValue("@name", system.LightSystemName);
+        cmd.Parameters.AddWithValue("@classCode", system.LightSystemClassCodeId);
+        cmd.Parameters.AddWithValue("@statusId", (object?)system.LightSystemStatusId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@ownerId", (object?)system.OwnerId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@jurOwnerId", (object?)system.SglElecJurOwnerId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@countyId", (object?)system.CountyId ?? DBNull.Value);
     }
 
-    public async Task<MmsAsset?> FindAssetAsync(Guid assetId, CancellationToken ct)
-    {
-        await using var cn = await OpenAsync(ct);
-        await using var cmd = new SqlCommand($"{AssetSelect} WHERE AssetID = @id;", cn);
-        cmd.Parameters.AddWithValue("@id", assetId);
+    private const string LightUnitSelect = """
+        SELECT LIGHT_UNIT_ID, LIGHT_UNIT_NAME, LIGHT_SYSTEM_ID, LIGHT_UNIT_CLASS_CODE_ID,
+               LIGHT_UNIT_STATUS_ID, OWNER_ID, EXT_ASSET_ID, MNDOT_ASSET_NUMBER, DATE_UPDATE
+        FROM dbo.LIGHT_UNIT_INVENTORY
+        """;
 
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        return await reader.ReadAsync(ct) ? ReadAsset(reader) : null;
-    }
+    private static MmsLightUnit ReadLightUnit(SqlDataReader r) => new(
+        LightUnitId: r.GetInt64(0),
+        LightUnitName: r.GetString(1),
+        LightSystemId: r.IsDBNull(2) ? null : r.GetInt64(2),
+        LightUnitClassCodeId: r.IsDBNull(3) ? null : r.GetInt64(3),
+        LightUnitStatusId: r.IsDBNull(4) ? null : r.GetInt64(4),
+        OwnerId: r.IsDBNull(5) ? null : r.GetInt64(5),
+        ExtAssetId: r.IsDBNull(6) ? null : r.GetString(6),
+        MndotAssetNumber: r.IsDBNull(7) ? null : r.GetString(7),
+        DateUpdate: r.IsDBNull(8) ? null : r.GetDateTime(8));
 
-    public async Task<MmsAsset?> FindAssetByNumberAsync(
-        Guid siteId, string assetNumber, CancellationToken ct)
-    {
-        await using var cn = await OpenAsync(ct);
-        await using var cmd = new SqlCommand(
-            $"{AssetSelect} WHERE SiteID = @siteId AND AssetNumber = @number;", cn);
-        cmd.Parameters.AddWithValue("@siteId", siteId);
-        cmd.Parameters.AddWithValue("@number", assetNumber);
-
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        return await reader.ReadAsync(ct) ? ReadAsset(reader) : null;
-    }
-
-    public async Task<IReadOnlyList<MmsAssetType>> GetAssetTypesAsync(CancellationToken ct)
+    public async Task<IReadOnlyList<MmsLightUnit>> GetLightUnitsAsync(
+        long? lightSystemId, CancellationToken ct)
     {
         await using var cn = await OpenAsync(ct);
-        await using var cmd = new SqlCommand($"{AssetTypeSelect} ORDER BY AssetTypeCode;", cn);
-
-        var types = new List<MmsAssetType>();
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct)) types.Add(ReadAssetType(reader));
-        return types;
-    }
-
-    public async Task<MmsAssetType?> FindAssetTypeByCodeAsync(
-        string assetTypeCode, CancellationToken ct)
-    {
-        await using var cn = await OpenAsync(ct);
-        await using var cmd = new SqlCommand(
-            $"{AssetTypeSelect} WHERE AssetTypeCode = @code;", cn);
-        cmd.Parameters.AddWithValue("@code", assetTypeCode);
-
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        return await reader.ReadAsync(ct) ? ReadAssetType(reader) : null;
-    }
-
-    public async Task<IReadOnlyList<MmsAsset>> GetAssetsAsync(Guid? siteId, CancellationToken ct)
-    {
-        await using var cn = await OpenAsync(ct);
-        var sql = siteId is null
-            ? $"{AssetSelect} ORDER BY AssetNumber;"
-            : $"{AssetSelect} WHERE SiteID = @siteId ORDER BY AssetNumber;";
+        var sql = lightSystemId is null
+            ? $"{LightUnitSelect} ORDER BY LIGHT_UNIT_NAME;"
+            : $"{LightUnitSelect} WHERE LIGHT_SYSTEM_ID = @systemId ORDER BY LIGHT_UNIT_NAME;";
 
         await using var cmd = new SqlCommand(sql, cn);
-        if (siteId is not null) cmd.Parameters.AddWithValue("@siteId", siteId.Value);
+        if (lightSystemId is not null) cmd.Parameters.AddWithValue("@systemId", lightSystemId.Value);
 
-        var assets = new List<MmsAsset>();
+        var units = new List<MmsLightUnit>();
         await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct)) assets.Add(ReadAsset(reader));
-        return assets;
+        while (await reader.ReadAsync(ct)) units.Add(ReadLightUnit(reader));
+        return units;
     }
 
-    public async Task<AssetUpsertResult> UpsertAssetsAsync(
-        IReadOnlyList<AssetUpsert> assets, CancellationToken ct)
+    public async Task<MmsLightUnit?> FindLightUnitAsync(long lightUnitId, CancellationToken ct)
     {
-        var upserted = new List<UpsertedAsset>();
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand($"{LightUnitSelect} WHERE LIGHT_UNIT_ID = @id;", cn);
+        cmd.Parameters.AddWithValue("@id", lightUnitId);
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct) ? ReadLightUnit(reader) : null;
+    }
+
+    public async Task<MmsLightUnit?> FindLightUnitByExtAssetIdAsync(Guid extAssetId, CancellationToken ct)
+    {
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand($"{LightUnitSelect} WHERE EXT_ASSET_ID = @ext;", cn);
+        cmd.Parameters.AddWithValue("@ext", extAssetId.ToString());
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct) ? ReadLightUnit(reader) : null;
+    }
+
+    public async Task<LightUnitUpsertResult> UpsertLightUnitsAsync(
+        IReadOnlyList<LightUnitUpsert> units, CancellationToken ct)
+    {
+        var upserted = new List<UpsertedLightUnit>();
         var rejections = new List<UpsertRejection>();
 
-        if (assets.Count == 0) return new AssetUpsertResult(upserted, rejections);
+        if (units.Count == 0) return new LightUnitUpsertResult(upserted, rejections);
 
         await using var cn = await OpenAsync(ct);
         await using var tx = (SqlTransaction)await cn.BeginTransactionAsync(ct);
 
         try
         {
-            // Read once. A caller sending fifty assets for one site should not pay
-            // for fifty lookups, and neither set can change inside the transaction.
-            var siteIds = await ExistingKeysAsync(cn, tx, "SELECT SiteID FROM dbo.Site;", ct);
-            var typeIds = await ExistingKeysAsync(cn, tx, "SELECT AssetTypeID FROM dbo.AssetType;", ct);
-
-            foreach (var asset in assets)
+            foreach (var unit in units)
             {
-                if (asset.AssetId == Guid.Empty)
+                if (unit.ExtAssetId == Guid.Empty)
                 {
                     rejections.Add(new UpsertRejection(
-                        asset.AssetNumber ?? string.Empty,
-                        "AssetID is required: MMS does not mint asset identifiers.",
+                        unit.LightUnitName ?? string.Empty,
+                        "ExtAssetId is required: MMS matches light units by federation id.",
                         false));
                     continue;
                 }
 
-                if (string.IsNullOrWhiteSpace(asset.AssetNumber))
+                if (string.IsNullOrWhiteSpace(unit.LightUnitName))
                 {
                     rejections.Add(new UpsertRejection(
-                        asset.AssetId.ToString(), "AssetNumber is required.", false));
+                        unit.ExtAssetId.ToString(), "LightUnitName is required.", false));
                     continue;
                 }
 
-                if (string.IsNullOrWhiteSpace(asset.AssetName))
+                if (unit.LightSystemId <= 0)
                 {
                     rejections.Add(new UpsertRejection(
-                        asset.AssetNumber, "AssetName is required.", false));
-                    continue;
-                }
-
-                // SiteID is NOT NULL with an FK, so an unknown site cannot be stored.
-                // Rejecting here rather than letting the FK fire keeps the reason
-                // specific and leaves the transaction usable for the rest of the batch.
-                if (!siteIds.Contains(asset.SiteId))
-                {
-                    rejections.Add(new UpsertRejection(
-                        asset.AssetNumber,
-                        $"Site {asset.SiteId} is not provisioned in MMS.",
+                        unit.ExtAssetId.ToString(),
+                        "LightSystemId is required: a unit must belong to a system already in MMS.",
                         false));
                     continue;
                 }
 
-                // An unknown type is not a reason to refuse the asset, but silently
-                // substituting for a type the caller explicitly named would hide a
-                // real mismatch. Only an unstated type falls back.
-                var assetTypeId = asset.AssetTypeId ?? UnclassifiedAssetType;
-
-                if (!typeIds.Contains(assetTypeId))
-                {
-                    rejections.Add(new UpsertRejection(
-                        asset.AssetNumber,
-                        $"AssetType {assetTypeId} is not defined in MMS.",
-                        false));
-                    continue;
-                }
-
-                upserted.Add(await UpsertOneAssetAsync(cn, tx, asset, assetTypeId, ct));
+                upserted.Add(await UpsertOneLightUnitAsync(cn, tx, unit, ct));
             }
 
             await tx.CommitAsync(ct);
@@ -327,172 +302,245 @@ public sealed class SqlMmsAssetStore(
         {
             await tx.RollbackAsync(ct);
 
-            // The whole batch failed, so nothing was stored. Report every asset as
-            // rejected rather than returning a partial success that did not happen.
-            return new AssetUpsertResult(
+            return new LightUnitUpsertResult(
                 [],
-                [.. assets.Select(a => new UpsertRejection(
-                    a.AssetNumber ?? a.AssetId.ToString(), ex.Message, IsTransient(ex)))]);
+                [.. units.Select(u => new UpsertRejection(
+                    u.ExtAssetId.ToString(), ex.Message, IsTransient(ex)))]);
         }
 
-        return new AssetUpsertResult(upserted, rejections);
+        return new LightUnitUpsertResult(upserted, rejections);
     }
 
-    /// <summary>
-    /// Matched on AssetID. An asset renumbered at the plant updates the same row,
-    /// where matching on AssetNumber would create a second one.
-    /// </summary>
-    private static async Task<UpsertedAsset> UpsertOneAssetAsync(
-        SqlConnection cn, SqlTransaction tx, AssetUpsert asset, Guid assetTypeId, CancellationToken ct)
+    private static async Task<UpsertedLightUnit> UpsertOneLightUnitAsync(
+        SqlConnection cn, SqlTransaction tx, LightUnitUpsert unit, CancellationToken ct)
     {
-        // The update names only the columns an integrator may legitimately assert.
-        // Criticality, risk ranking, serial and manufacturer belong to whoever
-        // surveyed the asset and are never overwritten from outside.
+        var extAssetId = unit.ExtAssetId.ToString();
+
         await using var update = new SqlCommand(
             """
-            UPDATE dbo.Asset
-            SET SiteID        = @siteId,
-                AssetTypeID   = @typeId,
-                AssetNumber   = @number,
-                AssetName     = @name,
-                Description   = COALESCE(@description, Description),
-                Status        = COALESCE(@status, Status),
-                ParentAssetID = COALESCE(@parent, ParentAssetID),
-                UpdatedDate   = SYSUTCDATETIME()
-            WHERE AssetID = @id;
+            UPDATE dbo.LIGHT_UNIT_INVENTORY
+            SET LIGHT_UNIT_NAME          = @name,
+                LIGHT_SYSTEM_ID          = @systemId,
+                LIGHT_UNIT_CLASS_CODE_ID = COALESCE(@classCode, LIGHT_UNIT_CLASS_CODE_ID),
+                LIGHT_UNIT_STATUS_ID     = COALESCE(@statusId, LIGHT_UNIT_STATUS_ID),
+                OWNER_ID                 = COALESCE(@ownerId, OWNER_ID),
+                MNDOT_ASSET_NUMBER       = COALESCE(@mndotNum, MNDOT_ASSET_NUMBER),
+                DATE_UPDATE              = SYSUTCDATETIME()
+            OUTPUT INSERTED.LIGHT_UNIT_ID
+            WHERE EXT_ASSET_ID = @ext;
             """, cn, tx);
 
-        BindAsset(update, asset, assetTypeId);
+        BindLightUnit(update, unit, extAssetId);
 
-        if (await update.ExecuteNonQueryAsync(ct) > 0)
+        var updatedId = await update.ExecuteScalarAsync(ct);
+        if (updatedId is long id)
         {
-            return new UpsertedAsset(asset.AssetId, assetTypeId, Created: false);
+            return new UpsertedLightUnit(id, unit.ExtAssetId, Created: false);
         }
 
         await using var insert = new SqlCommand(
             """
-            INSERT INTO dbo.Asset
-                (AssetID, SiteID, AssetTypeID, AssetNumber, AssetName,
-                 Description, Status, ParentAssetID)
+            INSERT INTO dbo.LIGHT_UNIT_INVENTORY
+                (LIGHT_UNIT_NAME, LIGHT_SYSTEM_ID, LIGHT_UNIT_CLASS_CODE_ID,
+                 LIGHT_UNIT_STATUS_ID, OWNER_ID, MNDOT_ASSET_NUMBER, EXT_ASSET_ID, DATE_UPDATE)
+            OUTPUT INSERTED.LIGHT_UNIT_ID
             VALUES
-                (@id, @siteId, @typeId, @number, @name,
-                 @description, @status, @parent);
+                (@name, @systemId, @classCode, @statusId, @ownerId, @mndotNum, @ext, SYSUTCDATETIME());
             """, cn, tx);
 
-        BindAsset(insert, asset, assetTypeId);
-        await insert.ExecuteNonQueryAsync(ct);
+        BindLightUnit(insert, unit, extAssetId);
 
-        return new UpsertedAsset(asset.AssetId, assetTypeId, Created: true);
+        var newId = (long)(await insert.ExecuteScalarAsync(ct))!;
+        return new UpsertedLightUnit(newId, unit.ExtAssetId, Created: true);
     }
 
-    private static void BindAsset(SqlCommand cmd, AssetUpsert asset, Guid assetTypeId)
+    private static void BindLightUnit(SqlCommand cmd, LightUnitUpsert unit, string extAssetId)
     {
-        cmd.Parameters.AddWithValue("@id", asset.AssetId);
-        cmd.Parameters.AddWithValue("@siteId", asset.SiteId);
-        cmd.Parameters.AddWithValue("@typeId", assetTypeId);
-        cmd.Parameters.AddWithValue("@number", asset.AssetNumber);
-        cmd.Parameters.AddWithValue("@name", asset.AssetName);
-        cmd.Parameters.AddWithValue("@description", (object?)asset.Description ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@status", (object?)asset.Status ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@parent", (object?)asset.ParentAssetId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@ext", extAssetId);
+        cmd.Parameters.AddWithValue("@name", unit.LightUnitName);
+        cmd.Parameters.AddWithValue("@systemId", unit.LightSystemId);
+        cmd.Parameters.AddWithValue("@classCode", (object?)unit.LightUnitClassCodeId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@statusId", (object?)unit.LightUnitStatusId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@ownerId", (object?)unit.OwnerId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@mndotNum", (object?)unit.MndotAssetNumber ?? DBNull.Value);
     }
 
-    private static async Task<HashSet<Guid>> ExistingKeysAsync(
-        SqlConnection cn, SqlTransaction tx, string sql, CancellationToken ct)
+    // ---- Lookups ------------------------------------------------------
+
+    public Task<IReadOnlyList<MmsLookup>> GetLightSystemClassCodesAsync(CancellationToken ct) =>
+        GetLookupAsync("LIGHT_SYSTEM_CLASS_CODE", "LIGHT_SYSTEM_CLASS_CODE_ID", "LIGHT_SYSTEM_CLASS_CODE_NAME", ct);
+
+    public Task<IReadOnlyList<MmsLookup>> GetAssetStatusesAsync(CancellationToken ct) =>
+        GetLookupAsync("SETUP_ASSET_STATUS", "ASSET_STATUS_ID", "ASSET_STATUS_NAME", ct);
+
+    public Task<IReadOnlyList<MmsLookup>> GetOwnersAsync(CancellationToken ct) =>
+        GetLookupAsync("SETUP_OWNER", "OWNER_ID", "OWNER_NAME", ct);
+
+    public Task<IReadOnlyList<MmsLookup>> GetCountiesAsync(CancellationToken ct) =>
+        GetLookupAsync("SETUP_COUNTY", "COUNTY_ID", "COUNTY_NAME", ct);
+
+    public Task<IReadOnlyList<MmsLookup>> GetJurisdictionCodesAsync(CancellationToken ct) =>
+        GetLookupAsync("SETUP_SGL_ELEC_JUR_CODE", "SGL_ELEC_JUR_CODE_ID", "SGL_ELEC_JUR_CODE_NAME", ct);
+
+    // ---- Owners ---------------------------------------------------------
+
+    public async Task<OwnerUpsertResult> UpsertOwnersAsync(
+        IReadOnlyList<OwnerUpsert> owners, CancellationToken ct)
     {
-        await using var cmd = new SqlCommand(sql, cn, tx);
-        var ids = new HashSet<Guid>();
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct)) ids.Add(reader.GetGuid(0));
-        return ids;
+        var upserted = new List<UpsertedOwner>();
+        var rejections = new List<UpsertRejection>();
+
+        if (owners.Count == 0) return new OwnerUpsertResult(upserted, rejections);
+
+        await using var cn = await OpenAsync(ct);
+        await using var tx = (SqlTransaction)await cn.BeginTransactionAsync(ct);
+
+        try
+        {
+            foreach (var owner in owners)
+            {
+                if (string.IsNullOrWhiteSpace(owner.OwnerName))
+                {
+                    rejections.Add(new UpsertRejection(
+                        owner.OwnerId?.ToString() ?? string.Empty,
+                        "OwnerName is required: SETUP_OWNER.OWNER_NAME is NOT NULL.",
+                        false));
+                    continue;
+                }
+
+                var result = await UpsertOneOwnerAsync(cn, tx, owner, ct);
+
+                if (result is null)
+                {
+                    // The caller named an OWNER_ID that is not there. Not
+                    // transient: a row that was deleted will not return, and
+                    // creating one under the caller's id is impossible against
+                    // an IDENTITY column.
+                    rejections.Add(new UpsertRejection(
+                        owner.OwnerId!.Value.ToString(),
+                        $"No SETUP_OWNER row with OWNER_ID {owner.OwnerId}.",
+                        false));
+                    continue;
+                }
+
+                upserted.Add(result);
+            }
+
+            await tx.CommitAsync(ct);
+        }
+        catch (SqlException ex)
+        {
+            await tx.RollbackAsync(ct);
+
+            return new OwnerUpsertResult(
+                [],
+                [.. owners.Select(o => new UpsertRejection(
+                    o.OwnerName ?? string.Empty, ex.Message, IsTransient(ex)))]);
+        }
+
+        return new OwnerUpsertResult(upserted, rejections);
     }
 
     /// <summary>
-    /// Classifies by SQL error number, never by message text. Message parsing is
-    /// how the previous generation of this integration acquired its scar tissue:
-    /// it is locale-dependent and silently wrong when a provider reworders a string.
+    /// Resolves one owner to a row, creating it if neither the caller's
+    /// OWNER_ID nor its name matches.
+    ///
+    /// Returns null only when the caller supplied an OWNER_ID that no longer
+    /// exists, which the caller reports rather than silently creating a
+    /// replacement under a different key.
+    ///
+    /// The name lookup takes UPDLOCK/HOLDLOCK because SETUP_OWNER carries no
+    /// unique constraint on OWNER_NAME -- the real customer table does not have
+    /// one, and adding it here would make this emulator diverge from what it
+    /// emulates. Without the hint two concurrent drains of the same site both
+    /// miss and both insert.
     /// </summary>
-    private static bool IsTransient(SqlException ex) => ex.Number switch
+    private static async Task<UpsertedOwner?> UpsertOneOwnerAsync(
+        SqlConnection cn, SqlTransaction tx, OwnerUpsert owner, CancellationToken ct)
     {
-        -2 => true,     // timeout
-        49918 => true,  // cannot process request, not enough resources
-        49919 => true,  // cannot process create or update request
-        49920 => true,  // cannot process request, too many operations
-        40501 => true,  // service busy
-        40613 => true,  // database unavailable
-        40197 => true,  // service error processing request
-        40143 => true,  // could not process request
-        4060 => true,   // cannot open database
-        1205 => true,   // deadlock victim
-        233 => true,    // no process on the other end of the pipe
-        10053 => true,  // transport-level error
-        10054 => true,  // existing connection forcibly closed
-        10060 => true,  // network or instance-specific error
-        64 => true,     // connection failed during login
-        _ => false
-    };
+        var name = owner.OwnerName.Trim();
 
-    private const string SiteSelect =
-        """
-        SELECT SiteID, SiteCode, SiteName, Description, SiteType,
-               ParentSiteID, Country, Region, Status, CreatedDate, UpdatedDate
-        FROM dbo.Site
-        """;
+        // Known key: this is a rename, and the incoming name wins. The caller
+        // resolved this owner through CIR, so the federation is asserting what
+        // this owner is now called.
+        if (owner.OwnerId is > 0)
+        {
+            await using var rename = new SqlCommand(
+                """
+                UPDATE dbo.SETUP_OWNER
+                SET OWNER_NAME  = @name,
+                    DATE_UPDATE = SYSUTCDATETIME()
+                OUTPUT INSERTED.OWNER_ID
+                WHERE OWNER_ID = @id;
+                """, cn, tx);
 
-    private const string AssetSelect =
-        """
-        SELECT AssetID, SiteID, AssetTypeID, AssetNumber, AssetName, Description,
-               Manufacturer, ModelNumber, SerialNumber, CommissionDate,
-               RetirementDate, CriticalityScore, RiskRanking, Status,
-               ParentAssetID, CreatedDate, UpdatedDate
-        FROM dbo.Asset
-        """;
+            rename.Parameters.AddWithValue("@name", name);
+            rename.Parameters.AddWithValue("@id", owner.OwnerId.Value);
 
-    private const string AssetTypeSelect =
-        """
-        SELECT AssetTypeID, AssetTypeCode, AssetTypeName, Description,
-               ParentAssetTypeID, CriticalityClass, ExpectedLifeYears
-        FROM dbo.AssetType
-        """;
+            return await rename.ExecuteScalarAsync(ct) is long renamedId
+                ? new UpsertedOwner(renamedId, name, Created: false)
+                : null;
+        }
 
-    private static MmsAssetType ReadAssetType(SqlDataReader r) => new(
-        AssetTypeId: r.GetGuid(0),
-        AssetTypeCode: r.GetString(1),
-        AssetTypeName: r.GetString(2),
-        Description: r.IsDBNull(3) ? null : r.GetString(3),
-        ParentAssetTypeId: r.IsDBNull(4) ? null : r.GetGuid(4),
-        CriticalityClass: r.IsDBNull(5) ? null : r.GetString(5),
-        ExpectedLifeYears: r.IsDBNull(6) ? null : r.GetInt32(6));
+        // Case-insensitive and trimmed: the column collation is already
+        // case-insensitive, but LTRIM/RTRIM is stated so the match does not
+        // depend on it.
+        await using var find = new SqlCommand(
+            """
+            SELECT TOP (1) OWNER_ID
+            FROM dbo.SETUP_OWNER WITH (UPDLOCK, HOLDLOCK)
+            WHERE LTRIM(RTRIM(OWNER_NAME)) = @name
+            ORDER BY OWNER_ID;
+            """, cn, tx);
 
-    private static MmsSite ReadSite(SqlDataReader r) => new(
-        SiteId: r.GetGuid(0),
-        SiteCode: r.GetString(1),
-        SiteName: r.GetString(2),
-        Description: r.IsDBNull(3) ? null : r.GetString(3),
-        SiteType: r.IsDBNull(4) ? null : r.GetString(4),
-        ParentSiteId: r.IsDBNull(5) ? null : r.GetGuid(5),
-        Country: r.IsDBNull(6) ? null : r.GetString(6),
-        Region: r.IsDBNull(7) ? null : r.GetString(7),
-        Status: r.IsDBNull(8) ? null : r.GetString(8),
-        CreatedDate: r.GetDateTime(9),
-        UpdatedDate: r.IsDBNull(10) ? null : r.GetDateTime(10));
+        find.Parameters.AddWithValue("@name", name);
 
-    private static MmsAsset ReadAsset(SqlDataReader r) => new(
-        AssetId: r.GetGuid(0),
-        SiteId: r.GetGuid(1),
-        AssetTypeId: r.GetGuid(2),
-        AssetNumber: r.GetString(3),
-        AssetName: r.GetString(4),
-        Description: r.IsDBNull(5) ? null : r.GetString(5),
-        Manufacturer: r.IsDBNull(6) ? null : r.GetString(6),
-        ModelNumber: r.IsDBNull(7) ? null : r.GetString(7),
-        SerialNumber: r.IsDBNull(8) ? null : r.GetString(8),
-        CommissionDate: r.IsDBNull(9) ? null : DateOnly.FromDateTime(r.GetDateTime(9)),
-        RetirementDate: r.IsDBNull(10) ? null : DateOnly.FromDateTime(r.GetDateTime(10)),
-        CriticalityScore: r.IsDBNull(11) ? null : r.GetDecimal(11),
-        RiskRanking: r.IsDBNull(12) ? null : r.GetString(12),
-        Status: r.IsDBNull(13) ? null : r.GetString(13),
-        ParentAssetId: r.IsDBNull(14) ? null : r.GetGuid(14),
-        CreatedDate: r.GetDateTime(15),
-        UpdatedDate: r.IsDBNull(16) ? null : r.GetDateTime(16));
+        if (await find.ExecuteScalarAsync(ct) is long existingId)
+        {
+            return new UpsertedOwner(existingId, name, Created: false);
+        }
+
+        await using var insert = new SqlCommand(
+            """
+            INSERT INTO dbo.SETUP_OWNER (OWNER_NAME, ACTIVE_FLAG, DATE_UPDATE)
+            OUTPUT INSERTED.OWNER_ID
+            VALUES (@name, 1, SYSUTCDATETIME());
+            """, cn, tx);
+
+        insert.Parameters.AddWithValue("@name", name);
+
+        var newId = (long)(await insert.ExecuteScalarAsync(ct))!;
+        return new UpsertedOwner(newId, name, Created: true);
+    }
+
+    /// <summary>
+    /// Every TAMS lookup table shares the same shape: an identity id, a name,
+    /// and ACTIVE_FLAG. Table and column names are baked in as constants by
+    /// each public method above rather than accepted from a caller, so there
+    /// is no user input anywhere near this string concatenation.
+    /// </summary>
+    private async Task<IReadOnlyList<MmsLookup>> GetLookupAsync(
+        string table, string idColumn, string nameColumn, CancellationToken ct)
+    {
+        await using var cn = await OpenAsync(ct);
+        await using var cmd = new SqlCommand(
+            $"SELECT {idColumn}, {nameColumn}, ACTIVE_FLAG FROM dbo.{table} ORDER BY {nameColumn};", cn);
+
+        var rows = new List<MmsLookup>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            rows.Add(new MmsLookup(reader.GetInt64(0), reader.GetString(1), reader.GetBoolean(2)));
+        }
+        return rows;
+    }
+
+    /// <summary>
+    /// Whether a later identical attempt could plausibly succeed. Deadlock
+    /// (1205) and lock-request timeout (1222) are the two SQL Server errors
+    /// this store can hit on a concurrent upsert without there being anything
+    /// wrong with the request itself.
+    /// </summary>
+    private static bool IsTransient(SqlException ex) =>
+        ex.Errors.Cast<SqlError>().Any(e => e.Number is 1205 or 1222);
 }

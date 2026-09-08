@@ -3193,29 +3193,35 @@ function Workspace({ user }: { user: CurrentUser }) {
               />
             )}
 
-            <section style={{ flex: 1 }}>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.14em', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span>INBOX</span>
-                <span style={{ background: p.dimBg, color: p.accent, padding: '1px 8px', borderRadius: '3px', fontWeight: 600 }}>
-                  {usesUpdates ? ibUpds.length : usesAsBuilt ? ibAb.length : ibSegs.length} ITEMS
-                </span>
-                <span style={{ color: 'var(--text-muted)', fontSize: '8px', letterSpacing: '0.1em', marginLeft: 4 }}>{inboxLabel()}</span>
-                {selCount > 0 && (
-                  <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: '10px', color: p.accent, fontWeight: 600 }}>
-                    {selCount} SELECTED
-                    <button onClick={() => setSelected(new Set())} style={{ marginLeft: 10, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '10px', fontFamily: 'var(--font-mono)' }}>CLEAR</button>
+            {/* Mock inbox: retired for ENG and REG-LOCATION now that both have a
+                live panel above (IMODEL ELEMENTS / STEWARDSHIP QUEUE) backed by
+                the sandbox API. Still the only view for personas/workflows that
+                have not been migrated off seeded data. */}
+            {!showSegments && !showStewardship && (
+              <section style={{ flex: 1 }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.14em', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span>INBOX</span>
+                  <span style={{ background: p.dimBg, color: p.accent, padding: '1px 8px', borderRadius: '3px', fontWeight: 600 }}>
+                    {usesUpdates ? ibUpds.length : usesAsBuilt ? ibAb.length : ibSegs.length} ITEMS
                   </span>
-                )}
-              </div>
-              <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: '6px', overflow: 'hidden' }}>
-                {usesUpdates
-                  ? <UpdateTable updates={ibUpds} selected={selected} onToggle={toggleItem} onToggleAll={toggleAll} accent={p.accent} dimBg={p.dimBg} />
-                  : usesAsBuilt
-                  ? <AsBuiltTable assets={ibAb} selected={selected} onToggle={toggleItem} onToggleAll={toggleAll} accent={p.accent} dimBg={p.dimBg} showOm={workflow === 'SC05'} />
-                  : <SegmentTable segments={ibSegs} selected={selected} onToggle={toggleItem} onToggleAll={toggleAll} accent={p.accent} dimBg={p.dimBg} />
-                }
-              </div>
-            </section>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '8px', letterSpacing: '0.1em', marginLeft: 4 }}>{inboxLabel()}</span>
+                  {selCount > 0 && (
+                    <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: '10px', color: p.accent, fontWeight: 600 }}>
+                      {selCount} SELECTED
+                      <button onClick={() => setSelected(new Set())} style={{ marginLeft: 10, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '10px', fontFamily: 'var(--font-mono)' }}>CLEAR</button>
+                    </span>
+                  )}
+                </div>
+                <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: '6px', overflow: 'hidden' }}>
+                  {usesUpdates
+                    ? <UpdateTable updates={ibUpds} selected={selected} onToggle={toggleItem} onToggleAll={toggleAll} accent={p.accent} dimBg={p.dimBg} />
+                    : usesAsBuilt
+                    ? <AsBuiltTable assets={ibAb} selected={selected} onToggle={toggleItem} onToggleAll={toggleAll} accent={p.accent} dimBg={p.dimBg} showOm={workflow === 'SC05'} />
+                    : <SegmentTable segments={ibSegs} selected={selected} onToggle={toggleItem} onToggleAll={toggleAll} accent={p.accent} dimBg={p.dimBg} />
+                  }
+                </div>
+              </section>
+            )}
           </div>
         </main>
       </div>

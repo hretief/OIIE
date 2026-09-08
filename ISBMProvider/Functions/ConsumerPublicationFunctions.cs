@@ -29,16 +29,17 @@ public sealed class ConsumerPublicationFunctions(IChannelStore channels, IMessag
         var fault = await tokenValidator.ValidateAsync(req, uri);
         if (fault is not null) throw fault;
 
-        if (body.Topics.Count == 0) return await req.FaultAsync(IsbmFaultException.Operation("At least one Topic is required."));
+        var topics = body.Topics ?? Array.Empty<string>();
+        if (topics.Count == 0) return await req.FaultAsync(IsbmFaultException.Operation("At least one Topic is required."));
         // TODO: NamespaceFault if filter prefixes collide (spec §5.6.1).
 
         var sessionId = Guid.NewGuid().ToString();
         var meta = new SessionMetadata
         {
             SessionId = sessionId, ChannelUri = uri, SessionType = SessionType.Subscription,
-            Topics = body.Topics, ListenerUrl = body.ListenerUrl,
+            Topics = topics, ListenerUrl = body.ListenerUrl,
             SubscriberId = body.SubscriberId,
-            ExpirationListenerUrl = body.ExpirationListenerUrl, FilterExpressions = body.FilterExpressions,
+            ExpirationListenerUrl = body.ExpirationListenerUrl, FilterExpressions = body.FilterExpressions ?? Array.Empty<string>(),
             FilterNamespaces = body.FilterNamespaces ?? new Dictionary<string, string>()
         };
         await broker.CreateSubscriptionAsync(meta);
@@ -106,9 +107,21 @@ public sealed class ConsumerPublicationFunctions(IChannelStore channels, IMessag
         return req.NoContent();
     }
 
+    /// <summary>
+    /// Topics, FilterExpressions and FilterNamespaces are nullable because the
+    /// deserializer does not enforce a record's non-nullable annotations: a
+    /// caller that omits any of them -- which any subscriber not using body
+    /// filters does -- yields null in a field the type claimed could not be.
+    ///
+    /// A null FilterExpressions is the one that bites at a distance. It passes
+    /// through Open, is stored on the session, and only throws later in Read
+    /// when the filter engine counts it -- so the crash surfaces on
+    /// ReadPublication while the fault is here. Coalesced at this boundary
+    /// rather than defended against in the engine.
+    /// </summary>
     public sealed record SubscriptionOpen(
-        string? ChannelUri, IReadOnlyList<string> Topics, string? ListenerUrl,
-        string? ExpirationListenerUrl, IReadOnlyList<string> FilterExpressions,
+        string? ChannelUri, IReadOnlyList<string>? Topics, string? ListenerUrl,
+        string? ExpirationListenerUrl, IReadOnlyList<string>? FilterExpressions,
         IReadOnlyDictionary<string, string>? FilterNamespaces,
 
         /// <summary>

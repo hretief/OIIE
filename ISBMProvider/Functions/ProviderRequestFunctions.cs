@@ -116,7 +116,14 @@ public sealed class ProviderRequestFunctions(IChannelStore channels, IMessageBro
     /// <summary>PostResponse body — requestMessageId is now in the URL route.</summary>
     public sealed record ResponseBody(MessageContent? MessageContent);
 
+    /// <summary>
+    /// Topics and FilterExpressions are nullable because the deserializer does
+    /// not enforce a record's non-nullable annotations: a caller that omits
+    /// either -- which any provider not using body filters does -- yields null
+    /// in a field the type claimed could not be. Stating it here keeps the
+    /// coalescing at the use site honest rather than defensive.
+    /// </summary>
     public sealed record ProviderRequestOpen(
-        string? ChannelUri, IReadOnlyList<string> Topics, string? ListenerUrl,
-        string? ExpirationListenerUrl, IReadOnlyList<string> FilterExpressions);
+        string? ChannelUri, IReadOnlyList<string>? Topics, string? ListenerUrl,
+        string? ExpirationListenerUrl, IReadOnlyList<string>? FilterExpressions);
 }

@@ -1,191 +1,929 @@
 /* ============================================================
    MAINTENANCE MANAGEMENT SYSTEM (MMS)
-   Customer database schema.
+   Customer database schema -- MnDOT TAMS lighting domain.
 
-   This is currently an exact replica of CmsProvider's schema,
-   not a derivation of docs/DDL/MMS.SQL. That is deliberate: MMS
-   and CMS are expected to grow apart, and starting them
-   identical makes the first real divergence visible as a diff
-   rather than lost in unrelated differences.
+   This is a direct, idempotent translation of docs/DDL/TAMS_SCHEMA.SQL,
+   the real customer DDL for this system. Column types, constraint
+   shapes and nullability are unchanged from the source; the only
+   departures are:
 
-   Do not assume this matches docs/DDL/MMS.SQL. It does not, and
-   that reference DDL describes a different customer system.
+   1. Idempotent. The source DDL is a one-shot teardown-then-create;
+      this runs on every cold start and on scale-out, so every object
+      is guarded with IF OBJECT_ID(...) IS NULL / IF NOT EXISTS rather
+      than dropped first. Day-zero reset is handled separately by
+      drop.sql, which enumerates dbo dynamically and is unconditional
+      by design -- see that file's header.
 
-   Two deliberate departures from the CMS source, both recorded
-   here so the difference is visible rather than discovered later:
-
-   1. dbo instead of a named schema. This database emulates a
-      customer system that owns its whole database, so there is
-      nothing to namespace against.
-
-   2. Idempotent. The source DDL is a one-shot create; this runs
-      on every cold start and on scale-out, so every object is
-      guarded. Column types, constraint names and nullability are
-      otherwise unchanged from the source.
-
-   The keys are UNIQUEIDENTIFIER and are supplied by the caller,
-   not allocated here. They carry the originating system's
-   FederationId, which is what makes a MMS row and the object it
-   represents elsewhere provably the same thing without a lookup.
-
-   That the key happens to equal the FederationId does not remove
-   the need to register the mapping in CIR. A consumer holding a
-   MMS key must be able to resolve it without knowing that this
-   particular customer system chose to store identity in its
-   primary key - most do not. The registration is what keeps the
-   pattern working for a schema with no UUID column at all.
+   2. Keys are native TAMS identity, not caller-supplied GUIDs. Every
+      *_ID column here is BIGINT, minted by SQL Server IDENTITY, exactly
+      as the source schema defines it. This differs from every other
+      provider in this solution, where the caller supplies the primary
+      key so the federation id and the storage key are the same value.
+      TAMS is a real customer schema and does not know about
+      federation; the bridge is EXT_ASSET_ID, a free-text column the
+      source DDL already carries on the asset tables, which the engine
+      populates with the originating system's federation GUID. CIR
+      registration still keys off that GUID, not the TAMS-minted BIGINT.
    ============================================================ */
 
-/* ============================================================
-   SITE
-   ============================================================ */
+/* -- Reference / domain tables ------------------------------------- */
 
-IF OBJECT_ID('dbo.Site', 'U') IS NULL
+IF OBJECT_ID('dbo.LIGHT_SYSTEM_CLASS_CODE', 'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.Site (
-        SiteID              UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
-
-        SiteCode            VARCHAR(50) NOT NULL,
-        SiteName            VARCHAR(200) NOT NULL,
-        Description         VARCHAR(1000) NULL,
-        SiteType            VARCHAR(50) NULL,
-
-        ParentSiteID        UNIQUEIDENTIFIER NULL,
-
-        Country             VARCHAR(100) NULL,
-        Region              VARCHAR(100) NULL,
-        Status              VARCHAR(20) NULL,
-
-        CreatedDate         DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-        UpdatedDate         DATETIME2 NULL,
-
-        CONSTRAINT UQ_Site_Code UNIQUE (SiteCode),
-
-        CONSTRAINT FK_Site_Parent
-            FOREIGN KEY (ParentSiteID)
-            REFERENCES dbo.Site(SiteID)
+    CREATE TABLE dbo.LIGHT_SYSTEM_CLASS_CODE (
+        LIGHT_SYSTEM_CLASS_CODE_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        LIGHT_SYSTEM_CLASS_CODE_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG                  BIT           NOT NULL CONSTRAINT DF_LIGHT_SYSTEM_CLASS_CODE_ACT DEFAULT (1),
+        USER_UPDATE                  NVARCHAR(100) NULL,
+        DATE_UPDATE                  DATETIME2(3)  NULL,
+        CONSTRAINT PK_LIGHT_SYSTEM_CLASS_CODE PRIMARY KEY CLUSTERED (LIGHT_SYSTEM_CLASS_CODE_ID)
     );
 END
 GO
 
-/* ============================================================
-   ASSET TYPE
-   ============================================================ */
-
-IF OBJECT_ID('dbo.AssetType', 'U') IS NULL
+IF OBJECT_ID('dbo.LIGHT_UNIT_CLASS_CODE', 'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.AssetType (
-        AssetTypeID         UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
-
-        AssetTypeCode       VARCHAR(50) NOT NULL,
-        AssetTypeName       VARCHAR(200) NOT NULL,
-        Description         VARCHAR(1000) NULL,
-
-        ParentAssetTypeID   UNIQUEIDENTIFIER NULL,
-
-        CriticalityClass    VARCHAR(50) NULL,
-        ExpectedLifeYears   INT NULL,
-
-        CreatedDate         DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-        UpdatedDate         DATETIME2 NULL,
-
-        CONSTRAINT UQ_AssetType_Code UNIQUE (AssetTypeCode),
-
-        CONSTRAINT FK_AssetType_Parent
-            FOREIGN KEY (ParentAssetTypeID)
-            REFERENCES dbo.AssetType(AssetTypeID)
+    CREATE TABLE dbo.LIGHT_UNIT_CLASS_CODE (
+        LIGHT_UNIT_CLASS_CODE_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        LIGHT_UNIT_CLASS_CODE_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG                BIT           NOT NULL CONSTRAINT DF_LIGHT_UNIT_CLASS_CODE_ACT DEFAULT (1),
+        USER_UPDATE                NVARCHAR(100) NULL,
+        DATE_UPDATE                DATETIME2(3)  NULL,
+        CONSTRAINT PK_LIGHT_UNIT_CLASS_CODE PRIMARY KEY CLUSTERED (LIGHT_UNIT_CLASS_CODE_ID)
     );
 END
 GO
 
-/* ============================================================
-   ASSET
-
-   AssetTypeID is NOT NULL behind a foreign key, so every asset
-   must be classified. A sender describing a segment rarely knows
-   the customer's own type taxonomy, so the UNCLASSIFIED row
-   seeded below is what unclassified traffic lands on. That is
-   preferable to rejecting the asset: the customer would rather
-   hold an asset awaiting classification than not hold it.
-
-   AssetNumber is unique within a site rather than globally.
-   Asset numbering restarts per site in most plants, and a global
-   constraint would reject the second site's first asset.
-   ============================================================ */
-
-IF OBJECT_ID('dbo.Asset', 'U') IS NULL
+IF OBJECT_ID('dbo.SETUP_ASSET_STATUS', 'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.Asset (
-        AssetID                 UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
-
-        SiteID                  UNIQUEIDENTIFIER NOT NULL,
-        AssetTypeID             UNIQUEIDENTIFIER NOT NULL,
-
-        AssetNumber             VARCHAR(100) NOT NULL,
-
-        AssetName               VARCHAR(250) NOT NULL,
-        Description             VARCHAR(1000) NULL,
-
-        Manufacturer            VARCHAR(200) NULL,
-        ModelNumber             VARCHAR(100) NULL,
-        SerialNumber            VARCHAR(100) NULL,
-
-        CommissionDate          DATE NULL,
-        RetirementDate          DATE NULL,
-
-        CriticalityScore        DECIMAL(10,2) NULL,
-        RiskRanking             VARCHAR(50) NULL,
-
-        Status                  VARCHAR(50) NULL,
-
-        ParentAssetID           UNIQUEIDENTIFIER NULL,
-
-        CreatedDate             DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-        UpdatedDate             DATETIME2 NULL,
-
-        CONSTRAINT UQ_Asset_Number_Site UNIQUE (SiteID, AssetNumber),
-
-        CONSTRAINT FK_Asset_Site
-            FOREIGN KEY (SiteID)
-            REFERENCES dbo.Site(SiteID),
-
-        CONSTRAINT FK_Asset_Type
-            FOREIGN KEY (AssetTypeID)
-            REFERENCES dbo.AssetType(AssetTypeID),
-
-        CONSTRAINT FK_Asset_Parent
-            FOREIGN KEY (ParentAssetID)
-            REFERENCES dbo.Asset(AssetID)
+    CREATE TABLE dbo.SETUP_ASSET_STATUS (
+        ASSET_STATUS_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        ASSET_STATUS_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG       BIT           NOT NULL CONSTRAINT DF_SETUP_ASSET_STATUS_ACT DEFAULT (1),
+        USER_UPDATE       NVARCHAR(100) NULL,
+        DATE_UPDATE       DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_ASSET_STATUS PRIMARY KEY CLUSTERED (ASSET_STATUS_ID)
     );
 END
 GO
 
-/* Lookup index for the site-scoped asset reads. Not in the source DDL:
-   the source declares no non-unique indexes at all. */
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Asset_Site')
+IF OBJECT_ID('dbo.SETUP_COUNTY', 'U') IS NULL
 BEGIN
-    CREATE INDEX IX_Asset_Site ON dbo.Asset(SiteID);
+    CREATE TABLE dbo.SETUP_COUNTY (
+        COUNTY_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        COUNTY_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG BIT           NOT NULL CONSTRAINT DF_SETUP_COUNTY_ACT DEFAULT (1),
+        USER_UPDATE NVARCHAR(100) NULL,
+        DATE_UPDATE DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_COUNTY PRIMARY KEY CLUSTERED (COUNTY_ID)
+    );
 END
 GO
 
-/* ============================================================
-   SEED: UNCLASSIFIED ASSET TYPE
-
-   A fixed GUID rather than NEWID(). The value must survive a
-   day-zero reset, because assets already registered in CIR
-   reference it and a regenerated key would orphan them.
-
-   It is written as a literal rather than derived so that anyone
-   reading a row carrying this key can find it here.
-   ============================================================ */
-
-IF NOT EXISTS (SELECT 1 FROM dbo.AssetType WHERE AssetTypeCode = 'UNCLASSIFIED')
+IF OBJECT_ID('dbo.SETUP_OWNER', 'U') IS NULL
 BEGIN
-    INSERT INTO dbo.AssetType (AssetTypeID, AssetTypeCode, AssetTypeName, Description)
-    VALUES (
-        '00000000-0000-0000-0000-0000000000FF',
-        'UNCLASSIFIED',
-        'Unclassified',
-        'Assigned when a sender did not state an asset type. Awaiting classification by a planner.');
+    CREATE TABLE dbo.SETUP_OWNER (
+        OWNER_ID    BIGINT        IDENTITY(1,1) NOT NULL,
+        OWNER_NAME  NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG BIT           NOT NULL CONSTRAINT DF_SETUP_OWNER_ACT DEFAULT (1),
+        USER_UPDATE NVARCHAR(100) NULL,
+        DATE_UPDATE DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_OWNER PRIMARY KEY CLUSTERED (OWNER_ID)
+    );
 END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_DIST_PRIORITY', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_DIST_PRIORITY (
+        SGL_DIST_PRIORITY_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_DIST_PRIORITY_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG            BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_DIST_PRIORITY_ACT DEFAULT (1),
+        USER_UPDATE             NVARCHAR(100) NULL,
+        DATE_UPDATE             DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_DIST_PRIORITY PRIMARY KEY CLUSTERED (SGL_DIST_PRIORITY_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ELEC_ASM_FOUNDATION', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ELEC_ASM_FOUNDATION (
+        SGL_ELEC_ASM_FOUNDATION_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_ASM_FOUNDATION_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG                  BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ELEC_ASM_FOUND_ACT DEFAULT (1),
+        USER_UPDATE                  NVARCHAR(100) NULL,
+        DATE_UPDATE                  DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ELEC_ASM_FOUNDATI PRIMARY KEY CLUSTERED (SGL_ELEC_ASM_FOUNDATION_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ELEC_ASM_LUMHEIGHT', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ELEC_ASM_LUMHEIGHT (
+        SGL_ELEC_ASM_LUMHEIGHT_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_ASM_LUMHEIGHT_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG                 BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ELEC_ASM_LUMHE_ACT DEFAULT (1),
+        USER_UPDATE                 NVARCHAR(100) NULL,
+        DATE_UPDATE                 DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ELEC_ASM_LUMHEIGH PRIMARY KEY CLUSTERED (SGL_ELEC_ASM_LUMHEIGHT_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ELEC_ASM_LUM_EXTTYPE', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ELEC_ASM_LUM_EXTTYPE (
+        SGL_ELEC_ASM_LUM_EXTTYPE_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_ASM_LUM_EXTTYPE_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG                   BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ELEC_ASM_LUM_E_ACT DEFAULT (1),
+        USER_UPDATE                   NVARCHAR(100) NULL,
+        DATE_UPDATE                   DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ELEC_ASM_LUM_EXTT PRIMARY KEY CLUSTERED (SGL_ELEC_ASM_LUM_EXTTYPE_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ELEC_ASM_MANUF', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ELEC_ASM_MANUF (
+        SGL_ELEC_ASM_MANUF_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_ASM_MANUF_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG             BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ELEC_ASM_MANUF_ACT DEFAULT (1),
+        USER_UPDATE             NVARCHAR(100) NULL,
+        DATE_UPDATE             DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ELEC_ASM_MANUF PRIMARY KEY CLUSTERED (SGL_ELEC_ASM_MANUF_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ELEC_ASM_MASTLENGTH', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ELEC_ASM_MASTLENGTH (
+        SGL_ELEC_ASM_MASTLENGTH_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_ASM_MASTLENGTH_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG                  BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ELEC_ASM_MASTL_ACT DEFAULT (1),
+        USER_UPDATE                  NVARCHAR(100) NULL,
+        DATE_UPDATE                  DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ELEC_ASM_MASTLENG PRIMARY KEY CLUSTERED (SGL_ELEC_ASM_MASTLENGTH_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ELEC_ASM_MASTTYPE', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ELEC_ASM_MASTTYPE (
+        SGL_ELEC_ASM_MASTTYPE_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_ASM_MASTTYPE_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG                BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ELEC_ASM_MASTT_ACT DEFAULT (1),
+        USER_UPDATE                NVARCHAR(100) NULL,
+        DATE_UPDATE                DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ELEC_ASM_MASTTYPE PRIMARY KEY CLUSTERED (SGL_ELEC_ASM_MASTTYPE_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ELEC_ASM_SHAFTTYPE', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ELEC_ASM_SHAFTTYPE (
+        SGL_ELEC_ASM_SHAFTTYPE_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_ASM_SHAFTTYPE_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG                 BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ELEC_ASM_SHAFT_ACT DEFAULT (1),
+        USER_UPDATE                 NVARCHAR(100) NULL,
+        DATE_UPDATE                 DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ELEC_ASM_SHAFTTYP PRIMARY KEY CLUSTERED (SGL_ELEC_ASM_SHAFTTYPE_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ELEC_ASM_TRANSBASE', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ELEC_ASM_TRANSBASE (
+        SGL_ELEC_ASM_TRANSBASE_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_ASM_TRANSBASE_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG                 BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ELEC_ASM_TRANS_ACT DEFAULT (1),
+        USER_UPDATE                 NVARCHAR(100) NULL,
+        DATE_UPDATE                 DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ELEC_ASM_TRANSBAS PRIMARY KEY CLUSTERED (SGL_ELEC_ASM_TRANSBASE_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ELEC_JUR_CODE', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ELEC_JUR_CODE (
+        SGL_ELEC_JUR_CODE_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_JUR_CODE_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG            BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ELEC_JUR_CODE_ACT DEFAULT (1),
+        USER_UPDATE            NVARCHAR(100) NULL,
+        DATE_UPDATE            DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ELEC_JUR_CODE PRIMARY KEY CLUSTERED (SGL_ELEC_JUR_CODE_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ELEC_JUR_CODE_TYPE', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ELEC_JUR_CODE_TYPE (
+        SGL_ELEC_JUR_CODE_TYPE_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_JUR_CODE_TYPE_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG                 BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ELEC_JUR_CODE__ACT DEFAULT (1),
+        USER_UPDATE                 NVARCHAR(100) NULL,
+        DATE_UPDATE                 DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ELEC_JUR_CODE_TYP PRIMARY KEY CLUSTERED (SGL_ELEC_JUR_CODE_TYPE_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ELEC_LUMINAIRE_TYPE', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ELEC_LUMINAIRE_TYPE (
+        SGL_ELEC_LUMINAIRE_TYPE_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_LUMINAIRE_TYPE_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG                  BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ELEC_LUMINAIRE_ACT DEFAULT (1),
+        USER_UPDATE                  NVARCHAR(100) NULL,
+        DATE_UPDATE                  DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ELEC_LUMINAIRE_TY PRIMARY KEY CLUSTERED (SGL_ELEC_LUMINAIRE_TYPE_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ELEC_LUM_MFGR', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ELEC_LUM_MFGR (
+        SGL_ELEC_LUM_MFGR_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_LUM_MFGR_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG            BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ELEC_LUM_MFGR_ACT DEFAULT (1),
+        USER_UPDATE            NVARCHAR(100) NULL,
+        DATE_UPDATE            DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ELEC_LUM_MFGR PRIMARY KEY CLUSTERED (SGL_ELEC_LUM_MFGR_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ELEC_PART_CAT', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ELEC_PART_CAT (
+        SGL_ELEC_PART_CAT_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_PART_CAT_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG            BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ELEC_PART_CAT_ACT DEFAULT (1),
+        USER_UPDATE            NVARCHAR(100) NULL,
+        DATE_UPDATE            DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ELEC_PART_CAT PRIMARY KEY CLUSTERED (SGL_ELEC_PART_CAT_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ELEC_PART_TYPE', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ELEC_PART_TYPE (
+        SGL_ELEC_PART_TYPE_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_PART_TYPE_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG             BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ELEC_PART_TYPE_ACT DEFAULT (1),
+        USER_UPDATE             NVARCHAR(100) NULL,
+        DATE_UPDATE             DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ELEC_PART_TYPE PRIMARY KEY CLUSTERED (SGL_ELEC_PART_TYPE_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ELEC_RESP_TYPE', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ELEC_RESP_TYPE (
+        SGL_ELEC_RESP_TYPE_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_RESP_TYPE_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG             BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ELEC_RESP_TYPE_ACT DEFAULT (1),
+        USER_UPDATE             NVARCHAR(100) NULL,
+        DATE_UPDATE             DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ELEC_RESP_TYPE PRIMARY KEY CLUSTERED (SGL_ELEC_RESP_TYPE_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ESS_ZONE', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ESS_ZONE (
+        SGL_ESS_ZONE_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ESS_ZONE_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG       BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ESS_ZONE_ACT DEFAULT (1),
+        USER_UPDATE       NVARCHAR(100) NULL,
+        DATE_UPDATE       DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ESS_ZONE PRIMARY KEY CLUSTERED (SGL_ESS_ZONE_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_INSP_COND_RTNG', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_INSP_COND_RTNG (
+        SGL_INSP_COND_RTNG_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_INSP_COND_RTNG_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG             BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_INSP_COND_RTNG_ACT DEFAULT (1),
+        USER_UPDATE             NVARCHAR(100) NULL,
+        DATE_UPDATE             DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_INSP_COND_RTNG PRIMARY KEY CLUSTERED (SGL_INSP_COND_RTNG_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_ITS_GEOMSRC', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_ITS_GEOMSRC (
+        SGL_ITS_GEOMSRC_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_ITS_GEOMSRC_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG          BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_ITS_GEOMSRC_ACT DEFAULT (1),
+        USER_UPDATE          NVARCHAR(100) NULL,
+        DATE_UPDATE          DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_ITS_GEOMSRC PRIMARY KEY CLUSTERED (SGL_ITS_GEOMSRC_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_LIGHT_COMP_TYPE', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_LIGHT_COMP_TYPE (
+        SGL_LIGHT_COMP_TYPE_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_LIGHT_COMP_TYPE_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG              BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_LIGHT_COMP_TYP_ACT DEFAULT (1),
+        USER_UPDATE              NVARCHAR(100) NULL,
+        DATE_UPDATE              DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_LIGHT_COMP_TYPE PRIMARY KEY CLUSTERED (SGL_LIGHT_COMP_TYPE_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_MAINT_AREA', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_MAINT_AREA (
+        SGL_MAINT_AREA_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_MAINT_AREA_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG         BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_MAINT_AREA_ACT DEFAULT (1),
+        USER_UPDATE         NVARCHAR(100) NULL,
+        DATE_UPDATE         DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_MAINT_AREA PRIMARY KEY CLUSTERED (SGL_MAINT_AREA_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SETUP_SGL_UTIL_POWER_AGENCY', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SETUP_SGL_UTIL_POWER_AGENCY (
+        SGL_UTIL_POWER_AGENCY_ID   BIGINT        IDENTITY(1,1) NOT NULL,
+        SGL_UTIL_POWER_AGENCY_NAME NVARCHAR(200) NOT NULL,
+        ACTIVE_FLAG                BIT           NOT NULL CONSTRAINT DF_SETUP_SGL_UTIL_POWER_AGE_ACT DEFAULT (1),
+        USER_UPDATE                NVARCHAR(100) NULL,
+        DATE_UPDATE                DATETIME2(3)  NULL,
+        CONSTRAINT PK_SETUP_SGL_UTIL_POWER_AGENCY PRIMARY KEY CLUSTERED (SGL_UTIL_POWER_AGENCY_ID)
+    );
+END
+GO
+
+/* -- Linear referencing location ------------------------------------
+   NOT in the source extracts. Invented to hold Route / Route ID /
+   Beg. Measure / Offset, which appear in the exported data but have
+   no column definition. LOC_IDENT is the join key used by TAMS.
+   ------------------------------------------------------------------ */
+IF OBJECT_ID('dbo.LIGHT_LOCATION', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.LIGHT_LOCATION (
+        LOC_IDENT     BIGINT        IDENTITY(1,1) NOT NULL,
+        ROUTE_NAME    NVARCHAR(50)  NULL,
+        ROUTE_ID      NVARCHAR(50)  NULL,
+        BEG_MEASURE   DECIMAL(18,4) NULL,
+        OFFSET_DIST   DECIMAL(18,4) NULL,
+        CONSTRAINT PK_LIGHT_LOCATION PRIMARY KEY CLUSTERED (LOC_IDENT)
+    );
+END
+GO
+
+/* -- Asset tables ---------------------------------------------------- */
+
+IF OBJECT_ID('dbo.LIGHT_SYSTEM_INVENTORY', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.LIGHT_SYSTEM_INVENTORY (
+        LIGHT_SYSTEM_ID              BIGINT         IDENTITY(1,1) NOT NULL,
+        LIGHT_SYSTEM_NAME            NVARCHAR(100)  NOT NULL,
+        LIGHT_SYSTEM_CLASS_CODE_ID   BIGINT         NOT NULL,
+        LIGHT_SYSTEM_STATUS_ID       BIGINT         NULL,
+        OWNER_ID                     BIGINT         NULL,
+        SGL_THRU_LOCATION            NVARCHAR(100)  NULL,
+        SGL_L_FEEDPOINT_NBR          NVARCHAR(20)   NULL,
+        SGL_ELEC_JUR_OWNER_ID        BIGINT         NULL,
+        CC_SPATIAL                   GEOGRAPHY      NULL,
+        CC_LATITUDE                  DECIMAL(22,9)  NULL,
+        CC_LONGITUDE                 DECIMAL(22,9)  NULL,
+        SGL_ITS_GEOMSRC_ID           BIGINT         NULL,
+        EXT_ASSET_ID                 NVARCHAR(100)  NULL,
+        DATE_INSERVICE               DATETIME2(3)   NULL,
+        INSTALL_DATE                 DATETIME2(3)   NULL,
+        INSTALL_COST                 DECIMAL(22,4)  NULL,
+        SGL_SYS_COND_FUNCTIONAL_ID   BIGINT         NULL,
+        SGL_SYS_COND_OPERATIONAL_ID  BIGINT         NULL,
+        SGL_SYS_COND_STRUCTURAL      BIGINT         NULL,
+        SGL_SYS_COND_OVERALL         BIGINT         NULL,
+        WARRANTY_EXP_DATE            DATETIME2(3)   NULL,
+        ELEVATION                    DECIMAL(22,4)  NULL,
+        OWNER_ASSIGNED               BIGINT         NULL,
+        SGL_ACCURACY_CODE            NVARCHAR(2)    NULL,
+        SGL_CONTROL_SECTION          NVARCHAR(4)    NULL,
+        SGL_DIST_PRIORITY_ID         BIGINT         NULL,
+        SGL_ESS_ZONE_ID              BIGINT         NULL,
+        SGL_L_ASSEMBLY_COUNT         DECIMAL(22,4)  NULL,
+        SGL_L_EXHIBIT_NBR            NVARCHAR(20)   NULL,
+        SGL_L_XREF                   NVARCHAR(7)    NULL,
+        SGL_MAINT_AREA_ID            BIGINT         NULL,
+        SGL_ONECALL_TEXT             NVARCHAR(72)   NULL,
+        SGL_POWER_CO                 NVARCHAR(100)  NULL,
+        SGL_UTIL_POWER_AGENCY_ID     BIGINT         NULL,
+        SGL_RESPONSIBILITY           NVARCHAR(100)  NULL,
+        SGL_STATE_PROJ_NBR           NVARCHAR(100)  NULL,
+        SGL_TRANSFORMER_LOC          NVARCHAR(100)  NULL,
+        SGL_UTIL_METER_ADDRESS       NVARCHAR(100)  NULL,
+        SGL_UTIL_METER_NBR           NVARCHAR(25)   NULL,
+        SGL_UTIL_ACCOUNT_NUMBER      NVARCHAR(100)  NULL,
+        SGL_UTIL_PREMISE             NVARCHAR(100)  NULL,
+        COUNTY_ID                    BIGINT         NULL,
+        LOC_IDENT                    BIGINT         NULL,
+        COMMENT_STR                  NVARCHAR(MAX)  NULL,
+        USER_UPDATE                  NVARCHAR(100)  NULL,
+        DATE_UPDATE                  DATETIME2(3)   NULL,
+        COMMENT_ID                   BIGINT         NULL,
+        CONSTRAINT PK_LIGHT_SYSTEM_INVENTORY PRIMARY KEY CLUSTERED (LIGHT_SYSTEM_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.LIGHT_UNIT_INVENTORY', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.LIGHT_UNIT_INVENTORY (
+        LIGHT_UNIT_ID                    BIGINT         IDENTITY(1,1) NOT NULL,
+        LIGHT_UNIT_NAME                  NVARCHAR(100)  NOT NULL,
+        LIGHT_UNIT_CLASS_CODE_ID         BIGINT         NULL,
+        LIGHT_UNIT_STATUS_ID             BIGINT         NULL,
+        OWNER_ID                         BIGINT         NULL,
+        SGL_ITS_GEOMSRC_ID               BIGINT         NULL,
+        EXT_ASSET_ID                     NVARCHAR(100)  NULL,
+        SGL_SYS_COND_STRUCTURAL          BIGINT         NULL,
+        SGL_ELEC_ASM_FOUNDATION_ID       BIGINT         NULL,
+        SGL_ELEC_ASM_LUMHEIGHT_ID        BIGINT         NULL,
+        SGL_ELEC_ASM_LUM_EXTTYPE_ID      BIGINT         NULL,
+        SGL_ELEC_ASM_MANUF_ID            BIGINT         NULL,
+        SGL_ELEC_ASM_MASTLENGTH_ID       BIGINT         NULL,
+        SGL_ELEC_ASM_MASTTYPE_ID         BIGINT         NULL,
+        SGL_ELEC_ASM_SHAFTTYPE_ID        BIGINT         NULL,
+        SGL_ELEC_ASM_TRANSBASE_ID        BIGINT         NULL,
+        SGL_MFR_SERIAL_NUMBER            NVARCHAR(120)  NULL,
+        LIGHT_SYSTEM_ID                  BIGINT         NULL,
+        COMMENT_STR                      NVARCHAR(MAX)  NULL,
+        USER_UPDATE                      NVARCHAR(400)  NULL,
+        DATE_UPDATE                      DATETIME2(3)   NULL,
+        CC_SPATIAL                       GEOGRAPHY      NULL,
+        FOUNDATIONS_CONDITION_RATING     NVARCHAR(100)  NULL,
+        BASE_PLATE_CONNECTION_RATING     NVARCHAR(100)  NULL,
+        LIGHT_UNIT_ANCHOR_ROD_ASSEMBLY   NVARCHAR(100)  NULL,
+        POLE_CONDITION_RATING            NVARCHAR(100)  NULL,
+        OVERALL_CONDITION_RATING         NVARCHAR(100)  NULL,
+        INSP_DUE_DATE                    DATETIME2(3)   NULL,
+        MNDOT_ASSET_NUMBER               NVARCHAR(120)  NULL,
+        LOC_IDENT                        BIGINT         NULL,
+        PERIODIC_MAINT_ID                BIGINT         NULL,
+        COMMENT_ID                       BIGINT         NULL,
+        REV_ID                           BIGINT         NULL,
+        CONSTRAINT PK_LIGHT_UNIT_INVENTORY PRIMARY KEY CLUSTERED (LIGHT_UNIT_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.LIGHT_COMPONENT', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.LIGHT_COMPONENT (
+        LIGHT_COMPONENT_ID       BIGINT         IDENTITY(1,1) NOT NULL,
+        WARRANTY_EXP_DATE        DATETIME2(3)   NULL,
+        EXT_ASSET_ID             NVARCHAR(100)  NULL,
+        LIGHT_COMPONENT_NAME     NVARCHAR(100)  NOT NULL,
+        SGL_ELEC_LUM_MFGR_ID     BIGINT         NULL,
+        SGL_LIGHT_COMP_TYPE_ID   BIGINT         NULL,
+        SGL_VOLTAGE              NVARCHAR(100)  NULL,
+        VENDOR_SERIAL_NO         NVARCHAR(100)  NULL,
+        CC_LONGITUDE             DECIMAL(22,9)  NULL,
+        CC_SPATIAL               GEOGRAPHY      NULL,
+        CC_LATITUDE              DECIMAL(22,9)  NULL,
+        LIGHT_SYSTEM_ID          BIGINT         NULL,
+        COMMENT_STR              NVARCHAR(MAX)  NULL,
+        USER_UPDATE              NVARCHAR(100)  NULL,
+        DATE_UPDATE              DATETIME2(3)   NULL,
+        SGL_CABINET_REC_DATE     DATETIME2(3)   NULL,
+        COMMENT_ID               BIGINT         NULL,
+        CONSTRAINT PK_LIGHT_COMPONENT PRIMARY KEY CLUSTERED (LIGHT_COMPONENT_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SYS_LIGHT_PARTS', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SYS_LIGHT_PARTS (
+        SYS_LIGHTING_PARTS_ID       BIGINT         IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_PART_CAT_ID        BIGINT         NULL,
+        SGL_ELEC_PART_TYPE_ID       BIGINT         NOT NULL,
+        ELEC_BAR_CODE               NVARCHAR(100)  NULL,
+        INSTALL_DATE                DATETIME2(3)   NULL,
+        WARRANTY_EXP_DATE           DATETIME2(3)   NULL,
+        SGL_ELEC_PART_QUANTITY      INT            NULL,
+        SGL_ELEC_PART_SERIAL_NUM    NVARCHAR(100)  NULL,
+        SGL_ELEC_PART_LABEL         NVARCHAR(100)  NULL,
+        LIGHT_SYSTEM_ID             BIGINT         NULL,
+        COMMENT_STR                 NVARCHAR(MAX)  NULL,
+        USER_UPDATE                 NVARCHAR(100)  NULL,
+        DATE_UPDATE                 DATETIME2(3)   NULL,
+        COMMENT_ID                  BIGINT         NULL,
+        CONSTRAINT PK_SYS_LIGHT_PARTS PRIMARY KEY CLUSTERED (SYS_LIGHTING_PARTS_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SYS_LIGHT_LUMINAIRE', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SYS_LIGHT_LUMINAIRE (
+        SYS_LIGHTING_LUMINAIRE_ID    BIGINT         IDENTITY(1,1) NOT NULL,
+        SGL_LUMINAIRE_NUM            NVARCHAR(4)    NULL,
+        SGL_ELEC_LUMINAIRE_TYPE_ID   BIGINT         NULL,
+        DATE_RECEIVED                DATETIME2(3)   NULL,
+        DATE_INSTALLED               DATETIME2(3)   NULL,
+        WARRANTY_EXP_DATE            DATETIME2(3)   NULL,
+        SGL_ELEC_LUM_MFGR_ID         BIGINT         NULL,
+        SGL_VOLTAGE                  NVARCHAR(100)  NULL,
+        SGL_WATTAGE                  NVARCHAR(100)  NULL,
+        SGL_ELEC_PART_SERIAL_NUM     NVARCHAR(100)  NULL,
+        LIGHT_UNIT_ID                BIGINT         NULL,
+        COMMENT_STR                  NVARCHAR(MAX)  NULL,
+        USER_UPDATE                  NVARCHAR(100)  NULL,
+        DATE_UPDATE                  DATETIME2(3)   NULL,
+        COMMENT_ID                   BIGINT         NULL,
+        CONSTRAINT PK_SYS_LIGHT_LUMINAIRE PRIMARY KEY CLUSTERED (SYS_LIGHTING_LUMINAIRE_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SYS_LIGHT_RESP', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SYS_LIGHT_RESP (
+        SYS_LIGHTING_RESP_ID     BIGINT         IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_RESP_TYPE_ID    BIGINT         NULL,
+        SGL_RESP_PERF_ID         BIGINT         NULL,
+        SGL_RESP_PAY_ID          BIGINT         NULL,
+        COMMENT_STR              NVARCHAR(MAX)  NULL,
+        USER_UPDATE              NVARCHAR(100)  NULL,
+        DATE_UPDATE              DATETIME2(3)   NULL,
+        LIGHT_SYSTEM_ID          BIGINT         NULL,
+        COMMENT_ID               BIGINT         NULL,
+        CONSTRAINT PK_SYS_LIGHT_RESP PRIMARY KEY CLUSTERED (SYS_LIGHTING_RESP_ID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.SYS_LIGHT_JURISDICTION', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SYS_LIGHT_JURISDICTION (
+        SYS_LIGHTING_JURISDICTION_ID   BIGINT         IDENTITY(1,1) NOT NULL,
+        SGL_ELEC_JUR_CODE_ID           BIGINT         NOT NULL,
+        SGL_ELEC_JUR_CODE_TYPE_ID      BIGINT         NULL,
+        LIGHT_SYSTEM_ID                BIGINT         NULL,
+        COMMENT_STR                    NVARCHAR(MAX)  NULL,
+        USER_UPDATE                    NVARCHAR(100)  NULL,
+        DATE_UPDATE                    DATETIME2(3)   NULL,
+        COMMENT_ID                     BIGINT         NULL,
+        CONSTRAINT PK_SYS_LIGHT_JURISDICTION PRIMARY KEY CLUSTERED (SYS_LIGHTING_JURISDICTION_ID)
+    );
+END
+GO
+
+/* -- GIS layers (Esri feature classes) ------------------------------- */
+
+IF OBJECT_ID('dbo.LIGHT_UTILITIES', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.LIGHT_UTILITIES (
+        OBJECTID           BIGINT             IDENTITY(1,1) NOT NULL,
+        SYSTEM_ID           BIGINT             NULL,
+        CABINET_ID          NVARCHAR(5)        NULL,
+        UTILITY_TYPE        NVARCHAR(50)       NULL,
+        CONDUIT             NVARCHAR(50)       NULL,
+        DEPTH_HEIGHT        DECIMAL(38,8)      NULL,
+        OWNER_CODE          NVARCHAR(50)       NULL,
+        COMMENTS            NVARCHAR(255)      NULL,
+        LOGGED_DATE         DATETIME2(3)       NULL,
+        INSTALLED_DATE      DATETIME2(3)       NULL,
+        RETIRED_DATE        DATETIME2(3)       NULL,
+        GEOMETRY_SOURCE     NVARCHAR(50)       NULL,
+        ABANDONED           NVARCHAR(10)       NULL,
+        CREATED_USER        NVARCHAR(255)      NULL,
+        CREATED_DATE        DATETIME2(3)       NULL,
+        LAST_EDITED_USER    NVARCHAR(255)      NULL,
+        LAST_EDITED_DATE    DATETIME2(3)       NULL,
+        SHAPE               GEOGRAPHY          NULL,
+        GLOBALID            UNIQUEIDENTIFIER   NOT NULL CONSTRAINT DF_LIGHT_UTILITIES_GUID DEFAULT (NEWID()),
+        CONSTRAINT PK_LIGHT_UTILITIES PRIMARY KEY CLUSTERED (OBJECTID),
+        CONSTRAINT UQ_LIGHT_UTILITIES_GUID UNIQUE (GLOBALID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.LIGHT_JUNCTIONS', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.LIGHT_JUNCTIONS (
+        OBJECTID           BIGINT             IDENTITY(1,1) NOT NULL,
+        SYSTEM_ID           BIGINT             NULL,
+        CABINET_ID          NVARCHAR(5)        NULL,
+        UNIQUE_ID           NVARCHAR(50)       NULL,
+        TYPE_CODE           NVARCHAR(50)       NULL,
+        OWNER_CODE          NVARCHAR(50)       NULL,
+        COMMENTS            NVARCHAR(250)      NULL,
+        DATE_LOGGED         DATETIME2(3)       NULL,
+        DATE_INSTALL        DATETIME2(3)       NULL,
+        DATE_RETIRED        DATETIME2(3)       NULL,
+        GEOM_SRC_CODE       NVARCHAR(50)       NULL,
+        CREATED_USER        NVARCHAR(255)      NULL,
+        CREATED_DATE        DATETIME2(3)       NULL,
+        LAST_EDITED_USER    NVARCHAR(255)      NULL,
+        LAST_EDITED_DATE    DATETIME2(3)       NULL,
+        SHAPE               GEOGRAPHY          NULL,
+        GLOBALID            UNIQUEIDENTIFIER   NOT NULL CONSTRAINT DF_LIGHT_JUNCTIONS_GUID DEFAULT (NEWID()),
+        CONSTRAINT PK_LIGHT_JUNCTIONS PRIMARY KEY CLUSTERED (OBJECTID),
+        CONSTRAINT UQ_LIGHT_JUNCTIONS_GUID UNIQUE (GLOBALID)
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.LIGHT_POWER_SOURCES', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.LIGHT_POWER_SOURCES (
+        OBJECTID           BIGINT             IDENTITY(1,1) NOT NULL,
+        SYSTEM_ID           BIGINT             NULL,
+        CABINET_ID          NVARCHAR(5)        NULL,
+        UNIQUE_ID           NVARCHAR(50)       NULL,
+        TYPE_CODE           NVARCHAR(50)       NULL,
+        OWNER_CODE          NVARCHAR(50)       NULL,
+        COMMENTS            NVARCHAR(250)      NULL,
+        DATE_LOGGED         DATETIME2(3)       NULL,
+        DATE_INSTALL        DATETIME2(3)       NULL,
+        DATE_RETIRED        DATETIME2(3)       NULL,
+        GEOM_SRC_CODE       NVARCHAR(50)       NULL,
+        CREATED_USER        NVARCHAR(255)      NULL,
+        CREATED_DATE        DATETIME2(3)       NULL,
+        LAST_EDITED_USER    NVARCHAR(255)      NULL,
+        LAST_EDITED_DATE    DATETIME2(3)       NULL,
+        SHAPE               GEOGRAPHY          NULL,
+        GLOBALID            UNIQUEIDENTIFIER   NOT NULL CONSTRAINT DF_LIGHT_POWER_SOURCES_GUID DEFAULT (NEWID()),
+        CONSTRAINT PK_LIGHT_POWER_SOURCES PRIMARY KEY CLUSTERED (OBJECTID),
+        CONSTRAINT UQ_LIGHT_POWER_SOURCES_GUID UNIQUE (GLOBALID)
+    );
+END
+GO
+
+/* -- Business keys ---------------------------------------------------- */
+
+IF NOT EXISTS (SELECT 1 FROM sys.key_constraints WHERE name = 'UQ_LSI_NAME')
+BEGIN
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT UQ_LSI_NAME UNIQUE (LIGHT_SYSTEM_NAME);
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.key_constraints WHERE name = 'UQ_LUI_NAME')
+BEGIN
+    ALTER TABLE dbo.LIGHT_UNIT_INVENTORY ADD CONSTRAINT UQ_LUI_NAME UNIQUE (LIGHT_UNIT_NAME);
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.key_constraints WHERE name = 'UQ_LCP_NAME')
+BEGIN
+    ALTER TABLE dbo.LIGHT_COMPONENT ADD CONSTRAINT UQ_LCP_NAME UNIQUE (LIGHT_COMPONENT_NAME);
+END
+GO
+
+/* Not in the source: needed for idempotent upsert-by-federation-id from
+   MmsEngine, which knows only the originating system's GUID. */
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_LSI_EXT_ASSET_ID' AND object_id = OBJECT_ID('dbo.LIGHT_SYSTEM_INVENTORY'))
+BEGIN
+    CREATE UNIQUE INDEX UQ_LSI_EXT_ASSET_ID ON dbo.LIGHT_SYSTEM_INVENTORY(EXT_ASSET_ID) WHERE EXT_ASSET_ID IS NOT NULL;
+END
+GO
+
+/* Same bridge for units: a unit upserted by federation GUID needs an
+   idempotent match target independent of the TAMS-minted identity column. */
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_LUI_EXT_ASSET_ID' AND object_id = OBJECT_ID('dbo.LIGHT_UNIT_INVENTORY'))
+BEGIN
+    CREATE UNIQUE INDEX UQ_LUI_EXT_ASSET_ID ON dbo.LIGHT_UNIT_INVENTORY(EXT_ASSET_ID) WHERE EXT_ASSET_ID IS NOT NULL;
+END
+GO
+
+/* -- Foreign keys ------------------------------------------------------ */
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LUI_LIGHT_SYSTEM_ID')
+    ALTER TABLE dbo.LIGHT_UNIT_INVENTORY ADD CONSTRAINT FK_LUI_LIGHT_SYSTEM_ID
+        FOREIGN KEY (LIGHT_SYSTEM_ID) REFERENCES dbo.LIGHT_SYSTEM_INVENTORY (LIGHT_SYSTEM_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LCP_LIGHT_SYSTEM_ID')
+    ALTER TABLE dbo.LIGHT_COMPONENT ADD CONSTRAINT FK_LCP_LIGHT_SYSTEM_ID
+        FOREIGN KEY (LIGHT_SYSTEM_ID) REFERENCES dbo.LIGHT_SYSTEM_INVENTORY (LIGHT_SYSTEM_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_SLP_LIGHT_SYSTEM_ID')
+    ALTER TABLE dbo.SYS_LIGHT_PARTS ADD CONSTRAINT FK_SLP_LIGHT_SYSTEM_ID
+        FOREIGN KEY (LIGHT_SYSTEM_ID) REFERENCES dbo.LIGHT_SYSTEM_INVENTORY (LIGHT_SYSTEM_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_SLR_LIGHT_SYSTEM_ID')
+    ALTER TABLE dbo.SYS_LIGHT_RESP ADD CONSTRAINT FK_SLR_LIGHT_SYSTEM_ID
+        FOREIGN KEY (LIGHT_SYSTEM_ID) REFERENCES dbo.LIGHT_SYSTEM_INVENTORY (LIGHT_SYSTEM_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_SLJ_LIGHT_SYSTEM_ID')
+    ALTER TABLE dbo.SYS_LIGHT_JURISDICTION ADD CONSTRAINT FK_SLJ_LIGHT_SYSTEM_ID
+        FOREIGN KEY (LIGHT_SYSTEM_ID) REFERENCES dbo.LIGHT_SYSTEM_INVENTORY (LIGHT_SYSTEM_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_SLL_LIGHT_UNIT_ID')
+    ALTER TABLE dbo.SYS_LIGHT_LUMINAIRE ADD CONSTRAINT FK_SLL_LIGHT_UNIT_ID
+        FOREIGN KEY (LIGHT_UNIT_ID) REFERENCES dbo.LIGHT_UNIT_INVENTORY (LIGHT_UNIT_ID);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LSI_LOC_IDENT')
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT FK_LSI_LOC_IDENT
+        FOREIGN KEY (LOC_IDENT) REFERENCES dbo.LIGHT_LOCATION (LOC_IDENT);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LUI_LOC_IDENT')
+    ALTER TABLE dbo.LIGHT_UNIT_INVENTORY ADD CONSTRAINT FK_LUI_LOC_IDENT
+        FOREIGN KEY (LOC_IDENT) REFERENCES dbo.LIGHT_LOCATION (LOC_IDENT);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LSI_LIGHT_SYSTEM_CLASS_COD')
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT FK_LSI_LIGHT_SYSTEM_CLASS_COD
+        FOREIGN KEY (LIGHT_SYSTEM_CLASS_CODE_ID) REFERENCES dbo.LIGHT_SYSTEM_CLASS_CODE (LIGHT_SYSTEM_CLASS_CODE_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LSI_LIGHT_SYSTEM_STATUS_ID')
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT FK_LSI_LIGHT_SYSTEM_STATUS_ID
+        FOREIGN KEY (LIGHT_SYSTEM_STATUS_ID) REFERENCES dbo.SETUP_ASSET_STATUS (ASSET_STATUS_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LSI_OWNER_ID')
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT FK_LSI_OWNER_ID
+        FOREIGN KEY (OWNER_ID) REFERENCES dbo.SETUP_OWNER (OWNER_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LSI_SGL_ELEC_JUR_OWNER_ID')
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT FK_LSI_SGL_ELEC_JUR_OWNER_ID
+        FOREIGN KEY (SGL_ELEC_JUR_OWNER_ID) REFERENCES dbo.SETUP_SGL_ELEC_JUR_CODE (SGL_ELEC_JUR_CODE_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LSI_SGL_ITS_GEOMSRC_ID')
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT FK_LSI_SGL_ITS_GEOMSRC_ID
+        FOREIGN KEY (SGL_ITS_GEOMSRC_ID) REFERENCES dbo.SETUP_SGL_ITS_GEOMSRC (SGL_ITS_GEOMSRC_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LSI_SGL_SYS_COND_FUNCTIONA')
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT FK_LSI_SGL_SYS_COND_FUNCTIONA
+        FOREIGN KEY (SGL_SYS_COND_FUNCTIONAL_ID) REFERENCES dbo.SETUP_SGL_INSP_COND_RTNG (SGL_INSP_COND_RTNG_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LSI_SGL_SYS_COND_OPERATION')
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT FK_LSI_SGL_SYS_COND_OPERATION
+        FOREIGN KEY (SGL_SYS_COND_OPERATIONAL_ID) REFERENCES dbo.SETUP_SGL_INSP_COND_RTNG (SGL_INSP_COND_RTNG_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LSI_SGL_SYS_COND_STRUCTURA')
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT FK_LSI_SGL_SYS_COND_STRUCTURA
+        FOREIGN KEY (SGL_SYS_COND_STRUCTURAL) REFERENCES dbo.SETUP_SGL_INSP_COND_RTNG (SGL_INSP_COND_RTNG_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LSI_SGL_SYS_COND_OVERALL')
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT FK_LSI_SGL_SYS_COND_OVERALL
+        FOREIGN KEY (SGL_SYS_COND_OVERALL) REFERENCES dbo.SETUP_SGL_INSP_COND_RTNG (SGL_INSP_COND_RTNG_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LSI_OWNER_ASSIGNED')
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT FK_LSI_OWNER_ASSIGNED
+        FOREIGN KEY (OWNER_ASSIGNED) REFERENCES dbo.SETUP_OWNER (OWNER_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LSI_SGL_DIST_PRIORITY_ID')
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT FK_LSI_SGL_DIST_PRIORITY_ID
+        FOREIGN KEY (SGL_DIST_PRIORITY_ID) REFERENCES dbo.SETUP_SGL_DIST_PRIORITY (SGL_DIST_PRIORITY_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LSI_SGL_ESS_ZONE_ID')
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT FK_LSI_SGL_ESS_ZONE_ID
+        FOREIGN KEY (SGL_ESS_ZONE_ID) REFERENCES dbo.SETUP_SGL_ESS_ZONE (SGL_ESS_ZONE_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LSI_SGL_MAINT_AREA_ID')
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT FK_LSI_SGL_MAINT_AREA_ID
+        FOREIGN KEY (SGL_MAINT_AREA_ID) REFERENCES dbo.SETUP_SGL_MAINT_AREA (SGL_MAINT_AREA_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LSI_SGL_UTIL_POWER_AGENCY_')
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT FK_LSI_SGL_UTIL_POWER_AGENCY_
+        FOREIGN KEY (SGL_UTIL_POWER_AGENCY_ID) REFERENCES dbo.SETUP_SGL_UTIL_POWER_AGENCY (SGL_UTIL_POWER_AGENCY_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LSI_COUNTY_ID')
+    ALTER TABLE dbo.LIGHT_SYSTEM_INVENTORY ADD CONSTRAINT FK_LSI_COUNTY_ID
+        FOREIGN KEY (COUNTY_ID) REFERENCES dbo.SETUP_COUNTY (COUNTY_ID);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LUI_SGL_SYS_COND_STRUCTURA')
+    ALTER TABLE dbo.LIGHT_UNIT_INVENTORY ADD CONSTRAINT FK_LUI_SGL_SYS_COND_STRUCTURA
+        FOREIGN KEY (SGL_SYS_COND_STRUCTURAL) REFERENCES dbo.SETUP_SGL_INSP_COND_RTNG (SGL_INSP_COND_RTNG_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LUI_LIGHT_UNIT_CLASS_CODE_')
+    ALTER TABLE dbo.LIGHT_UNIT_INVENTORY ADD CONSTRAINT FK_LUI_LIGHT_UNIT_CLASS_CODE_
+        FOREIGN KEY (LIGHT_UNIT_CLASS_CODE_ID) REFERENCES dbo.LIGHT_UNIT_CLASS_CODE (LIGHT_UNIT_CLASS_CODE_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LUI_LIGHT_UNIT_STATUS_ID')
+    ALTER TABLE dbo.LIGHT_UNIT_INVENTORY ADD CONSTRAINT FK_LUI_LIGHT_UNIT_STATUS_ID
+        FOREIGN KEY (LIGHT_UNIT_STATUS_ID) REFERENCES dbo.SETUP_ASSET_STATUS (ASSET_STATUS_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LUI_SGL_ITS_GEOMSRC_ID')
+    ALTER TABLE dbo.LIGHT_UNIT_INVENTORY ADD CONSTRAINT FK_LUI_SGL_ITS_GEOMSRC_ID
+        FOREIGN KEY (SGL_ITS_GEOMSRC_ID) REFERENCES dbo.SETUP_SGL_ITS_GEOMSRC (SGL_ITS_GEOMSRC_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LUI_OWNER_ID')
+    ALTER TABLE dbo.LIGHT_UNIT_INVENTORY ADD CONSTRAINT FK_LUI_OWNER_ID
+        FOREIGN KEY (OWNER_ID) REFERENCES dbo.SETUP_OWNER (OWNER_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LUI_SGL_ELEC_ASM_FOUNDATIO')
+    ALTER TABLE dbo.LIGHT_UNIT_INVENTORY ADD CONSTRAINT FK_LUI_SGL_ELEC_ASM_FOUNDATIO
+        FOREIGN KEY (SGL_ELEC_ASM_FOUNDATION_ID) REFERENCES dbo.SETUP_SGL_ELEC_ASM_FOUNDATION (SGL_ELEC_ASM_FOUNDATION_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LUI_SGL_ELEC_ASM_LUMHEIGHT')
+    ALTER TABLE dbo.LIGHT_UNIT_INVENTORY ADD CONSTRAINT FK_LUI_SGL_ELEC_ASM_LUMHEIGHT
+        FOREIGN KEY (SGL_ELEC_ASM_LUMHEIGHT_ID) REFERENCES dbo.SETUP_SGL_ELEC_ASM_LUMHEIGHT (SGL_ELEC_ASM_LUMHEIGHT_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LUI_SGL_ELEC_ASM_LUM_EXTTY')
+    ALTER TABLE dbo.LIGHT_UNIT_INVENTORY ADD CONSTRAINT FK_LUI_SGL_ELEC_ASM_LUM_EXTTY
+        FOREIGN KEY (SGL_ELEC_ASM_LUM_EXTTYPE_ID) REFERENCES dbo.SETUP_SGL_ELEC_ASM_LUM_EXTTYPE (SGL_ELEC_ASM_LUM_EXTTYPE_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LUI_SGL_ELEC_ASM_MANUF_ID')
+    ALTER TABLE dbo.LIGHT_UNIT_INVENTORY ADD CONSTRAINT FK_LUI_SGL_ELEC_ASM_MANUF_ID
+        FOREIGN KEY (SGL_ELEC_ASM_MANUF_ID) REFERENCES dbo.SETUP_SGL_ELEC_ASM_MANUF (SGL_ELEC_ASM_MANUF_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LUI_SGL_ELEC_ASM_MASTLENGT')
+    ALTER TABLE dbo.LIGHT_UNIT_INVENTORY ADD CONSTRAINT FK_LUI_SGL_ELEC_ASM_MASTLENGT
+        FOREIGN KEY (SGL_ELEC_ASM_MASTLENGTH_ID) REFERENCES dbo.SETUP_SGL_ELEC_ASM_MASTLENGTH (SGL_ELEC_ASM_MASTLENGTH_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LUI_SGL_ELEC_ASM_MASTTYPE_')
+    ALTER TABLE dbo.LIGHT_UNIT_INVENTORY ADD CONSTRAINT FK_LUI_SGL_ELEC_ASM_MASTTYPE_
+        FOREIGN KEY (SGL_ELEC_ASM_MASTTYPE_ID) REFERENCES dbo.SETUP_SGL_ELEC_ASM_MASTTYPE (SGL_ELEC_ASM_MASTTYPE_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LUI_SGL_ELEC_ASM_SHAFTTYPE')
+    ALTER TABLE dbo.LIGHT_UNIT_INVENTORY ADD CONSTRAINT FK_LUI_SGL_ELEC_ASM_SHAFTTYPE
+        FOREIGN KEY (SGL_ELEC_ASM_SHAFTTYPE_ID) REFERENCES dbo.SETUP_SGL_ELEC_ASM_SHAFTTYPE (SGL_ELEC_ASM_SHAFTTYPE_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LUI_SGL_ELEC_ASM_TRANSBASE')
+    ALTER TABLE dbo.LIGHT_UNIT_INVENTORY ADD CONSTRAINT FK_LUI_SGL_ELEC_ASM_TRANSBASE
+        FOREIGN KEY (SGL_ELEC_ASM_TRANSBASE_ID) REFERENCES dbo.SETUP_SGL_ELEC_ASM_TRANSBASE (SGL_ELEC_ASM_TRANSBASE_ID);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LCP_SGL_ELEC_LUM_MFGR_ID')
+    ALTER TABLE dbo.LIGHT_COMPONENT ADD CONSTRAINT FK_LCP_SGL_ELEC_LUM_MFGR_ID
+        FOREIGN KEY (SGL_ELEC_LUM_MFGR_ID) REFERENCES dbo.SETUP_SGL_ELEC_LUM_MFGR (SGL_ELEC_LUM_MFGR_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_LCP_SGL_LIGHT_COMP_TYPE_ID')
+    ALTER TABLE dbo.LIGHT_COMPONENT ADD CONSTRAINT FK_LCP_SGL_LIGHT_COMP_TYPE_ID
+        FOREIGN KEY (SGL_LIGHT_COMP_TYPE_ID) REFERENCES dbo.SETUP_SGL_LIGHT_COMP_TYPE (SGL_LIGHT_COMP_TYPE_ID);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_SLP_SGL_ELEC_PART_CAT_ID')
+    ALTER TABLE dbo.SYS_LIGHT_PARTS ADD CONSTRAINT FK_SLP_SGL_ELEC_PART_CAT_ID
+        FOREIGN KEY (SGL_ELEC_PART_CAT_ID) REFERENCES dbo.SETUP_SGL_ELEC_PART_CAT (SGL_ELEC_PART_CAT_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_SLP_SGL_ELEC_PART_TYPE_ID')
+    ALTER TABLE dbo.SYS_LIGHT_PARTS ADD CONSTRAINT FK_SLP_SGL_ELEC_PART_TYPE_ID
+        FOREIGN KEY (SGL_ELEC_PART_TYPE_ID) REFERENCES dbo.SETUP_SGL_ELEC_PART_TYPE (SGL_ELEC_PART_TYPE_ID);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_SLL_SGL_ELEC_LUMINAIRE_TYP')
+    ALTER TABLE dbo.SYS_LIGHT_LUMINAIRE ADD CONSTRAINT FK_SLL_SGL_ELEC_LUMINAIRE_TYP
+        FOREIGN KEY (SGL_ELEC_LUMINAIRE_TYPE_ID) REFERENCES dbo.SETUP_SGL_ELEC_LUMINAIRE_TYPE (SGL_ELEC_LUMINAIRE_TYPE_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_SLL_SGL_ELEC_LUM_MFGR_ID')
+    ALTER TABLE dbo.SYS_LIGHT_LUMINAIRE ADD CONSTRAINT FK_SLL_SGL_ELEC_LUM_MFGR_ID
+        FOREIGN KEY (SGL_ELEC_LUM_MFGR_ID) REFERENCES dbo.SETUP_SGL_ELEC_LUM_MFGR (SGL_ELEC_LUM_MFGR_ID);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_SLR_SGL_ELEC_RESP_TYPE_ID')
+    ALTER TABLE dbo.SYS_LIGHT_RESP ADD CONSTRAINT FK_SLR_SGL_ELEC_RESP_TYPE_ID
+        FOREIGN KEY (SGL_ELEC_RESP_TYPE_ID) REFERENCES dbo.SETUP_SGL_ELEC_RESP_TYPE (SGL_ELEC_RESP_TYPE_ID);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_SLJ_SGL_ELEC_JUR_CODE_ID')
+    ALTER TABLE dbo.SYS_LIGHT_JURISDICTION ADD CONSTRAINT FK_SLJ_SGL_ELEC_JUR_CODE_ID
+        FOREIGN KEY (SGL_ELEC_JUR_CODE_ID) REFERENCES dbo.SETUP_SGL_ELEC_JUR_CODE (SGL_ELEC_JUR_CODE_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_SLJ_SGL_ELEC_JUR_CODE_TYPE')
+    ALTER TABLE dbo.SYS_LIGHT_JURISDICTION ADD CONSTRAINT FK_SLJ_SGL_ELEC_JUR_CODE_TYPE
+        FOREIGN KEY (SGL_ELEC_JUR_CODE_TYPE_ID) REFERENCES dbo.SETUP_SGL_ELEC_JUR_CODE_TYPE (SGL_ELEC_JUR_CODE_TYPE_ID);
+GO
+
+/* -- Lookup indexes for site-scoped/asset-scoped reads ---------------- */
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_LUI_LIGHT_SYSTEM_ID' AND object_id = OBJECT_ID('dbo.LIGHT_UNIT_INVENTORY'))
+    CREATE INDEX IX_LUI_LIGHT_SYSTEM_ID ON dbo.LIGHT_UNIT_INVENTORY(LIGHT_SYSTEM_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_LCP_LIGHT_SYSTEM_ID' AND object_id = OBJECT_ID('dbo.LIGHT_COMPONENT'))
+    CREATE INDEX IX_LCP_LIGHT_SYSTEM_ID ON dbo.LIGHT_COMPONENT(LIGHT_SYSTEM_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SLP_LIGHT_SYSTEM_ID' AND object_id = OBJECT_ID('dbo.SYS_LIGHT_PARTS'))
+    CREATE INDEX IX_SLP_LIGHT_SYSTEM_ID ON dbo.SYS_LIGHT_PARTS(LIGHT_SYSTEM_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SLL_LIGHT_UNIT_ID' AND object_id = OBJECT_ID('dbo.SYS_LIGHT_LUMINAIRE'))
+    CREATE INDEX IX_SLL_LIGHT_UNIT_ID ON dbo.SYS_LIGHT_LUMINAIRE(LIGHT_UNIT_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SLR_LIGHT_SYSTEM_ID' AND object_id = OBJECT_ID('dbo.SYS_LIGHT_RESP'))
+    CREATE INDEX IX_SLR_LIGHT_SYSTEM_ID ON dbo.SYS_LIGHT_RESP(LIGHT_SYSTEM_ID);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SLJ_LIGHT_SYSTEM_ID' AND object_id = OBJECT_ID('dbo.SYS_LIGHT_JURISDICTION'))
+    CREATE INDEX IX_SLJ_LIGHT_SYSTEM_ID ON dbo.SYS_LIGHT_JURISDICTION(LIGHT_SYSTEM_ID);
 GO
