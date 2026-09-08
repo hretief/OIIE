@@ -45,15 +45,27 @@ cleanly and 401s on every poll.
 
 ## Settings the script does not decide
 
-`EngEngine__Enabled` and `RegLocationEngine__Enabled` are set to `false`. Both
-derive their outbound channel from an iTwin federation id, and enabling them
-before an iTwin exists gives a poll loop that fails on a timer. Set the id,
-then flip the flag:
+`EngEngine__Enabled` and `RegLocationEngine__Enabled` are set to `false` **on
+first provision only**. Both derive their outbound channel from an iTwin
+federation id, and enabling them before an iTwin exists gives a poll loop that
+fails on a timer. Set the id, then flip the flag:
 
 ```powershell
 az functionapp config appsettings set -g HilmarRetiefRG -n acme-engn-eng-dev `
     --settings EngEngine__IModelId=<guid> EngEngine__Enabled=true
 ```
+
+Once flipped, the value survives redeployment: the script skips `Enabled` when
+the app already carries it and prints `Preserving the existing
+EngEngine__Enabled` instead. It used to reapply the `false` unconditionally,
+which silently switched the engine back off on every deploy — and a disabled
+engine is not loud about it. `publish-sites` returns
+`{ sitesSeen: 0, sitesPublished: 0, errors: [] }`, which looks like "ENG has no
+sites" rather than "the engine never ran". If you see that report, check this
+flag first.
+
+Only the bare `Enabled` key is preserved. `IngestEnabled` and
+`SitesIngestEnabled` are reapplied from the table on every deploy as before.
 
 Note the setting names differ. REG-LOCATION uses
 `RegLocationEngine__ITwinFederationId`, because the value is an iTwin federation

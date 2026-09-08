@@ -19,10 +19,10 @@ public sealed class SiteIngestionReport
     /// <summary>Sites found across those publications.</summary>
     public int SitesSeen { get; set; }
 
-    /// <summary>Sites newly created in MMS.</summary>
+    /// <summary>Owners newly created in MMS.</summary>
     public int Created { get; set; }
 
-    /// <summary>Sites that already existed and were updated.</summary>
+    /// <summary>Owners that already existed and were matched or renamed.</summary>
     public int Updated { get; set; }
 
     /// <summary>Sites the mapper refused.</summary>
@@ -38,13 +38,21 @@ public sealed class SiteIngestionReport
 }
 
 /// <summary>
-/// Receives SyncSites from ENG and records the site in MMS.
+/// Receives SyncSites from ENG and records each site in MMS as a TAMS owner.
 ///
-/// This is how a plant comes to exist in MMS. Nothing else creates one: sites
-/// are not seeded, and MmsProvider is reachable only through its own REST API,
-/// so the only route from "ENG published a site" to "MMS knows about it" is this
-/// service. That is deliberate -- a maintenance system that invented its own
-/// plants would be asserting something only the enterprise can.
+/// This is how a site comes to exist in MMS. Nothing else creates one:
+/// SETUP_OWNER is otherwise reference data, and MmsProvider is reachable only
+/// through its own REST API, so the only route from "ENG published a site" to
+/// "MMS knows about it" is this service. That is deliberate -- a maintenance
+/// system that invented its own sites would be asserting something only the
+/// enterprise can.
+///
+/// A site is an owner, not a light system. TAMS raises work orders against an
+/// owner, which is the context a site denotes; light systems are the inventory
+/// standing within one. The identity is resolved through CIR rather than stored
+/// locally, because SETUP_OWNER has no column for a federation GUID and adding
+/// one would mean this emulator no longer matched the customer schema it exists
+/// to emulate.
 ///
 /// Writes directly rather than proposing, matching REG-LOCATION's site leg: a
 /// site is not an assertion about the plant that a steward might reject, it is
@@ -74,6 +82,7 @@ public sealed class SiteIngestionService(
     /// </summary>
     private string? _sessionId;
 
+
     public async Task<SiteIngestionReport> DrainAsync(CancellationToken ct)
     {
         var report = new SiteIngestionReport();
@@ -91,8 +100,15 @@ public sealed class SiteIngestionService(
             return report;
         }
 
+        // The subscriber id names this engine's role on the channel rather than
+        // this process. _sessionId lives in a field, so it is lost on every
+        // restart and redeploy -- and without a stable id the broker would mint a
+        // fresh subscription each time, stranding whatever the previous one had
+        // not yet read. The enterprise channel is shared, so the id says which
+        // reader this is, not which site.
         _sessionId ??= await isbm.OpenSubscriptionSessionAsync(
-            _options.SitesChannelUri, _options.SitesTopics, ct);
+            _options.SitesChannelUri, _options.SitesTopics, ct,
+            subscriberId: $"{_options.SourceId}:sites");
 
         while (report.MessagesRead < _options.MaxMessagesPerPoll)
         {
@@ -132,7 +148,8 @@ public sealed class SiteIngestionService(
 
             // Removed only after every site in it has been recorded. A crash
             // before this point redelivers the message, which is safe because
-            // the upsert is keyed on the site's own GUID.
+            // the owner is re-resolved through CIR and then by name, so a site
+            // already recorded is matched rather than created a second time.
             await isbm.RemovePublicationAsync(_sessionId, ct);
         }
 
@@ -215,32 +232,60 @@ public sealed class SiteIngestionService(
             return true;
         }
 
-        var upserts = mapped
-            .Select(m => new SiteUpsert(
-                SiteId: m.SiteId,
-                SiteCode: m.SiteCode,
-                SiteName: m.SiteName,
-                Description: m.Description,
-                SiteType: m.SiteType,
+        // Resolve every site to an owner before writing any of them, so a
+        // publication carrying several is one round trip to MMS rather than one
+        // per site.
+        var resolved = new List<ResolvedSite>();
 
-                // CCOM's Site carries no parent, country, region or status in the
-                // shape the sandbox publishes, and inventing them would put values
-                // in MMS that no publisher ever asserted.
-                ParentSiteId: null,
-                Country: null,
-                Region: null,
-                Status: null))
+        foreach (var site in mapped)
+        {
+            long? ownerId;
+            try
+            {
+                ownerId = await ResolveOwnerIdAsync(site, ct);
+            }
+            catch (CirClientException ex)
+            {
+                // Unlike registration, a failed lookup is fatal to this pass.
+                // Proceeding would treat "CIR is down" as "this site is new" and
+                // create a duplicate owner alongside the one CIR already knows.
+                logger.LogError(
+                    ex,
+                    "Could not resolve site '{Name}' in CIR; leaving publication {MessageId} on the channel.",
+                    site.OwnerName, message.MessageId);
+
+                return false;
+            }
+
+            resolved.Add(new ResolvedSite(site, ownerId));
+        }
+
+        var upserts = resolved
+            .Select(r => new OwnerUpsert(r.Site.OwnerName, r.OwnerId))
             .ToList();
 
-        var upsertResult = await mms.UpsertSitesAsync(upserts, ct);
+        OwnerUpsertResult upsertResult;
+        try
+        {
+            upsertResult = await mms.UpsertOwnersAsync(upserts, ct);
+        }
+        catch (MmsClientException ex)
+        {
+            logger.LogError(
+                ex,
+                "MMS refused the owner upsert for publication {MessageId}; leaving it on the channel.",
+                message.MessageId);
 
-        report.Created += upsertResult.Sites.Count(s => s.Created);
-        report.Updated += upsertResult.Sites.Count(s => !s.Created);
+            return false;
+        }
+
+        report.Created += upsertResult.Owners.Count(o => o.Created);
+        report.Updated += upsertResult.Owners.Count(o => !o.Created);
 
         foreach (var rejection in upsertResult.Rejections)
         {
             logger.LogWarning(
-                "MMS rejected site {Key}: {Reason} (transient: {Transient}).",
+                "MMS rejected owner {Key}: {Reason} (transient: {Transient}).",
                 rejection.Key, rejection.Reason, rejection.Transient);
         }
 
@@ -251,40 +296,130 @@ public sealed class SiteIngestionService(
             return false;
         }
 
-        report.CirEntriesRegistered += await RegisterInCirAsync(mapped, ct);
+        // Registered against the OWNER_ID MMS just assigned, matched back to the
+        // site by name because that is what was sent. Done for owners that
+        // already existed as well as new ones: MMS keeps no CIRID of its own, so
+        // the registry entry is the only record relating this site to this owner,
+        // and skipping it for an existing owner would leave that relation
+        // unrecorded forever.
+        var registrations = resolved
+            .Select(r => new
+            {
+                r.Site,
+                Owner = upsertResult.Owners.FirstOrDefault(o =>
+                    string.Equals(o.OwnerName, r.Site.OwnerName, StringComparison.OrdinalIgnoreCase))
+            })
+            .Where(x => x.Owner is not null)
+            .Select(x => new ResolvedSite(x.Site, x.Owner!.OwnerId))
+            .ToList();
+
+        report.CirEntriesRegistered += await RegisterInCirAsync(registrations, ct);
 
         return true;
     }
 
     /// <summary>
-    /// Registers the sites in CIR under MMS's own key space.
+    /// One mapped site paired with the SETUP_OWNER row it resolved to, or null
+    /// when no owner could be found and one must be created.
+    /// </summary>
+    private sealed record ResolvedSite(SiteMappingResult Site, long? OwnerId);
+
+    /// <summary>
+    /// Finds the OWNER_ID this site already corresponds to, or null if it is new.
     ///
-    /// This is what makes MMS's site resolvable by systems that do not speak
-    /// MMS. The CIRID is the site's federation GUID, the same one CMS and
+    /// CIR is asked first and the name only afterwards, and the order carries
+    /// the meaning. The registry holds the durable relation between the site's
+    /// federation GUID and MMS's key, so a site that was renamed upstream is
+    /// still recognised as the owner it always was. Matching on name first would
+    /// miss it and create a second owner for the same site.
+    ///
+    /// The name fallback is what lets this leg adopt owners MMS already had --
+    /// the customer's own seeded districts, which exist in SETUP_OWNER long
+    /// before ENG publishes anything and were never registered in CIR. Without
+    /// it, the first publication would duplicate every one of them.
+    /// </summary>
+    private async Task<long?> ResolveOwnerIdAsync(SiteMappingResult site, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(_options.CirBaseUrl))
+        {
+            var idInSource = await cir.FindIdInSourceAsync(site.Cirid, _options.SourceId, ct);
+
+            if (long.TryParse(idInSource, out var registeredOwnerId))
+            {
+                return registeredOwnerId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(idInSource))
+            {
+                // Registered, but not as something SETUP_OWNER could be keyed by.
+                // Reported rather than trusted: it is likely a stale registration
+                // from when this leg wrote light system GUIDs into IdInSource.
+                logger.LogWarning(
+                    "CIR holds '{IdInSource}' for site {Cirid} under source {SourceId}, " +
+                    "which is not an OWNER_ID; falling back to matching on name.",
+                    idInSource, site.Cirid, _options.SourceId);
+            }
+        }
+
+        // Case-insensitive because the customer's owner names are entered by
+        // hand and an incoming 'District 3' should find 'DISTRICT 3'. The mapper
+        // has already trimmed the incoming name.
+        var owners = await mms.GetOwnersAsync(ct);
+
+        var match = owners.FirstOrDefault(o =>
+            string.Equals(o.Name?.Trim(), site.OwnerName, StringComparison.OrdinalIgnoreCase));
+
+        return match?.Id;
+    }
+
+    /// <summary>
+    /// Registers the light systems in CIR under MMS's own key space.
+    ///
+    /// This is what makes MMS's light system resolvable by systems that do not
+    /// speak MMS. The CIRID is the site's federation GUID, the same one CMS and
     /// REG-LOCATION registered against their own identifiers -- which is
     /// precisely how the registry relates them without any system learning
     /// another's keys.
     /// </summary>
+    /// <summary>
+    /// Registers the owners in CIR under MMS's own key space.
+    ///
+    /// This is what makes MMS's owner resolvable by systems that do not speak
+    /// MMS. The CIRID is the site's federation GUID, the same one CMS and
+    /// REG-LOCATION registered against their own identifiers -- which is
+    /// precisely how the registry relates them without any system learning
+    /// another's keys.
+    ///
+    /// IdInSource is the OWNER_ID, not the site GUID. The registry's purpose is
+    /// to answer "what does MMS call this?", and MMS calls it by an integer:
+    /// echoing the CIRID back would register the question as its own answer and
+    /// leave the owner unreachable. It is also what the next drain reads to
+    /// recognise this site again.
+    /// </summary>
     private async Task<int> RegisterInCirAsync(
-        IReadOnlyList<SiteMappingResult> mapped, CancellationToken ct)
+        IReadOnlyList<ResolvedSite> registered, CancellationToken ct)
     {
         if (!_options.RegisterInCir || string.IsNullOrWhiteSpace(_options.CirBaseUrl))
         {
             return 0;
         }
 
-        var entries = mapped
-            .Select(m => new CirEntry(
-                // MMS's own identifier for the site. SiteId doubles as it here
-                // because the provider takes the publisher's GUID as its key.
-                IdInSource: m.SiteId.ToString(),
+        var entries = registered
+            .Where(r => r.OwnerId is not null)
+            .Select(r => new CirEntry(
+                IdInSource: r.OwnerId!.Value.ToString(),
                 SourceId: _options.SourceId,
-                Cirid: m.SiteId,
+                Cirid: r.Site.Cirid,
                 SourceOwnerId: _options.Enterprise,
-                Name: m.SiteCode,
-                Description: new CirLocalizedText(m.Description ?? m.SiteName),
+                Name: r.Site.OwnerName,
+                Description: new CirLocalizedText(r.Site.OwnerName),
                 Properties: []))
             .ToList();
+
+        if (entries.Count == 0)
+        {
+            return 0;
+        }
 
         var request = new CreateRegistryRequest(
             [
@@ -296,7 +431,7 @@ public sealed class SiteIngestionService(
                         new CirCategory(
                             Id: "ITWIN-SITE",
                             SourceId: _options.SourceId,
-                            Description: [new CirLocalizedText("MMS sites")],
+                            Description: [new CirLocalizedText("MMS owners")],
                             Entries: entries)
                     ])
             ],
@@ -308,9 +443,10 @@ public sealed class SiteIngestionService(
         }
         catch (CirClientException ex)
         {
-            // Not fatal. The site is already in MMS, and failing here would leave
-            // it unrecorded and blocked behind a CIR that is still down.
-            logger.LogError(ex, "Registering {Count} MMS site(s) in CIR failed.", entries.Count);
+            // Not fatal. The owner is already in MMS, and failing here would
+            // leave it unrecorded and blocked behind a CIR that is still down.
+            // The next drain re-resolves by name and registers again.
+            logger.LogError(ex, "Registering {Count} MMS owner(s) in CIR failed.", entries.Count);
             return 0;
         }
     }

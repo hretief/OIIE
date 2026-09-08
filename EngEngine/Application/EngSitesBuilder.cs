@@ -150,6 +150,14 @@ public sealed class EngSitesBuilder(IOptions<EngEngineOptions> options)
             // this.
             ShortName = FirstNonBlank(twin.Number, twin.Handle),
 
+            // The twin's full name, which is a different thing from ShortName:
+            // ShortName is the engineering number ("9600") and this is the name
+            // the customer uses ("9600 - District 6"). Receivers that hold an
+            // owner or location name key on this, so publishing only ShortName
+            // left them with nothing to name the site by. Falls back through the
+            // handle for the same reason ShortName does.
+            FullName = FirstNonBlank(twin.DisplayName, twin.Handle),
+
             Description = twin.Description,
 
             Type = new SegmentType

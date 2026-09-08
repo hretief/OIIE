@@ -74,8 +74,8 @@ ENG transforms the iTwin details into a CCOM SyncSites BOD with the following fi
 | SyncSites field | Source | Example | Notes |
 |---|---|---|---|
 | `Site.UUID` | `iTwinId` | `ce40a55a-...` | The Federation ID. Immutable. Becomes the CIRID. |
-| `Site.ShortName` | `displayName` | `US Route 202` | Human-readable name |
-| `Site.FullName` | `displayName` + `number` | `US Route 202 — HWYUSR202` | Extended name with project number |
+| `Site.ShortName` | `number`, falling back to the handle | `9600` | The engineering number. Receivers key their scope code on this. |
+| `Site.FullName` | `displayName`, falling back to the handle | `9600 - District 6` | The name the customer uses. Receivers that hold an owner or location name key on this. |
 | `Site.Description` | Generated or from metadata | Free text | |
 | `Site.Type.UUID` | `iTwin.iTwinTypeId` | `3f2b8c14-...` | See "Site Type Identity" below |
 | `Site.Type.ShortName` | `type` | `District` | The twin's boundary |
@@ -136,6 +136,29 @@ channel is structurally required.
 ALIM Engine subscribes to the enterprise sites channel with topic `oiie/ccom:SyncSites`.
 When ENG publishes, ALIM receives an ISBM webhook notification, reads the BOD, and
 processes it.
+
+### CMS Engine and MMS Engine Also Receive the Notification
+
+CMS Engine and MMS Engine subscribe to the same enterprise sites channel with the same
+topic, each through its own ISBM session. This is not a second publish and not a
+downstream relay from ALIM — the channel is a plain fan-out: ENG publishes once, and
+every subscriber holding an open session receives its own copy directly from ISBM.
+ALIM, CMS, and MMS each remove the message from their own session independently, so one
+subscriber's processing (or backlog) never blocks another's.
+
+Each engine maps the CCOM `Site` into its own domain and writes it directly, with no
+approval step — a site is not an assertion a steward might reject, it is the context
+within which such assertions are later made (see `IncomingSiteMapper` in each engine):
+
+| Engine | Domain entity created | Idempotency key |
+|---|---|---|
+| CMS Engine | An asset in CMS's own schema | CMS's asset GUID column |
+| MMS Engine | `LIGHT_SYSTEM_INVENTORY` row, classified `Undetermined` until reclassified | `EXT_ASSET_ID = Site.UUID` |
+
+CMS and MMS do not create per-iTwin ISBM channels, register anything in the CIR, or
+participate in the Scope/Item/Serial/Structure model below — that is REG-LOCATION-specific
+machinery. Each simply records that the site now exists, so that its own maintenance or
+condition data can later be attached to it by GUID.
 
 ### Step 6: ALIM Creates the Scope
 
@@ -247,11 +270,18 @@ After the SyncSites workflow completes, the following are true:
 | Systems Structure | REG-LOCATION | Container for the breakdown hierarchy |
 | CIR entry (CIRID = iTwinId) | CIR | Cross-system identity for the site |
 | Per-iTwin ISBM channels | ISBM Provider | Communication paths for SyncSegments and all subsequent flows |
+| Asset (Site.UUID) | CMS | Maintenance context for this site, independent of REG-LOCATION |
+| Light system (EXT_ASSET_ID = Site.UUID) | MMS | Maintenance context for this site's lighting assets, independent of REG-LOCATION |
 
 **The SyncSegments flow can now begin.** When ENG publishes engineering Segments
 (triggered by a Named Version event in the iModel), the Segments reference the Scope
 that SyncSites created. ALIM receives them, maps them to functional locations within
 the site's breakdown structure, and publishes approved segments to subscribers.
+
+CMS and MMS do not wait on any of this. Each already recorded the site for itself as
+soon as it read the same SyncSites publication, so their own downstream flows (asset
+configuration, maintenance requests) can begin independently of whether or when
+REG-LOCATION and ALIM finish their side.
 
 ---
 
@@ -274,13 +304,15 @@ identifies the site everywhere, in every system, forever.
 
 | Channel | Level | Type | Publisher | Subscriber |
 |---|---|---|---|---|
-| `/{enterprise}/enterprise/sites/publication` | Enterprise | Publication | ENG Engine | ALIM Engine |
+| `/{enterprise}/enterprise/sites/publication` | Enterprise | Publication | ENG Engine | ALIM Engine, CMS Engine, MMS Engine |
 | `/{enterprise}/enterprise/cir/request` | Enterprise | Request | ALIM Engine | CIR |
 | `/{enterprise}/{iTwinId}/engineering/publication` | Per-iTwin | Publication | ENG Engine | ALIM Engine |
 | `/{enterprise}/{iTwinId}/asset-config/publication` | Per-iTwin | Publication | ALIM Engine | MMS, CMS |
 
 The first two exist before any iTwin is created (provisioned at deployment time).
 The per-iTwin channels are created by Step 12, after the site exists in REG-LOCATION.
+CMS Engine and MMS Engine each hold their own subscription session on the enterprise
+sites channel, separate from ALIM's, so all three receive every SyncSites publication.
 
 ---
 
@@ -297,9 +329,13 @@ Every step must produce the same result if executed twice with the same input:
 | Create Structure | `objects.guid = derived GUID` | Update name |
 | CIR registration | `CIRID = Site.UUID` | CIR upserts |
 | Channel bootstrap | `channelUri` | ISBM returns 422, skip |
+| CMS asset upsert | CMS's asset GUID column = `Site.UUID` | Update name |
+| MMS light system upsert | `EXT_ASSET_ID = Site.UUID` | Update name |
 
 At the message level: de-duplicate on `BODID`. If the same SyncSites BOD arrives twice
-(ISBM redelivery after a crash), skip the entire processing on the second delivery.
+(ISBM redelivery after a crash), skip the entire processing on the second delivery. This
+applies per subscriber: ALIM, CMS, and MMS each track their own delivery state, so one
+engine replaying a message does not affect what the others have already recorded.
 
 ---
 
@@ -368,4 +404,6 @@ After running the SyncSites workflow (UI, bootstrap, or live), verify:
 6. **REG-LOCATION database:** Systems Structure document exists under the Scope
 7. **CIR:** Entry exists with `CIRID = iTwinId`, entries for ITWIN-SITE and SITE-TYPE
 8. **ISBM:** Per-iTwin channels created (`engineering`, `asset-config`, `maintenance`, `condition`)
+9. **CMS database:** Asset exists for `Site.UUID`
+10. **MMS database:** `LIGHT_SYSTEM_INVENTORY` row exists with `EXT_ASSET_ID = iTwinId`
 9. **ISBM:** SyncSites message removed from the subscription (no orphaned messages)

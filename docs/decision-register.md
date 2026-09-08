@@ -1583,3 +1583,90 @@ once `IngestEnabled` was corrected.
   made this materially harder to find — worth checking that every deployed
   engine actually has a wired-up instrumentation key as a follow-up.
 
+## DR-026 — `Enabled` is a first-provision default and is preserved on redeploy
+
+**Context:** Found 2026-09-07, and it is the second half of DR-025. That entry
+corrected `IngestEnabled`'s default but left `Enabled = false` in
+`deploy/engines/deploy-engine.ps1` for ENG and REG-LOCATION, which was right.
+What neither entry noticed is that line 338 applied every `Extra` key on *every*
+run, so an operator who set `IModelId` and flipped `Enabled=true` — exactly the
+procedure `deploy/engines/README.md` documents — had it switched back off by the
+next deploy of that engine. The flag was re-enabled three times in one session
+before anyone asked why.
+
+The failure is quiet in the way DR-025 warned about. `EngSitePublicationService.PublishAsync`
+returns an empty report at its `if (!_options.Enabled)` guard, so
+`POST /engine/publish-sites` answers `200` with
+`{ sitesSeen: 0, sitesPublished: 0, errors: [] }`. That is indistinguishable
+from "ENG holds no sites" unless you already suspect the flag.
+
+**Decision:** `Enabled` is written only when the app does not already carry it.
+On redeploy the script reads the existing setting names and skips the key,
+printing `Preserving the existing EngEngine__Enabled`. This mirrors
+`deploy/cir/deploy.ps1:166`, which had already solved the same problem for
+`Isbm__Enabled` — the engine script simply never adopted the pattern.
+
+The default itself is unchanged: a *newly created* app still gets
+`Enabled=false`, because the reasoning in DR-025 and `deploy/engines/README.md`
+still holds — the outbound sweep needs a resolved federation id or it polls into
+a failure loop.
+
+**Consequences:**
+
+- The match is on the exact key `Enabled`. `IngestEnabled` and
+  `SitesIngestEnabled` are still reapplied from the table on every deploy, which
+  is what DR-025 intended for them.
+- Turning an engine back *off* is now a deliberate act:
+  `az functionapp config appsettings set ... --settings EngEngine__Enabled=false`.
+  A redeploy will no longer do it as a side effect.
+- A disabled engine still reports success with nothing published. Populating the
+  report's `note` on that branch would make it self-explaining, and is the
+  obvious follow-up.
+
+## DR-027 — ENG publishes `Site.FullName`, because receivers name owners by it
+
+**Context:** A new site (`9600 - District 6`) never produced an MMS entry in CIR.
+Two separate faults were in the way, and fixing only the first made the second
+look like the first.
+
+`MmsEngine`'s `SiteIngestionService` opened its ISBM subscription without a
+`subscriberId`, so the broker minted a fresh subscription on every restart and
+the backlog was abandoned — `RegLocationEngine` had always passed
+`$"{_options.SourceId}:sites"`, and `IIsbmClient` documents that omitting it is
+for a throwaway reader. That was fixed, and ingestion went from
+`messagesRead: 0` to `messagesRead: 5`.
+
+All five were then **rejected**. `IncomingSiteMapper` had earlier been changed to
+take `OwnerName` from `Site.FullName` only, on the correct premise that
+`SETUP_OWNER.OWNER_NAME` corresponds to `Sites/Site/FullName` — but
+`EngSitesBuilder.BuildSite` never set `FullName`. It published `UUID`,
+`IDInInfoSource`, `ShortName`, `Description` and `Type`, and nothing else. The
+mapper change was correct on the consumer side and unmatched on the producer
+side, so every site failed the `NoName` guard. Before that change the mapper fell
+back to `ShortName`, which masked the gap.
+
+**Decision:** `EngSitesBuilder` publishes
+`FullName = FirstNonBlank(twin.DisplayName, twin.Handle)`. `DisplayName` holds
+`9600 - District 6`, which is the form `SETUP_OWNER.OWNER_NAME` takes.
+`ShortName` keeps its own meaning — the engineering number, `9600` — and the two
+are not interchangeable: receivers key their scope code on `ShortName` and their
+owner or location name on `FullName`.
+
+`MmsEngine` keeps the `FullName`-only rule with no `ShortName` fallback. A
+fallback would resolve a site to the wrong owner, or create a duplicate under a
+name the customer never used, and would have hidden this bug indefinitely.
+
+**Consequences:**
+
+- `docs/scenarios/create-a-new-itwin.md` described `Site.ShortName` as
+  `displayName` and `Site.FullName` as `displayName + number`. Neither matched
+  the code. The table now records what is actually published.
+- Ingestion resolved `9600 - District 6` to the existing seeded `SETUP_OWNER`
+  row (`IdInSource: 8`) by name rather than creating a duplicate, which is the
+  intended resolve-then-create order.
+- **`CmsEngine/Application/SiteIngestionService.cs` still opens its subscription
+  without a `subscriberId`** and will lose publications on restart the same way.
+  Deliberately left alone here to keep the change scoped; its mapper should be
+  checked against `FullName` at the same time.
+
+

@@ -4,6 +4,28 @@ Pending work carried between sessions. Decisions belong in
 [decision-register.md](decision-register.md); this file is only for things not
 yet done.
 
+## `CmsEngine` opens its sites subscription without a `subscriberId`
+
+**Status:** not started. Raised 2026-09-07 while fixing the same fault in
+`MmsEngine` (DR-027).
+
+`CmsEngine/Application/SiteIngestionService.cs` calls
+`OpenSubscriptionSessionAsync(_options.SitesChannelUri, _options.SitesTopics, ct)`
+with no `subscriberId`. `_sessionId` is a field, so it is lost on every restart
+and redeploy, and without a stable id the broker mints a fresh subscription each
+time — stranding whatever the previous one had not yet read. This is exactly the
+fault that stopped `MmsEngine` ingesting a new site, where it presented as
+`messagesRead: 0` with no error.
+
+The fix is the one-line pattern `RegLocationEngine` and now `MmsEngine` use:
+`subscriberId: $"{_options.SourceId}:sites"`. Left out of the DR-027 change to
+keep it scoped.
+
+While there, check `CmsEngine`'s site mapper against `Site.FullName`. ENG only
+began publishing `FullName` in DR-027; if the CMS mapper reads it, it was
+receiving nothing, and if it reads `ShortName`, confirm that is what CMS
+actually wants to name an owner by.
+
 ## `acme-engn-reglocation-dev` has no Application Insights telemetry
 
 **Status:** not started. Raised 2026-09-06 while debugging DR-025.

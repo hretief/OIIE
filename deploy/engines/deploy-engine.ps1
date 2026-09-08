@@ -335,7 +335,33 @@ foreach ($name in $targets) {
             "Isbm__ApiKey=$isbmKey"
         )
 
-        foreach ($k in $cfg.Extra.Keys)     { $settings += "$($prefix)__$k=$($cfg.Extra[$k])" }
+        # 'Enabled' is a first-provision default, not a redeploy instruction. It
+        # ships false for ENG and REG-LOCATION because their channel is derived
+        # from an iTwin federation id and polling before one exists just fails
+        # every 15 seconds -- but once an operator has set the id and turned the
+        # engine on, reapplying the default silently switches it back off, and a
+        # disabled engine reports success with nothing published. So the value is
+        # only written when the app does not already carry one. Same reasoning
+        # as deploy/cir/deploy.ps1, which preserves an enabled ISBM binding.
+        $existingSettings = @()
+        if ($appExists) {
+            $existingSettings = az functionapp config appsettings list `
+                --resource-group $ResourceGroup `
+                --name $appName `
+                --query '[].name' -o tsv 2>$null
+        }
+
+        foreach ($k in $cfg.Extra.Keys) {
+            $settingName = "$($prefix)__$k"
+
+            if ($k -eq 'Enabled' -and $existingSettings -contains $settingName) {
+                Write-Host "  Preserving the existing $settingName on $appName." -ForegroundColor DarkYellow
+                continue
+            }
+
+            $settings += "$settingName=$($cfg.Extra[$k])"
+        }
+
         foreach ($k in $cfg.Schedules.Keys) { $settings += "$k=$($cfg.Schedules[$k])" }
 
         Write-Host 'Applying application settings...' -ForegroundColor Cyan
