@@ -1299,6 +1299,13 @@ puts its **EC class name** in `SegmentType/IDInInfoSource` and derives the UUID 
 `"ENG" + className`, while REG-LOCATION's `class_objects` table has **no name column** and its
 seeded class rows have **null GUIDs**. The two sides share no value that can be joined on.
 
+> **Stale as of DR-030.** `class_objects` now carries `code`, `name`, `description` and
+> `parent_class_id` (`schema.sql:211-219`), and the bootstrap seeds `rdl:`-prefixed codes with a
+> real parent chain. The premise that the two sides share no joinable value therefore no longer
+> holds *in the table*; what is still missing is agreement on **what travels in `SegmentType`**.
+> Once ENG emits a governed RDL key rather than its own EC class name, this becomes an ordinary
+> lookup against `class_objects.code` and `InboundClassMap` can retire. See DR-030.
+
 So resolution is an explicit configured map (`InboundClassMap`) from ENG class name to
 `class_id`, with a configured fallback. This is worse than a lookup and better than a hash: the
 correspondence between one system's vocabulary and another's is a decision somebody has to make,
@@ -1779,6 +1786,129 @@ diagnosis at the wrong leg entirely.
 - The general rule is worth stating once: **no Azure Functions query parameter may be named
   `code`.** The collision produces an empty success rather than an error, which is the most
   expensive kind of bug to find.
+
+---
+
+## DR-030 — SegmentType carries a common RDL key; REG-LOCATION is an EIS participant, not the library
+
+**Status:** Partially unblocked — one class agreed (`rdl:LightingUnit`), see the addendum below
+**Date:** 2026-09-08
+
+**Context:** Bringing MMS onto the SC01 route exposed a question that ENG → REG-LOCATION had
+been able to avoid. MMS does not use a UAV schema: its table names *are* its classes, so an
+inbound `SyncSegment` naming `LIGHT_UNIT_INVENTORY` selects a table, its columns, its primary
+key and its foreign keys. Classification stops being a column value and becomes a dispatch.
+
+That is a modest change on its own. What it exposed is not modest: **there is no agreed
+vocabulary on the wire.** ENG currently publishes `element.FullyQualifiedECClassName` verbatim
+into `SegmentType/IDInInfoSource` (`EngSegmentsBuilder.cs:195-216`), which is ENG's own EC
+vocabulary. REG-LOCATION copes by translating it through a hand-written map
+(`InboundClassMap`). A second consumer makes the cost visible: either MMS gets its own private
+map from ENG's vocabulary, or ENG starts emitting MMS's table names.
+
+### Decision
+
+`SegmentType` carries a **common RDL class key** — governed, resolvable, owned by neither
+sender nor receiver. Each participant maps its own vocabulary to and from that key at its own
+edge:
+
+- ENG maps its EC class to the RDL key **on the way out**.
+- REG-LOCATION maps the RDL key to `class_id` **on the way in**.
+- MmsEngine maps the RDL key to a target table **on the way in**.
+
+The alternative — ENG emitting the receiver's vocabulary — was rejected because it makes the
+publisher know its consumers. ENG would need MnDOT's TAMS DDL to publish a light unit, and a
+second consumer with a different schema would need a second publication. The bus exists so ENG
+publishes once and each consumer translates into its own world; a publisher that knows who is
+listening has given that up. The existing comment at `EngSegmentsBuilder.cs:197` already refuses
+to claim the EC class is an RDL key, for the adjacent reason: it would tell a receiver to look
+the class up in a library that has never heard of it.
+
+### REG-LOCATION is EIS, and EIS is a participant
+
+"REG-LOCATION" is a logical name over an **Engineering Information System**, which will also
+carry REG-ASSET behaviour. Only the UI records this today (`App.tsx:158` labels it
+`alias: 'EIS'`), but the schema has said so all along: `bootstrap.sql:107` sources its
+`object_type` codes from `EIS-POPULATE.SQL`, and those base types include `PhysicalItem`,
+`SerializedItem` and `Unit` — none of which a pure location registry needs. `class_objects`
+likewise separates a *Locations* class group from a *Tags* group holding `rdl:Equipment` and
+`rdl:Instrument`.
+
+This makes EIS the largest and most authoritative class table in the solution, and raises the
+obvious question of whether it should simply *be* the common RDL. **It should not**, for one
+specific reason: graceful degradation requires a participant to be *missing* classes the
+library holds. `bootstrap.sql:339-344` deliberately omits `rdl:TemperatureIndicatingController`
+so that a tag classified against it binds at `rdl:Instrument` and is recorded degraded rather
+than rejected. A participant that *is* the library holds everything by definition, and that
+scenario stops existing.
+
+EIS holds a large subset. Every participant holds a subset. That asymmetry is the point.
+
+### What this does not require
+
+A common RDL **key vocabulary** and a running **RDL participant** are separable, and only the
+first is on the critical path. The wire needs an agreed key; it does not need a service to
+resolve it at runtime. The RDL participant of the Technical Specification (§237, §468, §912)
+remains phase 2 and is required for definition propagation — scenarios 34 and 35, where the
+library publishes a leaf class and receivers' unmapped values slot into place — not for two
+systems to agree what a light unit is.
+
+### Consequences
+
+- **Blocked, and deliberately so.** Which RDL class a MnDOT light unit belongs to is a
+  MIMOSA/OIIE modelling decision, not a coding one. `rdl:FunctionalLocation` (1001) is
+  probably wrong — a light unit is physical plant, nearer `rdl:Equipment` (1701) — but
+  "probably" is not good enough for a governed vocabulary, and guessing here would be recorded
+  as fact by every downstream mapping.
+- Once ENG emits RDL keys, `InboundClassMap` becomes an ordinary lookup against
+  `class_objects.code` and can retire. The stale premise in DR-021 is annotated above.
+- MMS's own mapping is unwritten until the vocabulary exists. The light-unit slice is otherwise
+  ready: `LIGHT_UNIT_INVENTORY` has no mandatory parent, so it stands alone.
+- Identity for MMS rows is **CIR**, not a schema column, following the pattern
+  `SiteIngestionService` already uses for `SETUP_OWNER`: insert, take the returned key, register
+  it against the federation GUID, and ask CIR first on every later delivery. MMS tables have
+  nowhere to store a federation GUID, which is what CIR is for.
+- The luminaire leg is deferred until ENG names an element's parent, since
+  `SYS_LIGHT_LUMINAIRE.LIGHT_UNIT_ID` is a foreign key that cannot be resolved from anything
+  currently on the wire.
+
+### Addendum, 2026-09-09 — the light-unit class, as a provisional fixture
+
+The blocking question above ("which RDL class is a MnDOT light unit?") is answered for the
+light-unit slice only, and answered **provisionally, to make the route testable end to end**.
+The mappings are not the formal governance process; that is still to come.
+
+`rdl:LightingUnit` (class_id 1703) is seeded in `RegLocationProvider/Infrastructure/Sql/bootstrap.sql`
+as a child of `rdl:Equipment` (1701), which matches the reasoning already recorded above — a light
+unit is physical plant, not a functional location. The three edges are now written:
+
+| Participant | Direction | Mapping | Where |
+|---|---|---|---|
+| ENG | out | `ENG.Streetlight` → `rdl:LightingUnit` | `EngEngineOptions.OutboundRdlClassMap` |
+| REG-LOCATION | in | `rdl:LightingUnit` → `1703` | `RegLocationEngineOptions.InboundClassMap` |
+| MMS | in | `rdl:LightingUnit` → `LIGHT_UNIT_INVENTORY` | `MmsEngineOptions.InboundRdlTableMap` |
+
+Consequences of writing them:
+
+- **ENG no longer publishes its EC class.** `EngSegmentsBuilder` emits the RDL key sourced as
+  `MIMOSA-RDL`, which is the claim it previously and correctly refused to make. An unmapped class
+  now publishes **no** `SegmentType` rather than a fabricated one — a publisher that guesses a
+  governed key puts a false statement on the bus, and a receiver can still bind at a parent.
+- **The REG-LOCATION mapping is an identity mapping and is still written down.** Both sides took
+  the name from the same source, so the correspondence looks free. It is not: it is a decision that
+  the two coincide, and recording it keeps the translation step visible for the day one side is
+  renamed.
+- **The old ENG-vocabulary keys are retained** in `InboundClassMap` alongside the RDL key, so a
+  publisher that has not moved over still lands somewhere sensible. They retire when the last one
+  moves.
+- **MMS has no segments leg yet.** `InboundRdlTableMap` records the agreed mapping but nothing
+  consumes it; MmsEngine still ingests only sites. Unlike REG-LOCATION, MMS gets **no fallback** —
+  an unknown class there would mean choosing a table, and writing a light unit into an arbitrary
+  one is corruption, not degradation.
+- **`rdl:TemperatureIndicatingController` remains deliberately absent.** The degradation fixture is
+  untouched: the shipped test element is a `Bis:PhysicalElement`, which is unmapped, so it exercises
+  the no-`SegmentType` path rather than the light-unit one.
+
 
 
 

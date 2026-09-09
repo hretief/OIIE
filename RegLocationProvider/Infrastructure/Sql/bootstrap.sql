@@ -185,7 +185,8 @@ FROM (VALUES
     (1001, 185, 18, CONVERT(UNIQUEIDENTIFIER, NULL)),   -- rdl:FunctionalLocation
     (1002, 185, 18, CONVERT(UNIQUEIDENTIFIER, NULL)),   -- rdl:Site
     (1701, 185, 18, CONVERT(UNIQUEIDENTIFIER, NULL)),   -- rdl:Equipment
-    (1702, 185, 18, CONVERT(UNIQUEIDENTIFIER, NULL))    -- rdl:Instrument
+    (1702, 185, 18, CONVERT(UNIQUEIDENTIFIER, NULL)),   -- rdl:Instrument
+    (1703, 185, 18, CONVERT(UNIQUEIDENTIFIER, NULL))    -- rdl:LightingUnit
 
     -- No physical items (1) or tags (212) are registered here. Both are
     -- received from ENG over the bus rather than authored by this provider --
@@ -359,7 +360,8 @@ FROM (VALUES
     (1001, 5,  1, 'rdl:FunctionalLocation', 'Functional Location', NULL),   -- Locations group
     (1002, 5,  1, 'rdl:Site',               'Site',                NULL),   -- Locations group
     (1701, 17, 1, 'rdl:Equipment',          'Equipment',           NULL),   -- Tags group
-    (1702, 17, 1, 'rdl:Instrument',         'Instrument',          1701)    -- Tags group, child of rdl:Equipment
+    (1702, 17, 1, 'rdl:Instrument',         'Instrument',          1701),   -- Tags group, child of rdl:Equipment
+    (1703, 17, 1, 'rdl:LightingUnit',       'Lighting Unit',       1701)    -- Tags group, child of rdl:Equipment
 ) AS v(class_id, group_id, namespace_id, code, name, parent_class_id)
 WHERE NOT EXISTS
 (

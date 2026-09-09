@@ -203,21 +203,33 @@ public sealed class RegLocationEngineOptions
     public int InboundRevision { get; set; }
 
     /// <summary>
-    /// Maps the sender's class name onto a REG-LOCATION class_id.
+    /// Maps the common RDL class key onto a REG-LOCATION class_id.
     ///
-    /// This has to be configuration rather than a lookup, and the reason is
-    /// worth stating: ENG names its EC class in SegmentType/IDInInfoSource
-    /// (e.g. "Functional:FunctionalComponentElement"), while REG-LOCATION's
-    /// class_objects table has no name column at all and its seeded classes have
-    /// null GUIDs. The two sides currently share no value that could be joined
-    /// on, so the correspondence between one system's vocabulary and the other's
-    /// is a decision somebody has to make and record. Better here, where it can
-    /// be read and changed, than hidden in a hash.
+    /// Per DR-030 SegmentType carries a governed RDL key rather than the
+    /// sender's own vocabulary, so these keys are RDL codes, not ENG EC class
+    /// names. That is what lets one map serve every publisher instead of one
+    /// map per publisher.
     ///
-    /// Keyed case-insensitively; the class name's casing is the sender's business.
+    /// Still configuration rather than a join against class_objects.code, and
+    /// deliberately so for now: REG-LOCATION holds only a subset of the
+    /// library, and the gap between "the key is unknown here" and "the key does
+    /// not exist" is the thing graceful degradation is built on. Making it a
+    /// lookup would collapse that distinction into a missing row. The register
+    /// notes this can become an ordinary lookup once RDL resolution is live.
+    ///
+    /// Keyed case-insensitively; the key's casing is the library's business.
     /// </summary>
     public Dictionary<string, int> InboundClassMap { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {
+        // Identity mapping, and worth writing down rather than assuming: both
+        // sides took the name from the same source, so the correspondence looks
+        // free. It is not -- it is a decision that these two happen to coincide,
+        // and recording it keeps the mapping step visible for the day a key is
+        // renamed on one side only.
+        ["rdl:LightingUnit"] = 1703,
+
+        // Retained so a publisher that has not yet moved to RDL keys still
+        // lands somewhere sensible instead of falling through to the fallback.
         ["Functional:FunctionalComponentElement"] = 1001,
         ["Functional:FunctionalElement"] = 1001
     };

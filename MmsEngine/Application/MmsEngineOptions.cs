@@ -98,4 +98,38 @@ public sealed class MmsEngineOptions
 
     /// <summary>The Functions key for CIR, if it requires one.</summary>
     public string? CirApiKey { get; set; }
+
+    // ---- Class dispatch ---------------------------------------------------
+
+    /// <summary>
+    /// Maps the common RDL class key onto the MMS table that receives it.
+    ///
+    /// MMS has no UAV schema: its table names are its classes, so per DR-030 an
+    /// inbound class is a dispatch rather than a column value. Naming
+    /// LIGHT_UNIT_INVENTORY selects a table, its columns, its primary key and
+    /// its foreign keys.
+    ///
+    /// Table names, not an enum, because this is a map between two vocabularies
+    /// and the MMS side of it is genuinely the physical schema. An enum would
+    /// add a third vocabulary that neither the bus nor the database uses.
+    /// </summary>
+    public Dictionary<string, string> InboundRdlTableMap { get; set; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["rdl:LightingUnit"] = "LIGHT_UNIT_INVENTORY"
+    };
+
+    /// <summary>
+    /// The MMS table for an RDL key, or null when the key is unmapped.
+    ///
+    /// No fallback here, unlike REG-LOCATION's inbound class. REG-LOCATION can
+    /// bind an unknown class at a parent because its classes are data in a
+    /// column; MMS would have to pick a table, and writing a light unit into an
+    /// arbitrary one is not degraded behaviour, it is corruption. An unmapped
+    /// key means the caller must decline the segment.
+    /// </summary>
+    public string? ResolveTargetTable(string? rdlClassKey) =>
+        !string.IsNullOrWhiteSpace(rdlClassKey)
+            && InboundRdlTableMap.TryGetValue(rdlClassKey, out var table)
+                ? table
+                : null;
 }

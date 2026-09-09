@@ -1,4 +1,5 @@
 using System.Xml.Linq;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Oiie.Ccom.Bods;
 using Oiie.Ccom.Oagis;
@@ -50,9 +51,21 @@ namespace EngEngine.Application;
 /// has no concept of an iModel and takes segments from every model under a twin
 /// equally, so the twin is the only part of this it can file against.
 /// </summary>
-public sealed class EngSegmentsBuilder(IOptions<EngEngineOptions> options)
+public sealed class EngSegmentsBuilder(
+    IOptions<EngEngineOptions> options,
+    ILogger<EngSegmentsBuilder> logger)
 {
     private readonly EngEngineOptions _options = options.Value;
+    private readonly ILogger<EngSegmentsBuilder> _logger = logger;
+
+    /// <summary>
+    /// The source a common RDL key is attributed to.
+    ///
+    /// Deliberately not <see cref="EngEngineOptions.SourceId"/>: the key is
+    /// governed by the shared library, and naming ENG as its source would tell
+    /// a receiver to resolve it against ENG, which does not own it.
+    /// </summary>
+    private const string RdlSourceId = "MIMOSA-RDL";
 
     /// <summary>
     /// Builds the publication for one marker.
@@ -194,26 +207,42 @@ public sealed class EngSegmentsBuilder(IOptions<EngEngineOptions> options)
 
         if (element.FullyQualifiedECClassName is { Length: > 0 } className)
         {
-            // The EC class is ENG's own vocabulary, not an RDL key, so it is sourced
-            // as ENG rather than MIMOSA-RDL. Claiming otherwise would tell a receiver
-            // it can look the class up in a library that has never heard of it.
-            //
-            // Its own InfoSource, not the segment's: that one now identifies the
-            // iModel, and a class is not an element of the iModel the way a segment
-            // is. Reusing it would say ECInstanceId and class name are two
-            // identifiers within the same source, and a receiver reconstructing the
-            // composite key from the pair would build a key that resolves to nothing.
-            segment.Type = new SegmentType
+            // Per DR-030 the wire carries a common RDL key, not ENG's EC class.
+            // The map is ENG's edge of that agreement; an unmapped class yields
+            // null and the segment publishes without a Type rather than with a
+            // fabricated one.
+            var rdlKey = _options.ResolveRdlClassKey(className);
+
+            if (rdlKey is not null)
             {
-                UUID = CcomUuid.ForReferenceData(_options.SourceId, className),
-                IDInInfoSource = className,
-                InfoSource = new InfoSource
+                // Sourced as MIMOSA-RDL because the key genuinely resolves in
+                // the shared library -- which is exactly the claim the old
+                // EC-class version could not make. Its own InfoSource, not the
+                // segment's: that one identifies the iModel, and the RDL class
+                // does not come from the iModel at all.
+                segment.Type = new SegmentType
                 {
-                    UUID = CcomUuid.ForInfoSource(_options.SourceId),
-                    ShortName = _options.SourceId
-                },
-                ShortName = className.Split(':').Last()
-            };
+                    UUID = CcomUuid.ForReferenceData(RdlSourceId, rdlKey),
+                    IDInInfoSource = rdlKey,
+                    InfoSource = new InfoSource
+                    {
+                        UUID = CcomUuid.ForInfoSource(RdlSourceId),
+                        ShortName = RdlSourceId
+                    },
+                    ShortName = rdlKey.Split(':').Last()
+                };
+            }
+            else
+            {
+                // Not fatal: the segment still carries its identity and
+                // description, and a receiver can bind it at a parent. Logged
+                // because an unmapped class is a gap in the map above, and the
+                // only person able to close it needs to see it.
+                _logger.LogWarning(
+                    "Element {ElementId} has EC class '{ClassName}', which is not in " +
+                    "OutboundRdlClassMap; publishing the segment without a SegmentType.",
+                    element.ECInstanceId, className);
+            }
         }
 
         return segment;

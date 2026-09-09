@@ -153,6 +153,44 @@ public sealed class EngEngineOptions
     public string LogicalId { get; set; } = "ENG";
 
     /// <summary>
+    /// Maps ENG's EC class onto the common RDL key published in SegmentType.
+    ///
+    /// Per DR-030 the wire carries a governed RDL key owned by neither sender
+    /// nor receiver, and each participant translates at its own edge. This is
+    /// ENG's edge. Publishing the EC class verbatim, as this builder used to,
+    /// made every consumer keep a private map of ENG's vocabulary -- the cost
+    /// of which only became visible when MMS became the second consumer.
+    ///
+    /// Configuration rather than a lookup because the correspondence between
+    /// an EC class and an RDL class is a modelling decision somebody has to
+    /// make and record, not something derivable from either schema.
+    ///
+    /// Keyed case-insensitively; the EC class's casing is iModel-side business.
+    /// Keys are fully qualified names as ENG reports them -- "ENG.Streetlight",
+    /// schema and class joined by a dot -- not the display label
+    /// ("Lighting | Streetlight"), which is presentation and not identity.
+    /// </summary>
+    public Dictionary<string, string> OutboundRdlClassMap { get; set; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["ENG.Streetlight"] = "rdl:LightingUnit"
+    };
+
+    /// <summary>
+    /// The RDL key for an EC class, or null when the class is unmapped.
+    ///
+    /// Null rather than a fallback, and the asymmetry with REG-LOCATION's
+    /// inbound fallback is deliberate. A receiver that cannot map an inbound
+    /// key still has the segment and can bind it at a parent; a publisher that
+    /// invents a key puts a false statement on the bus that every consumer
+    /// will then record as fact. The caller decides what to do with the gap.
+    /// </summary>
+    public string? ResolveRdlClassKey(string? ecClassName) =>
+        !string.IsNullOrWhiteSpace(ecClassName)
+            && OutboundRdlClassMap.TryGetValue(ecClassName, out var key)
+                ? key
+                : null;
+
+    /// <summary>
     /// The publication channel for an iTwin, per the OIIE channel naming
     /// convention:
     ///
