@@ -50,8 +50,3 @@ docs/*.pdf
 
 # Local publish output
 publish/
-
-# Ad-hoc schema-inspection scratch output
-exc.json
-exc2.txt
-exc_details.txt
