@@ -53,6 +53,8 @@ $hosts = @(
     @{ Project = 'MmsEngine';           Folder = 'mms-engine';         Prefix = 'MMS-ENGINE';         App = 'acme-engn-mms-dev' }
     @{ Project = 'CmsProvider';         Folder = 'cms';                Prefix = 'CMS';                App = 'acme-api-cms-dev' }
     @{ Project = 'CmsEngine';           Folder = 'cms-engine';         Prefix = 'CMS-ENGINE';         App = 'acme-engn-cms-dev' }
+    @{ Project = 'RdlProvider';         Folder = 'rdl';                Prefix = 'RDL';                App = 'acme-api-rdl-dev' }
+    @{ Project = 'RdlEngine';           Folder = 'rdl-engine';         Prefix = 'RDL-ENGINE';         App = 'acme-engn-rdl-dev' }
 )
 
 # ---------------------------------------------------------------------------

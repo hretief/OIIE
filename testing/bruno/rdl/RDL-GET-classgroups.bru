@@ -1,0 +1,17 @@
+meta {
+  name: RDL GET classgroups
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/classgroups?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /classgroups
+  Function: GetRdlClassGroups
+  Source: RdlFunctions.cs
+}

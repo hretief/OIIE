@@ -1,9 +1,9 @@
 {
-  "name": "ISBM (acme-api-isbm-dev)",
-  "type": "collection",
-  "version": "1",
   "ignore": [
     "node_modules",
     ".git"
-  ]
+  ],
+  "name": "ISBM (acme-api-isbm-dev)",
+  "version": "1",
+  "type": "collection"
 }

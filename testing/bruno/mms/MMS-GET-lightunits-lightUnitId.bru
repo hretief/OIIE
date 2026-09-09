@@ -1,0 +1,20 @@
+meta {
+  name: MMS GET lightunits/{lightUnitId}
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/lightunits/{{lightUnitId}}?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /lightunits/{lightUnitId}
+  Function: GetLightUnitById
+  Source: MmsFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

@@ -1,0 +1,17 @@
+meta {
+  name: MMS GET lookups/lightsystemclasscodes
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/lookups/lightsystemclasscodes?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /lookups/lightsystemclasscodes
+  Function: GetLightSystemClassCodes
+  Source: MmsFunctions.cs
+}

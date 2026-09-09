@@ -1,9 +1,9 @@
 {
-  "name": "SANDBOX (acme-api-sandbox-dev)",
-  "type": "collection",
-  "version": "1",
   "ignore": [
     "node_modules",
     ".git"
-  ]
+  ],
+  "name": "SANDBOX (acme-api-sandbox-dev)",
+  "version": "1",
+  "type": "collection"
 }

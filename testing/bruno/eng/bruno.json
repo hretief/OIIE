@@ -1,9 +1,9 @@
 {
-  "name": "ENG (acme-api-eng-dev)",
-  "type": "collection",
-  "version": "1",
   "ignore": [
     "node_modules",
     ".git"
-  ]
+  ],
+  "name": "ENG (acme-api-eng-dev)",
+  "version": "1",
+  "type": "collection"
 }

@@ -1,0 +1,17 @@
+meta {
+  name: MMS GET lightsystems
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/lightsystems?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /lightsystems
+  Function: GetLightSystems
+  Source: MmsFunctions.cs
+}

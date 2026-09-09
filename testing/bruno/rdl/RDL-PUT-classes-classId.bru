@@ -1,0 +1,28 @@
+meta {
+  name: RDL PUT classes/{classId:int}
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/classes/{{classId}}?code={{functionKey}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  PUT /classes/{classId:int}
+  Function: UpdateRdlClass
+  Source: RdlFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+
+  The body is an empty object: this file records that the endpoint
+  exists and how to reach it, not what to send. Supply a payload before
+  running, or expect a 400 naming the member that is missing.
+}

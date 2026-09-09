@@ -1,0 +1,17 @@
+meta {
+  name: MMS GET lookups/counties
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/lookups/counties?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /lookups/counties
+  Function: GetCounties
+  Source: MmsFunctions.cs
+}

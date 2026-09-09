@@ -1,0 +1,17 @@
+meta {
+  name: RDL GET classes
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/classes?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /classes
+  Function: GetRdlClasses
+  Source: RdlFunctions.cs
+}

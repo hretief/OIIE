@@ -1,0 +1,17 @@
+meta {
+  name: MMS GET lookups/owners
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/lookups/owners?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /lookups/owners
+  Function: GetOwners
+  Source: MmsFunctions.cs
+}

@@ -1,0 +1,17 @@
+meta {
+  name: RDL GET namespaces
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/namespaces?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /namespaces
+  Function: GetRdlNamespaces
+  Source: RdlFunctions.cs
+}

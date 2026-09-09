@@ -1,0 +1,17 @@
+meta {
+  name: MMS GET lookups/assetstatuses
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/lookups/assetstatuses?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /lookups/assetstatuses
+  Function: GetAssetStatuses
+  Source: MmsFunctions.cs
+}

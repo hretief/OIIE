@@ -1,0 +1,20 @@
+meta {
+  name: MMS GET lightunits/by-ext/{extAssetId}
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/lightunits/by-ext/{{extAssetId}}?code={{functionKey}}
+  body: none
+  auth: none
+}
+
+docs {
+  GET /lightunits/by-ext/{extAssetId}
+  Function: GetLightUnitByExtAssetId
+  Source: MmsFunctions.cs
+
+  Route parameters are Bruno variables. Set them in the environment or
+  on the request before running.
+}

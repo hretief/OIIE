@@ -1,0 +1,9 @@
+{
+  "ignore": [
+    "node_modules",
+    ".git"
+  ],
+  "name": "RDL (acme-api-rdl-dev)",
+  "version": "1",
+  "type": "collection"
+}

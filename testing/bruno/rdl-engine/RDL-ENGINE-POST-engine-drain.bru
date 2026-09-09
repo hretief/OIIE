@@ -1,0 +1,25 @@
+meta {
+  name: RDL-ENGINE POST engine/drain
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/engine/drain?code={{functionKey}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {}
+}
+
+docs {
+  POST /engine/drain
+  Function: RdlEngineDrainNow
+  Source: RdlEngineFunctions.cs
+
+  The body is an empty object: this file records that the endpoint
+  exists and how to reach it, not what to send. Supply a payload before
+  running, or expect a 400 naming the member that is missing.
+}

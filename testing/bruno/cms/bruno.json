@@ -1,9 +1,9 @@
 {
-  "name": "CMS (acme-api-cms-dev)",
-  "type": "collection",
-  "version": "1",
   "ignore": [
     "node_modules",
     ".git"
-  ]
+  ],
+  "name": "CMS (acme-api-cms-dev)",
+  "version": "1",
+  "type": "collection"
 }
