@@ -1,0 +1,47 @@
+participantId: rdl
+displayName: RDL - Reference Data Library
+sourceId: RDL
+sourceOwnerId: ACME-OPERATIONS
+logicalId: urn:oiie-sandbox:rdl
+accentColour: "#7c3aed"
+releaseMode: Manual
+identifierStyle: surrogate
+
+# RDL answers requests; it never publishes.
+#
+# This is the shape CIR already has: a provider sitting on one long-lived
+# request channel, rather than a participant that moves data along a scenario.
+# The binding exists here rather than in a Topology file for that reason --
+# the channel belongs to RDL permanently and must exist before any scenario
+# runs, whereas a topology channel is provisioned for the scenario that names
+# it. Nothing in a numbered scenario would recreate this one after a reset.
+#
+# RequestProvider is what makes the provisioner create it as a Request channel
+# rather than a Publication (IsbmChannelProvisioner.EnsureAllAsync). Getting
+# the role wrong yields a channel of the wrong type that a provider-request
+# session cannot open, which surfaces as a session failure naming the channel
+# but not the reason.
+#
+# The URI and topic are duplicated in RdlEngine's settings, because the engine
+# is a separate deployable that cannot read this file. A divergence does not
+# fail loudly -- the engine opens a session on a channel nobody sends to and
+# reports a clean, empty drain forever -- so RdlPersonalityTests asserts the
+# two agree.
+channels:
+  - channelUri: /OIIE/RDL/Request
+    role: RequestProvider
+    topics:
+      - OIIE:S35:V1.0/CCOM:GetTaxonomySet:R1.0
+    useNotifications: false
+
+isbm:
+  baseUrl: https://acme-api-isbm-dev.azurewebsites.net/api
+  tokenSecretName: sandbox-isbm-token-rdl
+
+cir:
+  # RDL registers in CIR like any other participant. The channel below is the
+  # CIR provider's own, taken from its deployed configuration -- it is not
+  # RDL's channel and reset must not delete it.
+  channelUri: /OIIE/CIR/Request
+  requestTopic: ws-CIR
+  baseUrl: https://acme-api-cir-dev.azurewebsites.net/api

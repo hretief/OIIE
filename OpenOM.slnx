@@ -8,6 +8,8 @@
     <Project Path="EngProvider/EngProvider.csproj" />
     <Project Path="RegLocationProvider/RegLocationProvider.csproj" />
     <Project Path="RegLocationEngine/RegLocationEngine.csproj" />
+    <Project Path="RdlProvider/RdlProvider.csproj" />
+    <Project Path="RdlEngine/RdlEngine.csproj" />
     <Project Path="ISBMProvider/IsbmProvider.csproj" />
     <Project Path="CirProvider/CirProvider.csproj" />
     <Project Path="Oiie.Sandbox.Api/Oiie.Sandbox.Api.csproj" />

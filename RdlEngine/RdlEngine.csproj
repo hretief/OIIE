@@ -1,0 +1,70 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AzureFunctionsVersion>v4</AzureFunctionsVersion>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>RdlEngine</RootNamespace>
+    <_FunctionsSkipCleanOutput>true</_FunctionsSkipCleanOutput>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Required by the ASP.NET Core HTTP integration (IActionResult, HttpRequest). -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <!--
+    The integration engine for RDL, and a separate app from RdlProvider for the
+    same reason RegLocationEngine is separate from RegLocationProvider.
+
+    RdlProvider emulates a reference data library and has never heard of CCOM,
+    BODs or ISBM — its own Program.cs says so. Everything that has heard of them
+    lives here. The engine reaches RDL over HTTP like any other client, which is
+    why there is no ProjectReference to it despite the shared record shapes: a
+    reference would let the emulation and the integration leak into each other,
+    and would make it possible to call the store directly and never notice the
+    boundary had gone.
+
+    No Azure.Storage.Blobs here, unlike the other engines. This one answers
+    requests from what RDL currently holds and keeps no published set of its
+    own, so it has no state to store.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../Oiie.Isbm.Client/Oiie.Isbm.Client.csproj" />
+    <ProjectReference Include="../Oiie.Ccom/Oiie.Ccom.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Versions match RegLocationEngine deliberately. The Worker and Sdk majors
+      must both be 2.x: FunctionsApplication.CreateBuilder does not exist in 1.x,
+      and mixing the two produces a CS0234 on Worker.Builder.
+    -->
+    <PackageReference Include="Microsoft.Azure.Functions.Worker" Version="2.52.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.7" OutputItemType="Analyzer" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore" Version="2.0.2" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Timer" Version="4.3.1" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.0.0" />
+
+    <!--
+      PINNED to the 2.x line. Microsoft.ApplicationInsights 3.x removed
+      Microsoft.ApplicationInsights.Extensibility.ITelemetryInitializer, which
+      Worker.ApplicationInsights still binds to, so a 3.x resolution kills the
+      worker at startup with a TypeLoadException before any function runs.
+      Do not let a blanket package upgrade move these.
+    -->
+    <PackageReference Include="Microsoft.ApplicationInsights" Version="2.23.0" />
+    <PackageReference Include="Microsoft.ApplicationInsights.WorkerService" Version="2.23.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="host.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="local.settings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+</Project>

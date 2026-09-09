@@ -1,0 +1,28 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+
+    "//": "Flat, not nested: the TimerTrigger %binding% syntax resolves against a configuration key, and a nested key would need a colon the binding expression does not accept.",
+    "RdlEngineDrainSchedule": "0 */1 * * * *",
+
+    "RdlEngine__RdlBaseUrl": "http://localhost:7075/api",
+    "RdlEngine__RdlApiKey": "",
+    "RdlEngine__SenderLogicalId": "RDL",
+    "RdlEngine__DefaultSetName": "ACME-RDL",
+    "RdlEngine__Version": "1.0",
+
+    "//sets": "Namespace id to published set name. A namespace with no entry here is still answered, under DefaultSetName suffixed with its id.",
+    "RdlEngine__TaxonomySetNames__1": "ACME-RDL",
+
+    "Isbm__BaseUrl": "https://acme-api-isbm-dev.azurewebsites.net/api",
+    "Isbm__ApiKey": "",
+
+    "//isbm": "Off by default: the channel must exist before the listener can open a session against it. Turn on once the channel is provisioned.",
+    "Isbm__Enabled": "false",
+    "Isbm__RequestChannelUri": "/OIIE/RDL/Request",
+    "Isbm__Topics__0": "OIIE:S35:V1.0/CCOM:GetTaxonomySet:R1.0",
+    "Isbm__MaxMessagesPerPoll": "20"
+  }
+}

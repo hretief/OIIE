@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ShowTaxonomySet.xsd  —  RECONSTRUCTION, not an official MIMOSA artifact.
+
+  Response BOD paired with GetTaxonomySet in OIIE Scenarios 34 and 35.
+  No published XSD was located; MIMOSA holds in-progress BODs to members only.
+
+  Structure follows the documented CCOM BOD anatomy (OAGIS Platform Spec 1.2.1):
+    Root = Verb + Noun, carrying releaseID / versionID
+      oa:ApplicationArea
+      DataArea
+        oa:Show            - response verb, echoes originating BODID
+        TaxonomySet        - the noun, composed of CCOM structures
+
+  Payload satisfies the Scenario 34/35 "Data Content" minimum for the response:
+    - UUID, name and version of the reference data set
+    - List of associated taxonomies and types/classes
+
+  NOTE: TaxonomySet is a real CCOM 4.x class (introduced in 4.0.0 to group
+  multiple taxonomies). The element names for its children below follow the
+  CCOM naming conventions but should be reconciled against CCOM.xsd in the
+  release you target before you rely on them.
+-->
+<xs:schema
+    xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    xmlns:oa="http://www.openapplications.org/oagis/9"
+    xmlns:ccom="https://www.mimosa.org/ccom4"
+    xmlns="https://www.mimosa.org/ccom4"
+    targetNamespace="https://www.mimosa.org/ccom4"
+    elementFormDefault="qualified"
+    attributeFormDefault="unqualified">
+
+  <xs:import namespace="http://www.openapplications.org/oagis/9"
+             schemaLocation="OAGIS/Fields.xsd"/>
+  <xs:include schemaLocation="../CCOM.xsd"/>
+
+  <xs:element name="ShowTaxonomySet" type="ShowTaxonomySetType"/>
+
+  <xs:complexType name="ShowTaxonomySetType">
+    <xs:sequence>
+      <xs:element ref="oa:ApplicationArea"/>
+      <xs:element name="DataArea" type="ShowTaxonomySetDataAreaType"/>
+    </xs:sequence>
+    <xs:attribute name="releaseID" type="xs:normalizedString" use="required"/>
+    <xs:attribute name="versionID" type="xs:normalizedString" use="optional"/>
+    <xs:attribute name="systemEnvironmentCode" type="xs:normalizedString" use="optional"/>
+    <xs:attribute name="languageCode" type="xs:language" use="optional"/>
+  </xs:complexType>
+
+  <xs:complexType name="ShowTaxonomySetDataAreaType">
+    <xs:sequence>
+      <!-- oa:Show carries oa:OriginalApplicationArea / RecordSetCount etc.,
+           which is how a large RDL response is paged back to the consumer -->
+      <xs:element ref="oa:Show"/>
+      <xs:element name="TaxonomySets" type="TaxonomySetsType"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!--
+    Noun container. Taxonomies and Types are carried alongside the set so the
+    receiver can resolve every reference the set makes without a second round
+    trip - the same flattened "referenced objects beside the subject object"
+    idiom used by SyncAssetSegmentEvents.
+  -->
+  <xs:complexType name="TaxonomySetsType">
+    <xs:sequence>
+      <xs:element name="TaxonomySet" type="TaxonomySetResponseType"
+                  maxOccurs="unbounded"/>
+      <xs:element name="Taxonomy" type="Taxonomy"
+                  minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="Type" type="Type"
+                  minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="TaxonomySetResponseType">
+    <xs:complexContent>
+      <!-- TaxonomySet from CCOM.xsd supplies UUID / ShortName / FullName /
+           Description / EffectiveStatus and the Taxonomy associations -->
+      <xs:extension base="TaxonomySet">
+        <xs:sequence>
+          <!-- Version of the reference data set, per Scenario 34/35 -->
+          <xs:element name="Version" type="xs:normalizedString" minOccurs="0"/>
+          <!-- Point in time this snapshot represents; lets the consumer use it
+               as the ChangedSince value on its next GetTaxonomySet -->
+          <xs:element name="AsOf" type="xs:dateTime" minOccurs="0"/>
+        </xs:sequence>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+</xs:schema>

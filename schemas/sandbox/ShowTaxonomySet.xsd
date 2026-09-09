@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ShowTaxonomySet.xsd  —  Sandbox extension, NOT an official MIMOSA artifact.
+
+  Response BOD paired with GetTaxonomySet in OIIE Scenarios 34 and 35.
+  No published XSD exists; MIMOSA holds in-progress BOD work to members only.
+  Replace this with the official schema when one is published.
+
+  Published into the Sandbox extension namespace rather than CCOM, so a future
+  official ShowTaxonomySet stays distinguishable from ours on the wire.
+
+  HOW THE CLASSES ARE CARRIED — and why the supplied draft was wrong.
+
+  The draft declared a `Type` child alongside TaxonomySet and Taxonomy, to hold
+  the individual classes. There is no global `Type` complex type in CCOM.xsd:
+  every `Type` in that schema is a LOCAL element bound to a concrete type
+  (SegmentType, AssetType, PropertyType...). So the draft's container could not
+  be built without inventing vocabulary, which the implementation brief forbids.
+
+  It also turned out to be unnecessary. CCOM already models exactly this:
+
+      TaxonomySet -> Taxonomy -> Connection (TypeConnection) -> From / To
+
+  TypeConnection (CCOM.xsd line 2037) is documented as "the parent-child
+  relationship between two base types within a taxonomy", and Taxonomy extends
+  TypeNetwork, which declares Connection unbounded. Carrying the classes as
+  connections preserves the hierarchy — rdl:Equipment above rdl:LightingUnit —
+  which a flat list of loose class elements would have thrown away.
+
+  From and To are typed ccom:BaseType, which is ABSTRACT. Every From/To element
+  must therefore carry xsi:type naming a concrete derivation. That attribute is
+  load-bearing here, not a serialiser artefact.
+
+  A root class with no parent is expressed, per CCOM's own annotation on
+  TypeConnection, by setting From to the root and omitting To.
+-->
+<xs:schema
+    xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    xmlns:oa="http://www.openapplications.org/oagis/9"
+    xmlns:ccom="http://www.mimosa.org/ccom4"
+    xmlns="http://www.openoandm.org/sandbox/extensions/1.0"
+    targetNamespace="http://www.openoandm.org/sandbox/extensions/1.0"
+    elementFormDefault="qualified"
+    attributeFormDefault="unqualified">
+
+  <xs:import namespace="http://www.openapplications.org/oagis/9"
+             schemaLocation="../ccom/BOD/OAGIS/Meta.xsd"/>
+  <xs:import namespace="http://www.mimosa.org/ccom4"
+             schemaLocation="../ccom/XSD/CCOM.xsd"/>
+
+  <xs:element name="ShowTaxonomySet" type="ShowTaxonomySetType"/>
+
+  <xs:complexType name="ShowTaxonomySetType">
+    <xs:sequence>
+      <xs:element ref="oa:ApplicationArea"/>
+      <xs:element name="DataArea" type="ShowTaxonomySetDataAreaType"/>
+    </xs:sequence>
+    <xs:attribute name="releaseID" type="xs:normalizedString" use="required"/>
+    <xs:attribute name="versionID" type="xs:normalizedString" use="optional"/>
+    <xs:attribute name="systemEnvironmentCode" type="xs:normalizedString" use="optional"/>
+    <xs:attribute name="languageCode" type="xs:language" use="optional"/>
+  </xs:complexType>
+
+  <xs:complexType name="ShowTaxonomySetDataAreaType">
+    <xs:sequence>
+      <!-- oa:Show carries OriginalApplicationArea, which is how the response
+           echoes the originating GetTaxonomySet BODID. That echo is the only
+           link between request and response. -->
+      <xs:element ref="oa:Show"/>
+      <xs:element name="TaxonomySets" type="TaxonomySetsType"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!--
+    Noun container. No `Type` child: the classes live inside each TaxonomySet's
+    Taxonomy/Connection network, so there is nothing left to carry beside it.
+  -->
+  <xs:complexType name="TaxonomySetsType">
+    <xs:sequence>
+      <xs:element name="TaxonomySet" type="TaxonomySetResponseType"
+                  maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="TaxonomySetResponseType">
+    <xs:complexContent>
+      <!-- ccom:TaxonomySet (CCOM.xsd line 1890) supplies UUID via Entity, the
+           Nameable group, and the Taxonomy associations that carry the
+           classes. It is not final, so extension is legal. -->
+      <xs:extension base="ccom:TaxonomySet">
+        <xs:sequence>
+          <!-- Version of the reference data set, per Scenarios 34 and 35 -->
+          <xs:element name="Version" type="xs:normalizedString" minOccurs="0"/>
+          <!-- Point in time this snapshot represents, so the consumer can use
+               it as the ChangedSince value on its next GetTaxonomySet -->
+          <xs:element name="AsOf" type="xs:dateTime" minOccurs="0"/>
+        </xs:sequence>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+</xs:schema>

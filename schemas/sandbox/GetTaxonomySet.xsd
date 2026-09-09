@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  GetTaxonomySet.xsd  —  Sandbox extension, NOT an official MIMOSA artifact.
+
+  Referenced by OIIE Scenario 34 (Standard RDL -> Enterprise RDL) and
+  Scenario 35 (Enterprise RDL -> O&M) as a BOD that "should be supported".
+  No published XSD exists; MIMOSA holds in-progress BOD work to members only.
+  Replace this with the official schema when one is published.
+
+  Target CCOM release: the vendored schema set at schemas/ccom/XSD/CCOM.xsd.
+  OAGIS platform: 1.2.1, namespace http://www.openapplications.org/oagis/9.
+
+  This schema is published into the Sandbox extension namespace rather than the
+  CCOM namespace. A future official GetTaxonomySet would otherwise collide with
+  ours and there would be no way to tell the two apart on the wire.
+
+  Corrections applied to the supplied draft after reconciling against the
+  vendored CCOM.xsd:
+    - targetNamespace was https://www.mimosa.org/ccom4; CCOM.xsd declares
+      http://www.mimosa.org/ccom4 (http, not https). Now moot: we target our own
+      extension namespace and import CCOM under the ccom: prefix.
+    - xs:include changed to xs:import, required now the target namespace differs.
+    - UUIDType does not exist. CCOM.xsd line 165 declares the complex type UUID.
+
+  Only the request BOD is defined here. See
+  docs/taxonomyset-bod-findings.md for why ShowTaxonomySet is not yet buildable.
+-->
+<xs:schema
+    xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    xmlns:oa="http://www.openapplications.org/oagis/9"
+    xmlns:ccom="http://www.mimosa.org/ccom4"
+    xmlns="http://www.openoandm.org/sandbox/extensions/1.0"
+    targetNamespace="http://www.openoandm.org/sandbox/extensions/1.0"
+    elementFormDefault="qualified"
+    attributeFormDefault="unqualified">
+
+  <xs:import namespace="http://www.openapplications.org/oagis/9"
+             schemaLocation="../ccom/BOD/OAGIS/Meta.xsd"/>
+  <xs:import namespace="http://www.mimosa.org/ccom4"
+             schemaLocation="../ccom/XSD/CCOM.xsd"/>
+
+  <xs:element name="GetTaxonomySet" type="GetTaxonomySetType"/>
+
+  <xs:complexType name="GetTaxonomySetType">
+    <xs:sequence>
+      <xs:element ref="oa:ApplicationArea"/>
+      <xs:element name="DataArea" type="GetTaxonomySetDataAreaType"/>
+    </xs:sequence>
+    <xs:attribute name="releaseID" type="xs:normalizedString" use="required"/>
+    <xs:attribute name="versionID" type="xs:normalizedString" use="optional"/>
+    <xs:attribute name="systemEnvironmentCode" type="xs:normalizedString" use="optional"/>
+    <xs:attribute name="languageCode" type="xs:language" use="optional"/>
+  </xs:complexType>
+
+  <xs:complexType name="GetTaxonomySetDataAreaType">
+    <xs:sequence>
+      <xs:element ref="oa:Get"/>
+      <xs:element name="TaxonomySet" type="TaxonomySetRequestType"
+                  minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!--
+    Request-side selector. Deliberately identification-only: the consumer names
+    WHICH set it wants, not the contents. All parts optional, so an empty
+    selector means "every set this provider has".
+  -->
+  <xs:complexType name="TaxonomySetRequestType">
+    <xs:sequence>
+      <!-- ccom:UUID, not a local UUIDType: the draft's UUIDType is not declared
+           anywhere in CCOM.xsd. -->
+      <xs:element name="UUID" type="ccom:UUID" minOccurs="0"/>
+      <!-- Alternate identification when the UUID is not known -->
+      <xs:element name="ShortName" type="xs:string" minOccurs="0"/>
+      <xs:element name="FullName" type="xs:string" minOccurs="0"/>
+      <xs:element name="Version" type="xs:normalizedString" minOccurs="0"/>
+      <!-- Incremental request: return only changes at or after this instant -->
+      <xs:element name="ChangedSince" type="xs:dateTime" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+</xs:schema>

@@ -1,4 +1,5 @@
 using System.Linq;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using EngEngine.Application;
 using Oiie.Ccom.Oagis;
@@ -34,7 +35,24 @@ public class EngSegmentsBuilderTests
             IModelId = IModelId,
             SourceId = "ENG",
             LogicalId = "ENG"
-        }));
+        }),
+        NullLogger<EngSegmentsBuilder>.Instance);
+
+    // A builder whose outbound map carries one entry, so a test can exercise
+    // the mapped path without depending on whichever classes the shipped
+    // default happens to contain.
+    private static EngSegmentsBuilder BuilderMapping(string ecClass, string rdlKey) =>
+        new(Options.Create(new EngEngineOptions
+        {
+            IModelId = IModelId,
+            SourceId = "ENG",
+            LogicalId = "ENG",
+            OutboundRdlClassMap = new(StringComparer.OrdinalIgnoreCase)
+            {
+                [ecClass] = rdlKey
+            }
+        }),
+        NullLogger<EngSegmentsBuilder>.Instance);
 
     private static EngNamedVersion Marker() =>
         new(1, Guid.NewGuid(), IModelId, "Design Release 3", null,
@@ -107,7 +125,8 @@ public class EngSegmentsBuilderTests
             IModelId = otherModel,
             SourceId = "ENG",
             LogicalId = "ENG"
-        }));
+        }),
+        NullLogger<EngSegmentsBuilder>.Instance);
 
         var bod = builder.Build(Marker(), [Element()], ITwinId, "corr-3");
 
@@ -129,16 +148,47 @@ public class EngSegmentsBuilderTests
     [Fact]
     public void Segment_type_does_not_reuse_the_imodel_info_source()
     {
-        var bod = Builder().Build(Marker(), [Element()], ITwinId, "corr-4");
+        // A mapped class, because an unmapped one no longer produces a Type at
+        // all -- see Unmapped_ec_class_publishes_without_a_segment_type.
+        var bod = BuilderMapping("Bis:PhysicalElement", "rdl:LightingUnit")
+            .Build(Marker(), [Element()], ITwinId, "corr-4");
 
         var segment = FirstSegment(bod);
 
-        // An EC class is not an element of the iModel the way a segment is.
-        // Sharing the InfoSource would say ECInstanceId and the class name are
+        // The RDL class is not an element of the iModel the way a segment is.
+        // Sharing the InfoSource would say ECInstanceId and the class key are
         // two identifiers within one source, and a receiver composing the
         // composite key from that pair would build one that resolves to nothing.
         Assert.NotNull(segment.Type);
         Assert.NotEqual(IModelId, segment.Type?.InfoSource?.UUID);
+    }
+
+    [Fact]
+    public void Mapped_ec_class_publishes_the_rdl_key_not_the_ec_class()
+    {
+        var bod = BuilderMapping("Bis:PhysicalElement", "rdl:LightingUnit")
+            .Build(Marker(), [Element()], ITwinId, "corr-6");
+
+        var segment = FirstSegment(bod);
+
+        // The point of DR-030: what travels is the governed key, not ENG's own
+        // vocabulary. A receiver resolves this against the shared library, which
+        // it could not do with "Bis:PhysicalElement".
+        Assert.Equal("rdl:LightingUnit", segment.Type?.IDInInfoSource);
+        Assert.Equal("MIMOSA-RDL", segment.Type?.InfoSource?.ShortName);
+    }
+
+    [Fact]
+    public void Unmapped_ec_class_publishes_without_a_segment_type()
+    {
+        // The gap is left visible rather than filled in. Emitting the EC class
+        // here would tell the receiver to resolve a key against a library that
+        // has never heard of it; emitting a guessed RDL key would put a false
+        // statement on the bus that every consumer then records as fact. The
+        // segment still carries its identity, so nothing is lost but the class.
+        var bod = Builder().Build(Marker(), [Element()], ITwinId, "corr-7");
+
+        Assert.Null(FirstSegment(bod).Type);
     }
 
     [Fact]

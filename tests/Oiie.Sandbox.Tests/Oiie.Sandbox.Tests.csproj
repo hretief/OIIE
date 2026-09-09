@@ -19,6 +19,7 @@
     <ProjectReference Include="..\..\Oiie.Ccom\Oiie.Ccom.csproj" />
     <ProjectReference Include="..\..\EngEngine\EngEngine.csproj" />
     <ProjectReference Include="..\..\RegLocationEngine\RegLocationEngine.csproj" />
+    <ProjectReference Include="..\..\RdlEngine\RdlEngine.csproj" />
   </ItemGroup>
 
 </Project>

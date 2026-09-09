@@ -286,7 +286,7 @@ public class Sc01EndToEndTests
             new FakeEngClient(IModelId, ITwinId, Marker(), [element ?? Element()]),
             broker,
             new FakeEngStateStore(),
-            new EngSegmentsBuilder(options),
+            new EngSegmentsBuilder(options, NullLogger<EngSegmentsBuilder>.Instance),
             topology,
             options,
             NullLogger<EngPublicationService>.Instance);

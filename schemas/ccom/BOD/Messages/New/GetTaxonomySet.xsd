@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  GetTaxonomySet.xsd  —  RECONSTRUCTION, not an official MIMOSA artifact.
+
+  Referenced by OIIE Scenario 34 (Standard RDL -> Enterprise RDL) and
+  OIIE Scenario 35 (Enterprise RDL -> O&M) as a BOD that "should be supported".
+  No published XSD was located; MIMOSA holds in-progress BODs to members only.
+
+  Structure follows the documented CCOM BOD anatomy (OAGIS Platform Spec 1.2.1):
+    Root = Verb + Noun, carrying releaseID / versionID
+      oa:ApplicationArea   - transactional metadata
+      DataArea
+        oa:Get             - the verb / request expression
+        TaxonomySet        - the noun, composed of CCOM structures
+
+  Payload fields mirror the Scenario 34/35 "Data Content" for the request:
+    - UUID of the reference data set (if known)
+    - Version of the reference data set
+    - Timestamp from which updates have occurred (for incremental responses)
+
+  Use a private namespace until MIMOSA publishes the real schema.
+-->
+<xs:schema
+    xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    xmlns:oa="http://www.openapplications.org/oagis/9"
+    xmlns:ccom="https://www.mimosa.org/ccom4"
+    xmlns="https://www.mimosa.org/ccom4"
+    targetNamespace="https://www.mimosa.org/ccom4"
+    elementFormDefault="qualified"
+    attributeFormDefault="unqualified">
+
+  <xs:import namespace="http://www.openapplications.org/oagis/9"
+             schemaLocation="OAGIS/Fields.xsd"/>
+  <xs:include schemaLocation="../CCOM.xsd"/>
+
+  <xs:element name="GetTaxonomySet" type="GetTaxonomySetType"/>
+
+  <xs:complexType name="GetTaxonomySetType">
+    <xs:sequence>
+      <xs:element ref="oa:ApplicationArea"/>
+      <xs:element name="DataArea" type="GetTaxonomySetDataAreaType"/>
+    </xs:sequence>
+    <xs:attribute name="releaseID" type="xs:normalizedString" use="required"/>
+    <xs:attribute name="versionID" type="xs:normalizedString" use="optional"/>
+    <xs:attribute name="systemEnvironmentCode" type="xs:normalizedString" use="optional"/>
+    <xs:attribute name="languageCode" type="xs:language" use="optional"/>
+  </xs:complexType>
+
+  <xs:complexType name="GetTaxonomySetDataAreaType">
+    <xs:sequence>
+      <xs:element ref="oa:Get"/>
+      <xs:element name="TaxonomySet" type="TaxonomySetRequestType"
+                  minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!--
+    Request-side selector. Deliberately identification-only: the consumer
+    names WHICH set it wants, not the contents. All parts optional so an
+    empty selector means "all sets available from this provider".
+  -->
+  <xs:complexType name="TaxonomySetRequestType">
+    <xs:sequence>
+      <!-- UUID of the reference data set, if known -->
+      <xs:element name="UUID" type="UUIDType" minOccurs="0"/>
+      <!-- Alternate identification when UUID is not known -->
+      <xs:element name="ShortName" type="xs:string" minOccurs="0"/>
+      <xs:element name="FullName" type="xs:string" minOccurs="0"/>
+      <!-- Version of the reference data set -->
+      <xs:element name="Version" type="xs:normalizedString" minOccurs="0"/>
+      <!-- Incremental request: return only changes at/after this instant -->
+      <xs:element name="ChangedSince" type="xs:dateTime" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+</xs:schema>
