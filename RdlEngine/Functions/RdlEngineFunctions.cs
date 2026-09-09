@@ -56,4 +56,23 @@ public sealed class RdlEngineFunctions(
         [HttpTrigger(AuthorizationLevel.Function, "post", Route = "engine/drain")] HttpRequest req,
         CancellationToken ct)
         => new OkObjectResult(await listener.DrainAsync(ct));
+
+    /// <summary>
+    /// Configuration and readiness, without exposing any key.
+    ///
+    /// EffectiveTopics rather than Topics, so the reported value is what the
+    /// session actually opens against: the two differ whenever the fallback
+    /// applies, and reporting the empty list would hide that.
+    /// </summary>
+    [Function("RdlEngineStatus")]
+    public IActionResult RdlEngineStatus(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "engine/status")] HttpRequest req)
+        => new OkObjectResult(new
+        {
+            enabled = _options.Enabled,
+            requestChannelUri = _options.RequestChannelUri,
+            topics = _options.EffectiveTopics,
+            isbmConfigured = !string.IsNullOrWhiteSpace(_options.BaseUrl),
+            maxMessagesPerPoll = _options.MaxMessagesPerPoll
+        });
 }
