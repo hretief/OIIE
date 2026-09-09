@@ -334,7 +334,7 @@ to it. Dev is deployed; prod is not.
 |---|---|---|
 | LOB API | `acme-api-reglocation-dev` | `acme-api-reglocation-prod` |
 | Integration engine | `acme-engn-reglocation-dev` | `acme-engn-reglocation-prod` |
-| SQL database | `acme-db-reglocation-dev` | `acme-db-reglocation-prod` |
+| SQL database *(shared with RDL)* | `acme-db-eis-dev` | `acme-db-eis-prod` |
 | Plan *(shared)* | `acme-plan-dev` | `acme-plan-prod` |
 | Identity | `acme-id-reglocation-dev` | `acme-id-reglocation-prod` |
 | Storage account *(shared)* | `acmestoragedev01` | `acmestorageprod01` |

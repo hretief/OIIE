@@ -775,13 +775,26 @@ scope resolved from `RegistrationSite.UUID` rather than a static fallback.
 
 What remains:
 
+- **No common vocabulary travels in `SegmentType` — this now blocks MMS.** See
+  DR-030. ENG publishes its own EC class name, so every consumer needs a private
+  map back from ENG's vocabulary. REG-LOCATION absorbed that with
+  `InboundClassMap`; MMS makes the cost plain, because its table names *are* its
+  classes and an unmapped type has no generic table to fall back to. The fix is
+  for `SegmentType` to carry a governed RDL key that each participant maps to and
+  from at its own edge. Two things are needed and only the first is blocking:
+  agreement on the key vocabulary, and eventually the RDL participant itself
+  (Technical Specification §237/§468) for definition propagation.
+  - **Which RDL class is a MnDOT light unit?** A MIMOSA/OIIE modelling decision,
+    not a coding one, and the MMS slice waits on it.
+    `rdl:FunctionalLocation` (1001) is probably wrong; `rdl:Equipment` (1701) is
+    nearer, since a light unit is physical plant rather than a location.
 - **The ENG-class-to-`class_id` map is guesswork.** `InboundClassMap` seeds
   `Functional:FunctionalComponentElement` to `1001` (`rdl:FunctionalLocation`),
-  but nobody has confirmed that is the intended correspondence. It has to be
-  configuration because the two sides share no joinable value: ENG names its EC
-  class in `SegmentType/IDInInfoSource`, while `class_objects` has no name column
-  and its seeded rows have null GUIDs. Giving classes GUIDs on both sides would
-  turn this into a lookup and is the better long-term fix.
+  but nobody has confirmed that is the intended correspondence. Note the original
+  justification — that the two sides share no joinable value — is now stale:
+  `class_objects` carries `code`, `name`, `description` and `parent_class_id`, and
+  its seeded codes are already `rdl:`-prefixed. Once the wire carries RDL keys
+  this becomes an ordinary lookup against `class_objects.code` and the map retires.
 - **An unmapped class silently lands on the fallback.** Logged at warning and
   filed under `InboundFallbackClassId` rather than rejected, so a wrong mapping
   table produces plausible-looking tags of the wrong class rather than an error.

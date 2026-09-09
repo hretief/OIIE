@@ -78,7 +78,9 @@ $appName      = "acme-api-reglocation-$Environment"
 $planName     = "acme-plan-$Environment"
 $identityName = "acme-id-reglocation-$Environment"
 $storageName  = "acmestorage${Environment}01"
-$databaseName = "acme-db-reglocation-$Environment"
+# The EIS database, shared with RdlProvider. Named for the product rather than
+# for this app, because this app is one of two surfaces over it.
+$databaseName = "acme-db-eis-$Environment"
 
 $projectPath = Join-Path $PSScriptRoot '..' | Resolve-Path
 

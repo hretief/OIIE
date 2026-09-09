@@ -3,9 +3,9 @@
     Provisions and deploys the integration engine function apps.
 
 .DESCRIPTION
-    One script for all four engines, because they differ only in their name,
+    One script for all five engines, because they differ only in their name,
     their peer provider, and their settings prefix. A script per engine would
-    be four copies of the same 200 lines drifting apart -- the providers are
+    be five copies of the same 200 lines drifting apart -- the providers are
     already in that position and it is not a pattern worth extending.
 
     Under docs/azure-resource-naming-guidance.md an integration engine is an
@@ -15,6 +15,7 @@
         acme-engn-mms-dev
         acme-engn-eng-dev
         acme-engn-reglocation-dev
+        acme-engn-rdl-dev
 
     'eng' is already the SYSTEM code for Engineering, so 'acme-eng-eng-dev'
     would be ambiguous. That collision is the whole reason the type code is
@@ -49,7 +50,7 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('cms', 'mms', 'eng', 'reglocation', 'all')]
+    [ValidateSet('cms', 'mms', 'eng', 'reglocation', 'rdl', 'all')]
     [string]$Engine,
 
     [Parameter(Mandatory)]
@@ -85,6 +86,12 @@ $ErrorActionPreference = 'Stop'
 # defaults to yields ["oiie/ccom:SyncSites", "oiie/ccom:SyncSites"] -- a double
 # subscription, and every publication handled twice. To override a topic list
 # you must set every index AND ensure the code default is empty.
+#
+# 'RawExtra' is optional and holds settings that must NOT be prefixed with the
+# engine name -- RDL's listener binds its channel from the shared 'Isbm'
+# section, which no amount of prefixing would reach. RdlIsbmOptions.Topics is
+# initialised empty precisely so Isbm__Topics__0 can be set without the
+# doubling described above.
 # ---------------------------------------------------------------------------
 $engines = @{
     cms = @{
@@ -173,9 +180,42 @@ $engines = @{
             'RegLocationEngineSitesIngestSchedule' = '*/15 * * * * *'
         }
     }
+    rdl = @{
+        System  = 'rdl'
+        Project = 'RdlEngine'
+        Prefix  = 'RdlEngine'
+        PeerVar = 'RdlBaseUrl'
+        PeerKey = 'RdlApiKey'
+        PeerApi = 'rdl'
+        # Unlike ENG and REG-LOCATION, this engine ships ENABLED -- see RawExtra
+        # below. Its channel is the fixed literal /OIIE/RDL/Request rather than
+        # a URI derived from an iTwin federation id, so there is no twin to wait
+        # for and nothing to configure by hand before it can usefully poll.
+        #
+        # DefaultSetName and TaxonomySetNames__1 name the published taxonomy set.
+        # The mapping is namespace id -> set name; a namespace with no entry is
+        # still answered, under DefaultSetName suffixed with its id.
+        Extra   = @{
+            'SenderLogicalId'      = 'RDL'
+            'DefaultSetName'       = 'ACME-RDL'
+            'TaxonomySetNames__1'  = 'ACME-RDL'
+            'Version'              = '1.0'
+        }
+        # Settings that are NOT prefixed with the engine name. The listener binds
+        # its channel configuration from the shared 'Isbm' section, so these
+        # cannot go in Extra -- that table prefixes every key it applies, which
+        # would yield RdlEngine__Isbm__Enabled and bind to nothing.
+        RawExtra = @{
+            'Isbm__Enabled'           = 'true'
+            'Isbm__RequestChannelUri' = '/OIIE/RDL/Request'
+            'Isbm__Topics__0'         = 'OIIE:S35:V1.0/CCOM:GetTaxonomySet:R1.0'
+            'Isbm__MaxMessagesPerPoll' = '20'
+        }
+        Schedules = @{ 'RdlEngineDrainSchedule' = '0 */1 * * * *' }
+    }
 }
 
-$targets = if ($Engine -eq 'all') { 'eng', 'reglocation', 'cms', 'mms' } else { @($Engine) }
+$targets = if ($Engine -eq 'all') { 'eng', 'reglocation', 'cms', 'mms', 'rdl' } else { @($Engine) }
 
 # Shared across every app in the environment. Do not reintroduce a per-app plan.
 $planName    = "acme-plan-$Environment"
@@ -367,6 +407,23 @@ foreach ($name in $targets) {
             }
 
             $settings += "$settingName=$($cfg.Extra[$k])"
+        }
+
+        # Unprefixed settings, for engines that bind part of their configuration
+        # from a shared section rather than their own. Isbm__Enabled is preserved
+        # on redeploy for the same reason as Enabled above: an operator who turned
+        # a listener off to stop it polling a broken channel should not have it
+        # turned back on by the next deploy, silently.
+        if ($cfg.ContainsKey('RawExtra')) {
+            foreach ($k in $cfg.RawExtra.Keys) {
+
+                if ($k -eq 'Isbm__Enabled' -and $existingSettings -contains $k) {
+                    Write-Host "  Preserving the existing $k on $appName." -ForegroundColor DarkYellow
+                    continue
+                }
+
+                $settings += "$k=$($cfg.RawExtra[$k])"
+            }
         }
 
         foreach ($k in $cfg.Schedules.Keys) { $settings += "$k=$($cfg.Schedules[$k])" }

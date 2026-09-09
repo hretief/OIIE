@@ -1,6 +1,6 @@
 # Deploying the integration engines
 
-`deploy-engine.ps1` provisions and publishes the four engine Function Apps.
+`deploy-engine.ps1` provisions and publishes the five engine Function Apps.
 
 ```powershell
 ./deploy-engine.ps1 -Engine cms -Environment dev
@@ -14,17 +14,18 @@
 | `RegLocationEngine` | `acme-engn-reglocation-dev` |
 | `CmsEngine` | `acme-engn-cms-dev` |
 | `MmsEngine` | `acme-engn-mms-dev` |
+| `RdlEngine` | `acme-engn-rdl-dev` |
 
 The type code is `engn`, not `eng`, because `eng` is already the *system* code
 for Engineering — `acme-eng-eng-dev` would be ambiguous. See
 [azure-resource-naming-guidance.md](../../docs/azure-resource-naming-guidance.md).
 
-## One script, four engines
+## One script, five engines
 
 The providers have a copy of `deploy-functionapp.ps1` each, and those copies
 have already drifted. The engines differ only in name, peer provider, and
 settings prefix, so they are table-driven from a single script instead. Adding a
-fifth engine is a new entry in `$engines`, not a new file.
+sixth engine is a new entry in `$engines`, not a new file.
 
 ## Engines get no database
 
@@ -91,6 +92,42 @@ The `SitesIngestEnabled` legs on CMS, MMS and REG-LOCATION are enabled from the
 start. Their channel is enterprise-level rather than iTwin-derived, which is the
 whole point of `SyncSites` — it is the message that brings an iTwin context into
 being, so it cannot require one to already exist.
+
+## RDL ships enabled, unlike ENG and REG-LOCATION
+
+`Isbm__Enabled` is set `true` for RDL on first provision. The reasoning above
+does not apply to it: RDL's channel is the fixed literal `/OIIE/RDL/Request`,
+not a URI derived from an iTwin federation id, so there is no twin to create
+first and nothing for an operator to set by hand.
+
+It is preserved on redeploy exactly as `Enabled` is. If you turn a listener off
+to stop it polling a broken channel, the next deploy leaves it off and prints
+`Preserving the existing Isbm__Enabled` instead.
+
+Note that RDL's listener settings are **not** prefixed with the engine name.
+`RdlIsbmOptions` binds from the shared `Isbm` section, so they live in the
+table's `RawExtra` rather than `Extra` — `RdlEngine__Isbm__Enabled` would bind
+to nothing and the listener would stay dormant with no error.
+
+## The RDL channel must exist before the engine polls
+
+`RdlEngine` opens a *provider-request* session against `/OIIE/RDL/Request`. That
+channel is created by `IsbmChannelProvisioner` from the `rdl` personality pack's
+`RequestProvider` binding, which runs at Sandbox API startup.
+
+So the Sandbox API must have started at least once against the same broker
+before the engine can drain anything. If it has not, the engine reports session
+failures naming the channel. Force provisioning without a restart:
+
+```powershell
+curl -X POST https://acme-api-sandbox-dev.azurewebsites.net/api/admin/isbm/channels/ensure
+```
+
+The channel URI and topic are declared in two places — the personality pack and
+this script's `RawExtra`. They must agree byte for byte; a divergence is not
+loud, because the engine happily opens a session on a channel nobody sends to
+and reports a clean empty drain forever. `RdlPersonalityTests` asserts they
+match.
 
 ## ISBM endpoint
 

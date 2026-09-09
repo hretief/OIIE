@@ -28,7 +28,7 @@ Order matters — the database must exist first.
 ```powershell
 cd RegLocationProvider/deploy
 
-./provision-databases.ps1 -Databases acme-db-reglocation-dev
+./provision-databases.ps1 -Databases acme-db-eis-dev
 ./deploy-functionapp.ps1 -Environment dev
 ```
 
@@ -56,12 +56,23 @@ Per environment, in `HilmarRetiefRG`:
 | App Service plan (B1) | `acme-plan-reglocation-dev` | `acme-plan-reglocation-prod` |
 | User-assigned identity | `acme-id-reglocation-dev` | `acme-id-reglocation-prod` |
 | Storage account | `acmestoragedev01` | `acmestorageprod01` |
-| SQL database | `acme-db-reglocation-dev` | `acme-db-reglocation-prod` |
+| SQL database | `acme-db-eis-dev` | `acme-db-eis-prod` |
 
 Basic B1 rather than Consumption, matching the other providers: Consumption
 cold starts are long enough to be mistaken for a fault during a demo.
 
 ## Schema ownership
+
+The database is named `acme-db-eis-*`, not `acme-db-reglocation-*`, because
+RegLocationProvider is not its only consumer. RdlProvider is a separate
+function app over the same database and the same `dbo` tables — it curates the
+class vocabulary in `dbo.class_objects` that this registry classifies tags
+against. Same persistence, different apps.
+
+RegLocationProvider owns the DDL for both. RdlProvider ships no schema of its
+own and creates no tables; it takes the schema as it finds it. Two apps
+creating the same tables would race on a cold start, and would let the two
+definitions drift apart unnoticed.
 
 The runtime schema lives with the code, not in `docs`:
 
@@ -87,7 +98,7 @@ The deployment grants the app's identity access to its database. The obvious
 form of that command:
 
 ```powershell
-sqlcmd -S acme-sql-server.database.windows.net -d acme-db-reglocation-dev -G -Q "..."
+sqlcmd -S acme-sql-server.database.windows.net -d acme-db-eis-dev -G -Q "..."
 ```
 
 resolves `-G` to **ActiveDirectoryIntegrated**, which cannot prompt, so on an
@@ -101,7 +112,7 @@ Adding `-U <upn>` selects the interactive flow instead, which can complete the
 prompt:
 
 ```powershell
-sqlcmd -S acme-sql-server.database.windows.net -d acme-db-reglocation-dev `
+sqlcmd -S acme-sql-server.database.windows.net -d acme-db-eis-dev `
        -G -U "you@example.com" -Q "..."
 ```
 
