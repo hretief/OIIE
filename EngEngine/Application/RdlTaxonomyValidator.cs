@@ -34,10 +34,10 @@ public sealed record RdlValidationResult
 ///
 /// This exists because <see cref="EngEngineOptions.OutboundRdlClassMap"/> is a
 /// claim about someone else's library that nothing was checking. A key that is
-/// merely a typo -- "rdl:LightingUnits" -- publishes a segment type no
+/// merely a typo -- "rdl:Streetlights" -- publishes a segment type no
 /// subscriber can resolve, and every consumer records it as fact. The map
-/// cannot be derived automatically, because deciding that a Streetlight is a
-/// LightingUnit is a modelling judgement; but it can be told when it names
+/// cannot be derived automatically, because deciding which RDL class a
+/// Streetlight is is a modelling judgement; but it can be told when it names
 /// something that does not exist, which is the failure that actually happens.
 ///
 /// Over ISBM rather than RDL's HTTP API, deliberately. ENG has no business
@@ -49,7 +49,7 @@ public sealed record RdlValidationResult
 /// throwing, because the drain this runs inside has markers to publish and the
 /// mapping is no more wrong than it was on the previous pass.
 /// </summary>
-public sealed class RdlTaxonomyValidator(
+public class RdlTaxonomyValidator(
     IIsbmClient isbm,
     IOptions<EngRdlOptions> rdlOptions,
     IOptions<EngEngineOptions> engineOptions,
@@ -63,9 +63,29 @@ public sealed class RdlTaxonomyValidator(
     // twice to fill the same cache slot.
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    private HashSet<string>? _codes;
+    private Dictionary<string, RdlClass>? _classes;
     private DateTimeOffset _cachedUntil = DateTimeOffset.MinValue;
     private string? _failureReason;
+
+    /// <summary>
+    /// The library's entry for one RDL key, or null when the library does not
+    /// hold it or could not be read.
+    ///
+    /// Exposed so a caller that needs the class's governed identity -- the
+    /// UUID RDL minted for it -- can take it from the same cached fetch this
+    /// validator already performs, rather than opening a second session to ask
+    /// the same question.
+    /// </summary>
+    public virtual async Task<RdlClass?> FindClassAsync(string rdlKey, CancellationToken ct = default)
+    {
+        if (!_options.Enabled || string.IsNullOrWhiteSpace(rdlKey)) return null;
+
+        var classes = await GetLibraryAsync(ct);
+
+        return classes is not null && classes.TryGetValue(rdlKey, out var rdlClass)
+            ? rdlClass
+            : null;
+    }
 
     /// <summary>
     /// Checks the configured map, fetching the library if the cache is cold.
@@ -97,7 +117,7 @@ public sealed class RdlTaxonomyValidator(
         }
 
         var missing = configured
-            .Where(key => !codes.Contains(key))
+            .Where(key => !codes.ContainsKey(key))
             .OrderBy(key => key, StringComparer.Ordinal)
             .ToList();
 
@@ -113,7 +133,7 @@ public sealed class RdlTaxonomyValidator(
     /// The library's class codes, from cache when warm. Null means the fetch
     /// failed, with <see cref="_failureReason"/> saying how.
     /// </summary>
-    private async Task<HashSet<string>?> GetLibraryAsync(CancellationToken ct)
+    private async Task<Dictionary<string, RdlClass>?> GetLibraryAsync(CancellationToken ct)
     {
         await _gate.WaitAsync(ct);
 
@@ -123,29 +143,38 @@ public sealed class RdlTaxonomyValidator(
             // should use its result rather than immediately repeat it.
             if (DateTimeOffset.UtcNow < _cachedUntil)
             {
-                return _codes;
+                return _classes;
             }
 
             try
             {
                 var classes = await FetchAsync(ct);
 
-                _codes = new HashSet<string>(
-                    classes.Select(c => c.Code), StringComparer.OrdinalIgnoreCase);
+                // Last one wins on a duplicate code rather than throwing: a
+                // library serving the same code twice is RDL's problem to fix,
+                // and it is not a reason to leave the map unverified.
+                var byCode = new Dictionary<string, RdlClass>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var rdlClass in classes)
+                {
+                    byCode[rdlClass.Code] = rdlClass;
+                }
+
+                _classes = byCode;
                 _failureReason = null;
                 _cachedUntil = DateTimeOffset.UtcNow.Add(_options.CacheDuration);
 
                 logger.LogInformation(
                     "RDL returned {Count} classes; the outbound map will be checked against them.",
-                    _codes.Count);
+                    _classes.Count);
 
-                return _codes;
+                return _classes;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // Cached as a failure so a provider that is down does not cost
                 // every subsequent drain the full response timeout.
-                _codes = null;
+                _classes = null;
                 _failureReason = ex.Message;
                 _cachedUntil = DateTimeOffset.UtcNow.Add(_options.FailureCacheDuration);
 

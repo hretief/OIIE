@@ -46,6 +46,73 @@ OCLC control number or a VIAF cluster ID than an ISBN. Two CIR servers over the
 same plant will mint entirely different CIRIDs, and `UpdateEntryCIRID` exists
 precisely so they can be collapsed later.
 
+### Instance data and reference data enter differently
+
+CIR serves two kinds of registration, and conflating them causes real errors.
+
+**Instance data** — elements, segments, tags, sites — is the case above. Each
+participant mints its own key for the same physical thing, no key is more
+correct than another, and CIR asserts the equivalence. This is what rule 3 of
+the [federation GUID guideline](FederationId/federation-guid-guideline.md)
+requires of every participant.
+
+**Reference data** — classes, property definitions, relationship definitions,
+enumeration values — does not work that way. RDL mints those UUIDs and is the
+sole authority for them. There is no competing identity to reconcile, so CIR is
+not federating anything: it can only record that a participant's local
+vocabulary term cross-references the governed one.
+
+```
+Instance:   ENG 44891  |  ALIM LOC-000001  |  MMS 7734
+                 └───────── same CIRID ─────────┘        equivalence asserted
+
+Reference:  ENG.Streetlight ──cross-references──▶ rdl:Streetlight
+                                                   └─ UUID minted by RDL
+```
+
+Two consequences follow. First, a participant must never derive or mint a UUID
+for reference data — a derived value is well-formed and silently fails to match
+the library.
+
+Second, this registration is **not optional decoration**. The reference-data
+entries are the mechanism that retires per-participant code matching. Today ENG
+resolves a class through a local config map and the receiver matches on the
+string code, so renaming a class in RDL breaks the binding. The plan is to
+perform the complete ENG→RDL mapping out-of-band, pre-load those entries into
+CIR, and then resolve through the registry to the UUID — at which point the code
+stops being load-bearing and the local map can go.
+
+```
+Now:     ENG.Streetlight ──local config map──▶ rdl:Streetlight ──match on code──▶ class row
+Target:  ENG.Streetlight ──CIR lookup────────▶ RDL class GUID   ──match on UUID──▶ class row
+```
+
+The lookup half of the target now exists: `CirClassResolver` in `EngEngine` asks
+CIR for the class identity and publishes it as `SegmentType.UUID`. It is off by
+default (`ResolveClassIdentityFromCir`) and falls back to the derived value on a
+miss, because a cold registry would otherwise stop typing every segment.
+
+The seeding half now exists too, as `RegisterClassIdentityInCir` (also off by
+default, and requiring resolution to be on). When CIR answers that it holds no
+cross-reference for an EC class, the resolver takes the RDL key from the config
+map, asks RDL over Get/ShowTaxonomySet what it holds for that key, and registers
+the mapping in CIR with **RDL's own class GUID as the CIRID**. Every later drain
+takes the ordinary lookup path, so the RDL round trip happens once per class.
+
+The GUID is the point of the whole exercise. A registration carrying a locally
+minted identity would be worse than no registration, because the next lookup
+would find it and publish it as though it were governed — so every step that
+could substitute a weaker identity declines instead: no configured RDL key, no
+class in the library, no UUID on the class, or an unreachable CIR all leave the
+registry untouched and fall back.
+
+Note what this does and does not infer. The modelling judgement — that
+`ENG.Streetlight` means `rdl:Streetlight` — is still made by a human and recorded
+in `OutboundRdlClassMap`; nothing derives it from a string mid-message. What is
+automated is only the clerical half: taking a decision already recorded locally
+and publishing it into the registry under the identity RDL minted, so the config
+map stops being the only place it lives.
+
 ---
 
 ## Layout

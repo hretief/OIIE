@@ -4,7 +4,7 @@
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
 
-    "EngEngine__Enabled": "false",
+    "EngEngine__Enabled": "true",
     "EngEngine__EngBaseUrl": "http://localhost:7071/api",
     "EngEngine__EngApiKey": "",
     "EngEngine__IModelId": "00000000-0000-0000-0000-000000000000",
@@ -17,8 +17,12 @@
     "Isbm__BaseUrl": "https://acme-api-isbm-dev.azurewebsites.net/api",
     "Isbm__ApiKey": "",
 
-    "EngRdl__Enabled": "false",
+    "EngRdl__Enabled": "true",
     "EngRdl__RequestChannelUri": "/OIIE/RDL/Request",
+
+    "//class": "The outbound leg of the class cross-reference: ENG resolves its EC class through CIR and, on a miss, registers the mapping using the GUID RDL holds for the class. Requires EngRdl__Enabled, since RDL is the only source of that GUID.",
+    "EngEngine__ResolveClassIdentityFromCir": "true",
+    "EngEngine__RegisterClassIdentityInCir": "true",
 
     "EngEnginePollSchedule": "*/15 * * * * *"
   }

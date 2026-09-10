@@ -838,17 +838,23 @@ function SegmentTable({ segments, selected, onToggle, onToggleAll, accent, dimBg
  * deliberate act is publishing them as a Named Version.
  *
  * The columns use EC's own names for the fields behind them: CODEVALUE is the
- * segment short name, USERLABEL its full name, ECCLASS the class CodeValue, and
+ * segment short name, USERLABEL its full name, ECCLASS the class, and
  * FEDERATIONGUID its stable identity. Only the wire types in api.ts differ,
  * keeping the legacy server names at the boundary.
+ *
+ * ECCLASS shows the class name rather than its fully qualified key, with the
+ * key on hover. The key is what the engine matches on, but it is a developer's
+ * view of the class; the person reading this table is checking that a segment
+ * was classified as the right kind of thing.
  *
  * Maturity is not a column. It is the engine's own lifecycle rather than a
  * status this app maintains -- a segment is authored WorkInProgress and becomes
  * Published only by being included in a promoted Named Version -- so it is left
  * to the filter above the table rather than repeated on every row.
  */
-function SegmentTableLive({ segments, accent, dimBg, loading, error, selectedId, onSelect }: {
+function SegmentTableLive({ segments, classes, accent, dimBg, loading, error, selectedId, onSelect }: {
   segments: api.Tag[]
+  classes: api.ClassDefinition[]
   accent: string
   dimBg: string
   loading: boolean
@@ -884,6 +890,11 @@ function SegmentTableLive({ segments, accent, dimBg, loading, error, selectedId,
             <SegmentRow
               key={seg.id}
               seg={seg}
+              // Resolved here rather than in the row so the lookup is not
+              // repeated per row, and falling back to the key means a class the
+              // catalog no longer carries still shows something identifying
+              // instead of reading as missing.
+              className={classes.find(c => c.key === seg.classKey)?.name}
               accent={accent}
               dimBg={dimBg}
               isSelected={seg.id === selectedId}
@@ -896,8 +907,9 @@ function SegmentTableLive({ segments, accent, dimBg, loading, error, selectedId,
   )
 }
 
-function SegmentRow({ seg, accent, dimBg, isSelected, onSelect }: {
+function SegmentRow({ seg, className, accent, dimBg, isSelected, onSelect }: {
   seg: api.Tag
+  className?: string
   accent: string
   dimBg: string
   isSelected: boolean
@@ -925,8 +937,8 @@ function SegmentRow({ seg, accent, dimBg, isSelected, onSelect }: {
       <td style={{ padding: '9px 8px', fontSize: '11px', color: seg.serviceDescription ? 'var(--text-primary)' : '#f59e0b', maxWidth: 260 }}>
         {seg.serviceDescription || 'missing'}
       </td>
-      <td style={{ padding: '9px 8px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: seg.classKey ? 'var(--text-muted)' : '#f59e0b' }}>
-        {seg.classKey || 'missing'}
+      <td style={{ padding: '9px 8px', fontSize: '11px', color: seg.classKey ? 'var(--text-muted)' : '#f59e0b' }} title={seg.classKey || undefined}>
+        {seg.classKey ? (className ?? seg.classKey) : 'missing'}
       </td>
       <td style={{ padding: '9px 8px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
         {seg.federationId ? `${seg.federationId.slice(0, 8)}…` : '—'}
@@ -1176,7 +1188,10 @@ function StewardshipTable({ items, accent, loading, error, selected, onToggle, o
                 )}
               </td>
               <td style={{ padding: '9px 8px' }}>
-                <Pill label={item.state.toUpperCase()} color={STEWARDSHIP_COLOR[item.state] ?? '#6b7280'} />
+                {/* Guarded rather than trusted: a row the registry returned
+                    without a state is a data fault worth showing as such, and
+                    an uppercase of nothing took the whole panel down with it. */}
+                <Pill label={(item.state ?? 'unknown').toUpperCase()} color={STEWARDSHIP_COLOR[item.state] ?? '#6b7280'} />
               </td>
             </tr>
           ))}
@@ -3211,6 +3226,7 @@ function Workspace({ user }: { user: CurrentUser }) {
                   />
                   <SegmentTableLive
                     segments={visibleSegments}
+                    classes={engClasses}
                     accent={p.accent}
                     dimBg={p.dimBg}
                     loading={engLoading}

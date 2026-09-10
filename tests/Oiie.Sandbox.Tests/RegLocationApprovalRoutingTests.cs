@@ -2,7 +2,7 @@ using Azure;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using RegLocationEngine.Application;
-using RegLocationEngine.Infrastructure.Cir;
+using Oiie.Cir.Client;
 using RegLocationEngine.Infrastructure.RegLocation;
 using RegLocationEngine.Infrastructure.State;
 using SimHost.Tests.Sc01;
@@ -297,5 +297,9 @@ internal sealed class UnusedCir : ICirClient
         throw new NotSupportedException();
 
     public Task<int> CancelEntriesAsync(IReadOnlyList<CirEntryIdentifier> entries, CancellationToken ct) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlyList<CirRegistry>> GetRegistryAsync(
+        IReadOnlyList<CirFilter> filters, CancellationToken ct) =>
         throw new NotSupportedException();
 }

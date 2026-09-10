@@ -4,6 +4,60 @@ Pending work carried between sessions. Decisions belong in
 [decision-register.md](decision-register.md); this file is only for things not
 yet done.
 
+## Our TaxonomySet BODs diverge from the official MIMOSA schemas
+
+**Status:** not started. Raised 2026-09-10 after the official `*Taxonom*.xsd`
+files were added to `schemas/ccom/BOD/Messages/Configuration/`, which can now be
+compared against the reconstructions in `schemas/ccom/BOD/Messages/New/`.
+
+The reconstructions were built when no published XSD could be found, and were
+deliberately emitted into the sandbox extensions namespace
+(`http://www.openoandm.org/sandbox/extensions/1.0`) rather than CCOM's, precisely
+so they could not be mistaken on the wire for future official BODs of the same
+name. That call now pays off: the official BODs have landed and nothing we
+publish collides with them. Nothing is broken today, so this is debt to schedule
+rather than a defect to fix.
+
+MIMOSA published nine files — `Taxonomies`, `TaxonomySets` and
+`TaxonomyConnections`, each with `Get`, `Show` and `Sync`. Our reconstruction
+covers one cell of that grid. The divergences:
+
+- **Plural nouns.** Official is `GetTaxonomySets` / `ShowTaxonomySets`; ours is
+  singular, so the topic `OIIE:S35:V1.0/CCOM:GetTaxonomySet:R1.0` is wrong
+  against the real BOD name.
+- **The request is a filter language, not a selector.** This is the substantive
+  gap. Official `TaxonomySetsCriteria` is built from `CCOMQuery.xsd` filter types
+  (`UUIDFilter`, `TextFilter`, `UTCDateTimeFilter`) with AND-within /
+  OR-across-criteria semantics, plus `InfoSourceUUID`, `InfoSourceShortName`,
+  `InfoSourceTypeUUID` and a `countOnly` mode. Ours is plain-typed fields. This
+  should be replaced rather than patched.
+- **Base type.** Official extends `oa:BusinessObjectDocumentType` and includes
+  `CCOMQuery.xsd` (request) or `CCOMElements.xsd` (response); we hand-rolled the
+  BOD attributes and included `CCOM.xsd`.
+- **Response shape is close.** Both flatten `Type` + `Taxonomy` + `TaxonomySet`
+  side by side, so that instinct was right. Official adds `Count`
+  (`cct:NumericType`) for `countOnly`, and types the first element as `BaseType`
+  where we used `Type`.
+- **Our `Version` / `AsOf` have no official home.** We invented
+  `TaxonomySetResponseType` extending `TaxonomySet`; the CCOM type is just
+  `Entity` + `Nameable` + `Taxonomy`. `RdlTaxonomyValidator` has no other
+  freshness signal, so migrating needs somewhere for these to go.
+- **`Sync` is unmodelled.** All three families have a push verb; our RDL flow is
+  request/response only.
+
+The open decision is whether to migrate to the official BODs — renaming to
+plural, adopting `TaxonomySetsCriteria`, moving into the CCOM namespace, dropping
+`Version`/`AsOf` — or to keep the sandbox BODs and carry this as known
+divergence. Migrating moves `TaxonomySetBods.cs`, `TaxonomySetResponder`,
+`TaxonomySetRequestListener`, `RdlTaxonomyValidator`, the topic strings and the
+tests together, so it wants its own session rather than being folded into other
+work.
+
+Also stale once this is settled: `schemas/ccom/BOD/Messages/New/*.xsd` and
+`schemas/sandbox/*.xsd` declare `https://www.mimosa.org/ccom4` where CCOM uses
+`http://`. Harmless today because nothing validates against those
+reconstructions, and `Namespaces.Ccom` in code is correct.
+
 ## `RegLocationEngine` is pinned to a single `iTwinFederationId`
 
 **Status:** not started. Raised 2026-09-08 after a day zero produced no CIR or
@@ -785,15 +839,30 @@ What remains:
   agreement on the key vocabulary, and eventually the RDL participant itself
   (Technical Specification §237/§468) for definition propagation.
   - **Largely resolved by DR-030's 2026-09-09 addendum.** ENG now publishes
-    `rdl:LightingUnit` sourced as `MIMOSA-RDL` for its one mapped class, and as of
+    `rdl:Streetlight` for its one mapped class, and as of
     2026-09-10 `RdlTaxonomyValidator` checks the configured keys against the live
     library over ISBM. What remains is breadth: one class is agreed, and MMS still
     has no segments leg consuming `InboundRdlTableMap`.
+  - **Planned resolution: map out-of-band, pre-load CIR, drop the code match.**
+    The per-participant class maps are transitional. The intended end state is a
+    complete ENG→RDL mapping performed out-of-band as part of establishing the
+    ENG-RDL relationship, pre-loaded into CIR as
+    `(IDInSource=ENG.Streetlight, SourceID=ENG, CIRID=<RDL class GUID>)` entries.
+    Participants then resolve by registry lookup and match on the class UUID, so
+    the string code stops being load-bearing and a rename in RDL no longer breaks
+    the binding. **Half done as of 2026-09-11:** `CirClassResolver` performs the
+    lookup and ENG publishes the resolved CIRID as `Type.UUID`. The seeding half
+    now exists too: with `RegisterClassIdentityInCir` on, a miss makes ENG ask RDL
+    for the class and register the mapping with RDL's own class GUID as the CIRID,
+    so the registry fills itself from the first drain that meets an unmapped class.
+    Both switches are off by default. What remains is breadth — one class is
+    mapped — and Obstacle 3: REG-LOCATION still keys on the string code, so the
+    coordinated switch to matching on UUID is still ahead.
   - **Which RDL class is a MnDOT light unit?** A MIMOSA/OIIE modelling decision,
     not a coding one, and the MMS slice waits on it.
     `rdl:FunctionalLocation` (1001) is probably wrong; `rdl:Equipment` (1701) is
     nearer, since a light unit is physical plant rather than a location.
-    Answered provisionally for the light-unit slice as `rdl:LightingUnit` (1703,
+    Answered provisionally for the light-unit slice as `rdl:Streetlight` (1703,
     a child of 1701); the formal governance process is still to come.
 - **The ENG-class-to-`class_id` map is guesswork.** `InboundClassMap` seeds
   `Functional:FunctionalComponentElement` to `1001` (`rdl:FunctionalLocation`),
@@ -810,8 +879,8 @@ What remains:
   is not merely unconfirmed, it is unused.
 - **Unresolved: tags are landing on `class_id = 1001` when 1703 was expected.**
   Observed 2026-09-10 on two elements added through ENG. Both mapping tables are
-  correct — `OutboundRdlClassMap` has `ENG.Streetlight → rdl:LightingUnit`,
-  `InboundClassMap` has `rdl:LightingUnit → 1703` — and both sides agree on the
+  correct — `OutboundRdlClassMap` has `ENG.Streetlight → rdl:Streetlight`,
+  `InboundClassMap` has `rdl:Streetlight → 1703` — and both sides agree on the
   wire contract (`EngSegmentsBuilder` writes `Type.IDInInfoSource`,
   `IncomingSegmentMapper` reads it). 1001 is `InboundFallbackClassId`, so the
   fallback fired, which means the segment arrived with **no `SegmentType` at
@@ -1268,3 +1337,36 @@ Most likely the probe used the wrong path and the real endpoint is elsewhere, in
 which case the only thing to fix is the documentation that says `/health`. Worth
 confirming which, since a health path that 404s is the kind of thing a monitor
 gets pointed at and silently misreports.
+
+## REG-LOCATION reads no segments from the engineering channel
+
+Raised 2026-09-11 while chasing the day-zero symptom "neither classes nor
+elements registered". **Open, and the live blocker.**
+
+ENG publishes correctly — reset then drain gives `markersSeen 1,
+markersPublished 1, segmentsPublished 2` — but every REG-LOCATION ingest returns
+`messagesRead: 0`, including immediately after a reset with the subscription
+opened before ENG published. `CirClassRegistrar` runs per ingested segment, so it
+has never executed, which is why CIR holds ENG's `RDL-CLASS` row and not
+REG-LOCATION's mirror, and why REG-LOCATION emits no traces at all.
+
+The two reported halves are one defect. The `dbo.tags` rows (`LL-001`, `LL-002`,
+both `class_id 1703`) are residue from an earlier successful run, so elements
+looked registered while classes did not, and the fault appeared to sit in class
+registration when it sits in message delivery.
+
+Both sides agree on `/acme/{itwin}/engineering/publication` and on the topic, and
+the channel exists on the broker. Two untested suspects:
+
+- ENG's status reports its topic list duplicated
+  (`["oiie:sc01/ccom:SyncSegments","oiie:sc01/ccom:SyncSegments"]`), which hints
+  the publish-side topic construction is not what the configuration implies.
+- The durable subscriber id may name a subscription orphaned when day zero
+  recreated the channel. The recovery path for exactly that case exists in
+  `SegmentIngestionService.DrainSiteAsync` but never fired — `sessionReopened`
+  stayed `false` even on the poll after a REG-LOCATION reset.
+
+Two prior diagnoses (a stale negative cache, then a reset/drain race) were wrong.
+Both changes were kept on their own merits; neither addressed this. See the
+decision register addenda of the same date, including how broken live readings
+produced false evidence.

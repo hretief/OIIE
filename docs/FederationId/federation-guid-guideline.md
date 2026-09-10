@@ -559,10 +559,118 @@ not the facility iModel. When the project closes:
 
 ---
 
+## Instance Data vs Reference Data — Two Minting Regimes
+
+Everything above concerns **instance data**: the individual physical things a
+project creates. **Reference data** — the vocabulary those things are classified
+against — follows a different and equally deliberate rule.
+
+| | Instance data | Reference data |
+|---|---|---|
+| Examples | elements, segments, tags, sites | classes, property definitions, relationship definitions, enumeration values |
+| Minted by | the originating participant | **always RDL** |
+| Today | ENG mints, via the iModel or the authoring UI's *Suggest* button | RDL mints, stored in `class_objects` / `dbo.objects.guid` |
+| Alternate workflow | RDL mints and issues to ENG as a checklist | — no alternate; RDL is the sole authority |
+| Others' role | hold their own key for the same thing, and register it | adopt RDL's UUID as-is |
+| What CIR records | an **equivalence** between independently-minted keys | a **cross-reference** from a local schema term to the governed one |
+
+The distinction matters because it changes what CIR is doing.
+
+For instance data, three systems each mint their own key for one physical valve
+and CIR asserts those denote the same thing. No participant's key is more
+correct than another's; the CIRID is what links them.
+
+For reference data there is no competing identity to reconcile. RDL mints once
+and everyone else adopts. A class's UUID is not a local id awaiting federation —
+it **is** the federation identity from the moment RDL creates it.
+
+### Why a mapping step exists today
+
+ENG, MMS and CMS each model the world with their own schema, and those schemas
+do not match RDL's. ENG has `ENG.Streetlight`; RDL has `rdl:Streetlight`. Both
+are legitimate descriptions of the same kind of thing, held by systems with
+different purposes. That difference is permanent; **the config file expressing it
+is not**.
+
+Today each participant carries a local map — `OutboundRdlClassMap` in ENG,
+`InboundClassMap` in REG-LOCATION, `InboundRdlTableMap` in MMS. These are
+private, asserted, and duplicated per participant, so the same correspondence is
+restated in several places with no single point of truth. `RdlTaxonomyValidator`
+makes them *checkable* against the live library, which is an improvement on
+asserting them blindly, but it does not remove the duplication.
+
+### Target state: map out-of-band, pre-load CIR, retire code matching
+
+The intended end state is a **complete ENG→RDL mapping performed out-of-band**
+as part of establishing the relationship, then **pre-loaded into CIR** as
+registry entries. Once those entries exist, the correspondence is resolved by
+lookup against a shared registry rather than by string comparison inside each
+participant.
+
+```
+Now:     ENG.Streetlight ──local config map──▶ rdl:Streetlight ──match on code──▶ class row
+                                                                  ▲ rename breaks this
+
+Target:  out-of-band mapping exercise ──pre-load──▶ CIR entries
+         ENG.Streetlight ──CIR lookup──▶ RDL class GUID ──match on UUID──▶ class row
+                                                            ▲ survives a rename
+```
+
+This is what closes the open issue in DR-030. `SegmentType` currently matches on
+the string code, so renaming a class in RDL breaks the binding the GUID exists to
+keep stable. Resolving through a pre-loaded CIR entry to the UUID removes that
+fragility, because the code stops being load-bearing.
+
+So the CIR registration for reference data is **not optional decoration**. It is
+the mechanism that makes the per-participant code map unnecessary. Registering
+`(IDInSource=ENG.Streetlight, SourceID=ENG, CIRID=<RDL class GUID>)` turns a
+private mapping table into a shared fact. Note what it still is and is not: it
+asserts an **equivalence between vocabulary terms** and does not mint or federate
+an identity, because RDL already gave the class exactly one.
+
+Pre-loading matters because the mapping is an analytical exercise, not something
+to infer at runtime. Deciding that `ENG.Streetlight` corresponds to
+`rdl:Streetlight` is a modelling judgement, made deliberately and reviewed once,
+rather than guessed from a string as a message passes through.
+
+### Current state
+
+Elements are done and working. Classes are in progress — RDL mints and stores
+the UUID, `ShowTaxonomySet` publishes it, and ENG validates its map against the
+library. The lookup half of the target now exists: `CirClassResolver` asks CIR
+for the class identity and publishes it as `SegmentType.UUID`. It is **off by
+default** and falls back to the derived value on a miss, because the CIR entries
+described above are **not yet pre-loaded**; enabling it against a cold registry
+would otherwise stop typing every segment. The local maps remain load-bearing
+until the pre-load happens, which is what finally closes DR-030.
+
+How load-bearing they still are was demonstrated by renaming `rdl:LightingUnit`
+to `rdl:Streetlight`: the key is matched on by three separate config maps, and
+changing the RDL seed alone would have silently unbound the class across the
+whole ENG→REG-LOCATION→MMS chain with no build error. That is precisely the
+fragility the pre-load removes.
+
+Property definitions, relationship definitions and enumeration values are **not
+yet modelled at all**: `IRdlStore` currently holds namespaces, class groups and
+classes only.
+
+One design question is worth settling before the second reference-data kind is
+built. An enumeration value is reference data, so RDL mints its UUID — but
+ENG/MMS/CMS typically hold such values as schema-local lookup rows with their
+own keys and nowhere to store a GUID. That is the same problem
+`SiteIngestionService` already solves for `SETUP_OWNER` by pushing identity into
+CIR precisely because the table has no column for it. Settle the pattern once,
+rather than inventing it per kind.
+
+---
+
 ## Rules for Implementers
 
 1. **The iModel assigns the FederationGuid.** It is born in ENG and travels outbound
    through every system. No system downstream of ENG creates or overrides it.
+
+   This rule governs **instance data**. Reference data follows rule 10 instead:
+   RDL mints those UUIDs and ENG adopts them.
 
    The one exception is brownfield adoption: where an entity already carries an
    identity in a tag register, handover sheet or predecessor system, ENG adopts that
@@ -615,6 +723,19 @@ not the facility iModel. When the project closes:
    iModel) and its mounting bracket (in the Structural iModel) are different physical things.
    They get different FederationGuids and different CIR entries, even if they share a location.
 
+10. **RDL mints all reference-data UUIDs; no other participant invents one.** Classes,
+    property definitions, relationship definitions and enumeration values are governed by
+    RDL and carry the UUID it assigned. A participant classifying against the vocabulary
+    adopts that UUID rather than deriving or minting its own — a derived value looks
+    well-formed and silently fails to match the library.
+
+    Participants map their own schema terms to RDL's at their own edge today, but that
+    local map is transitional. The intended end state is a complete out-of-band mapping
+    pre-loaded into CIR, after which the correspondence resolves by registry lookup to the
+    UUID and the per-participant code map retires. Until then, validate the local map
+    against the library rather than assuming it: a key that does not resolve puts a false
+    statement on the bus that every consumer records as fact.
+
 ---
 
 ## Summary
@@ -632,3 +753,7 @@ not the facility iModel. When the project closes:
 | How does it relate to the iTwin FederationId? | Same principle, different level: iTwin FederationId identifies the facility, segment FederationGuid identifies the asset within it |
 | What happens on asset replacement? | New physical device → new FederationGuid → new CIR entry. Old entry preserved with full history |
 | Can you navigate from CIR back to the 3D model? | Yes — the ENG-IMODEL entry has the iModelId and ECInstanceId to open the exact element |
+| Who mints reference-data UUIDs? | RDL, always — classes, property defs, relationship defs, enumeration values |
+| Why do participants still map class names? | Their schemas genuinely differ from RDL's, but the local config map is transitional — a pre-loaded CIR cross-reference replaces it |
+| What does CIR record for reference data? | A cross-reference from a local vocabulary term to the governed one — an equivalence, not a new identity |
+| How does code matching get retired? | Map ENG→RDL completely out-of-band, pre-load CIR, then resolve to the UUID instead of the string code |

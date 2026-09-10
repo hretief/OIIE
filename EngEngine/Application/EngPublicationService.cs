@@ -57,6 +57,7 @@ public sealed class EngPublicationService(
     EngSegmentsBuilder builder,
     TopologyClient topology,
     RdlTaxonomyValidator rdlValidator,
+    CirClassResolver classResolver,
     IOptions<EngEngineOptions> options,
     ILogger<EngPublicationService> logger)
 {
@@ -130,7 +131,12 @@ public sealed class EngPublicationService(
         var run = new DrainRun
         {
             Published = new HashSet<Guid>(state.PublishedVersions),
-            Watermark = state.Watermark
+            Watermark = state.Watermark,
+
+            // Captured at the start, not re-read at the end, so a reset that
+            // lands while this pass is inside an RDL round trip invalidates the
+            // conclusions the pass is about to write.
+            Generation = state.Generation
         };
 
         // Sequential rather than concurrent: the run accumulates shared state,
@@ -169,7 +175,8 @@ public sealed class EngPublicationService(
             var next = new EngEngineState
             {
                 Watermark = run.Watermark,
-                PublishedVersions = run.Published
+                PublishedVersions = run.Published,
+                Generation = run.Generation
             };
 
             if (!await stateStore.TryWriteAsync(next, etag, CancellationToken.None))
@@ -257,6 +264,34 @@ public sealed class EngPublicationService(
     }
 
     /// <summary>
+    /// Asks CIR for the class identity of each distinct EC class in a marker.
+    /// </summary>
+    /// <remarks>
+    /// Classes that do not resolve are simply absent from the result, and the
+    /// builder falls back to the derived identity for those. An empty map is
+    /// therefore the normal state before CIR is seeded, not a failure: it leaves
+    /// publication behaving exactly as it did before this path existed.
+    /// </remarks>
+    private async Task<IReadOnlyDictionary<string, Guid>> ResolveClassIdentitiesAsync(
+        IReadOnlyList<EngElement> elements, CancellationToken ct)
+    {
+        var identities = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+
+        var classNames = elements
+            .Where(e => !string.IsNullOrWhiteSpace(e.FullyQualifiedECClassName))
+            .GroupBy(e => e.FullyQualifiedECClassName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (Name: g.Key, Id: g.First().ECClassId));
+
+        foreach (var (className, ecClassId) in classNames)
+        {
+            if (await classResolver.ResolveAsync(className, ecClassId, ct) is { } cirid)
+                identities[className] = cirid;
+        }
+
+        return identities;
+    }
+
+    /// <summary>
     /// Everything one drain accumulates across the models it visits.
     ///
     /// Shared deliberately: the watermark and the published set describe the
@@ -267,6 +302,7 @@ public sealed class EngPublicationService(
     {
         public required HashSet<Guid> Published { get; init; }
         public DateTime? Watermark { get; set; }
+        public long Generation { get; init; }
         public List<string> Errors { get; } = [];
         public List<string> Skipped { get; } = [];
         public int MarkersSeen { get; set; }
@@ -388,10 +424,16 @@ public sealed class EngPublicationService(
 
                 var correlationId = Guid.NewGuid().ToString();
 
+                // Resolved once per marker over the distinct classes, not once
+                // per element: a handover is typically many elements of a few
+                // classes, and asking per element would put the same lookup on
+                // the publish path repeatedly.
+                var classIdentities = await ResolveClassIdentitiesAsync(elements, ct);
+
                 // The same twin the channel is rooted in, so what the message
                 // says about itself and where it was delivered cannot disagree.
                 var content = builder.Build(
-                    marker, elements, model.ITwinId, correlationId);
+                    marker, elements, model.ITwinId, correlationId, classIdentities);
 
                 var messageId = await isbm.PostPublicationAsync(
                     sessionId,

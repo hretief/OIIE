@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Oiie.Isbm.Client;
-using RegLocationEngine.Infrastructure.Cir;
+using Oiie.Cir.Client;
 using RegLocationEngine.Infrastructure.RegLocation;
 using RegLocationEngine.Infrastructure.State;
 

@@ -4,7 +4,7 @@
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
 
-    "RegLocationEngine__Enabled": "false",
+    "RegLocationEngine__Enabled": "true",
     "RegLocationEngine__RegLocationBaseUrl": "http://localhost:7073/api",
     "RegLocationEngine__RegLocationApiKey": "",
     "RegLocationEngine__Enterprise": "acme",
@@ -28,12 +28,16 @@
     "RegLocationEngine__MaxMessagesPerPoll": "25",
 
     "//sites": "The bootstrap leg. Its channel is enterprise-level and not derived from ITwinFederationId, because SyncSites is the message that brings an iTwin context into being.",
-    "RegLocationEngine__SitesIngestEnabled": "false",
+    "RegLocationEngine__SitesIngestEnabled": "true",
     "RegLocationEngine__SitesTopics__0": "oiie/ccom:SyncSites",
     "RegLocationEngine__SiteNamespaceId": "1",
     "RegLocationEngine__SiteUnitId": "1",
     "RegLocationEngine__SiteTrnId": "1",
     "RegLocationEngine__SiteItemType": "Site",
+
+    "//class": "The inbound leg of the class cross-reference: records in CIR that this registry's class_id means the governed RDL class the segment was typed with. The identity arrives on the wire and is verified against CIR before being mirrored, so a sender's derived fallback is never registered as governed. The category must match what ENG writes.",
+    "RegLocationEngine__RegisterClassIdentityInCir": "true",
+    "RegLocationEngine__ClassCategoryId": "RDL-CLASS",
 
     "Isbm__BaseUrl": "https://acme-api-isbm-dev.azurewebsites.net/api",
     "Isbm__ApiKey": "",

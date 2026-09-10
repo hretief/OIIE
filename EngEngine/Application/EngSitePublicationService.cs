@@ -1,4 +1,4 @@
-using EngEngine.Infrastructure.Cir;
+using Oiie.Cir.Client;
 using EngEngine.Infrastructure.Eng;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;

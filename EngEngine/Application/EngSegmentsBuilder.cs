@@ -78,7 +78,8 @@ public sealed class EngSegmentsBuilder(
         EngNamedVersion marker,
         IReadOnlyList<EngElement> elements,
         Guid iTwinId,
-        string correlationId)
+        string correlationId,
+        IReadOnlyDictionary<string, Guid>? classIdentities = null)
     {
         var bod = new SyncSegments(ActionCodes.Replace);
 
@@ -151,7 +152,7 @@ public sealed class EngSegmentsBuilder(
 
         foreach (var element in elements)
         {
-            bod.With(BuildSegment(element, infoSource, registrationSite));
+            bod.With(BuildSegment(element, infoSource, registrationSite, classIdentities));
         }
 
         // The root element rather than the document: ISBM carries message content
@@ -180,7 +181,11 @@ public sealed class EngSegmentsBuilder(
     public static bool IsPublishable(EngElement element) =>
         element.FederationGuid is not null;
 
-    private Segment BuildSegment(EngElement element, InfoSource infoSource, Site? registrationSite)
+    private Segment BuildSegment(
+        EngElement element,
+        InfoSource infoSource,
+        Site? registrationSite,
+        IReadOnlyDictionary<string, Guid>? classIdentities)
     {
         var federationId = element.FederationGuid
             ?? throw new InvalidOperationException(
@@ -215,21 +220,44 @@ public sealed class EngSegmentsBuilder(
 
             if (rdlKey is not null)
             {
-                // Sourced as MIMOSA-RDL because the key genuinely resolves in
-                // the shared library -- which is exactly the claim the old
-                // EC-class version could not make. Its own InfoSource, not the
-                // segment's: that one identifies the iModel, and the RDL class
-                // does not come from the iModel at all.
+                // The identity CIR already holds for this class, when there is
+                // one. Preferred over the derived value below because it is an
+                // identity somebody registered rather than one this engine
+                // computed: RDL mints reference-data UUIDs and CIR publishes the
+                // cross-reference, so a hash of the key matches the library only
+                // by coincidence.
+                var resolved = classIdentities is not null
+                    && classIdentities.TryGetValue(className, out var cirid)
+                        ? cirid
+                        : (Guid?)null;
+
                 segment.Type = new SegmentType
                 {
-                    UUID = CcomUuid.ForReferenceData(RdlSourceId, rdlKey),
-                    IDInInfoSource = rdlKey,
+                    UUID = resolved ?? CcomUuid.ForReferenceData(RdlSourceId, rdlKey),
+
+                    // ENG's own identification of the class, registered against
+                    // the identity above -- the class-level counterpart of the
+                    // ECInstanceId this segment carries for the element. A
+                    // receiver holding the pair can come back to ENG and ask
+                    // about this class by the id ENG uses for it.
+                    IDInInfoSource = element.ECClassId.ToString(),
+
+                    // Named as ENG because IDInInfoSource above is ENG's id.
+                    // Attributing an ENG id to the shared library would tell a
+                    // receiver to resolve it somewhere it does not exist.
                     InfoSource = new InfoSource
                     {
-                        UUID = CcomUuid.ForInfoSource(RdlSourceId),
-                        ShortName = RdlSourceId
+                        UUID = CcomUuid.ForInfoSource(_options.SourceId),
+                        ShortName = _options.SourceId
                     },
-                    ShortName = rdlKey.Split(':').Last()
+
+                    // The governed key, whole. This is what the receiver matches
+                    // on until resolution moves to the UUID: IDInInfoSource used
+                    // to carry it, and now carries ENG's class id, so dropping
+                    // the namespace here would leave "Streetlight" against an
+                    // InboundClassMap keyed on "rdl:Streetlight" and file every
+                    // segment under the fallback class.
+                    ShortName = rdlKey
                 };
             }
             else

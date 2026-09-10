@@ -35,11 +35,19 @@ public enum SegmentRejection
 /// The registration site the sender named, or null when it named none. The scope
 /// on <see cref="Request"/> is provisional until the service resolves this.
 /// </param>
+/// <param name="ClassIdentity">
+/// The identity the sender put on the segment's type, carried through so the
+/// class cross-reference can be checked in CIR. Not used to classify the tag --
+/// that is <see cref="CreateTagRequest.ClassId"/>'s job, resolved from the key.
+/// </param>
+/// <param name="ClassKey">The governed key the segment was typed with, if any.</param>
 public sealed record SegmentMappingResult(
     CreateTagRequest? Request,
     SegmentRejection Rejection,
     bool ClassWasMapped,
-    Guid? SiteGuid = null)
+    Guid? SiteGuid = null,
+    Guid? ClassIdentity = null,
+    string? ClassKey = null)
 {
     public bool IsMapped => Request is not null;
 }
@@ -91,7 +99,13 @@ public sealed class IncomingSegmentMapper(
         // never empty. A steward choosing what to admit needs something to read.
         var name = FirstNonBlank(segment.FullName, segment.Description, segment.ShortName) ?? code;
 
-        var senderClassName = segment.Type?.IDInInfoSource;
+        // ShortName first, IDInInfoSource second. The governed RDL key travels
+        // in ShortName; IDInInfoSource holds the sender's own id for its class
+        // -- ENG puts its ECClassId there -- which is meaningless to this map.
+        // The fallback is retained because a publisher that has not moved over
+        // still puts its key in IDInInfoSource, and reading only ShortName would
+        // silently file all of its segments under the fallback class.
+        var senderClassName = FirstNonBlank(segment.Type?.ShortName, segment.Type?.IDInInfoSource);
         var classId = _options.ResolveClassId(senderClassName, out var mapped);
 
         if (!mapped)
@@ -137,7 +151,15 @@ public sealed class IncomingSegmentMapper(
                 State: RegTagStates.Proposed),
             SegmentRejection.None,
             mapped,
-            siteGuid);
+            siteGuid,
+
+            // The sender's answer to "which RDL class is this", passed on for
+            // the registrar to verify. Deliberately not consulted when choosing
+            // ClassId above: this leg classifies from the governed key, and
+            // taking the id from a UUID the sender may have derived would let a
+            // publisher's fallback decide what a location is.
+            segment.Type?.UUID,
+            senderClassName);
     }
 
     private static string? FirstNonBlank(params string?[] candidates) =>

@@ -81,6 +81,49 @@ redundant with the `rdl:Equipment` fixture: elements carry classification as an
 `ECClassId`, and planned element properties attach via the element's assigned
 class. Both rows are needed, for different reasons.
 
+## Which store owns the identity
+
+The two stores hold class *definitions*; only one mints class *identity*.
+
+**RDL mints all reference-data UUIDs.** Classes today, and property
+definitions, relationship definitions and enumeration values when those are
+modelled. The GUID lives in `dbo.objects.guid`, is seeded and back-filled by
+`bootstrap.sql`, and travels on `ShowTaxonomySet` via `TaxonomySetBods`. No
+other participant mints or derives one — a derived UUID is well-formed and
+silently fails to match the library.
+
+This is the opposite of the instance-data rule. A segment's FederationGuid is
+minted by ENG because ENG creates the physical thing; a class's UUID is minted
+by RDL because RDL governs the vocabulary. Both are federation identities; they
+differ in who has the authority to create them.
+
+`ENG.Equipment` and `rdl:Equipment` therefore remain separate rows, as
+["Meanwhile"](#meanwhile) describes. The *schemas* differ permanently; the
+config files translating between them do not. ENG's `OutboundRdlClassMap` and
+REG-LOCATION's `InboundClassMap` are the current, private, per-participant way
+of expressing the correspondence, and both are transitional.
+
+The intended end state is a **complete ENG→RDL mapping done out-of-band**, then
+**pre-loaded into CIR**. Once those entries exist, a participant resolves
+`ENG.Streetlight` to the RDL class GUID by registry lookup and matches on the
+UUID, so the local code map becomes unnecessary. Until that pre-load happens the
+maps stay, and `RdlTaxonomyValidator` at least makes them checkable rather than
+merely asserted.
+
+CIR's role here is narrow and worth stating plainly. For instance data CIR
+asserts that independently-minted keys denote the same thing. For reference data
+there is no competing identity to reconcile, so registering
+`(IDInSource=ENG.Streetlight, SourceID=ENG, CIRID=<RDL class GUID>)` publishes a
+**cross-reference between vocabulary terms** — it does not confer identity,
+because RDL already did. That registration is nonetheless the thing that retires
+code matching, so it is required work rather than an optional nicety. See
+[federation-guid-guideline](../FederationId/federation-guid-guideline.md#instance-data-vs-reference-data--two-minting-regimes)
+and [cir-provider](../cir-provider.md#instance-data-and-reference-data-enter-differently).
+
+Not yet closed: `SegmentType` is still matched on the string code rather than the
+UUID, so a name change in RDL breaks the binding that the GUID exists to make
+stable (DR-030).
+
 ## If the dropdown is empty
 
 Day zero has not been run on that environment. `Program.cs` refreshes

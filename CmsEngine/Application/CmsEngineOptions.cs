@@ -45,8 +45,11 @@ public sealed class CmsEngineOptions
 
     // ---- Upstream: the sites leg ------------------------------------------
 
-    /// <summary>Whether the engine consumes SyncSites from ENG.</summary>
-    public bool SitesIngestEnabled { get; set; }
+    /// <summary>
+    /// Whether the engine consumes SyncSites from ENG. On by default, matching
+    /// what the deploy script has always applied.
+    /// </summary>
+    public bool SitesIngestEnabled { get; set; } = true;
 
     /// <summary>
     /// The enterprise channel SyncSites arrives on, matching what EngEngine

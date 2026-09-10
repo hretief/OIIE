@@ -140,14 +140,14 @@ public class TaxonomySetBodTests
     // --- ShowTaxonomySet ---------------------------------------------------
 
     /// <summary>
-    /// The sandbox slice as REG-LOCATION seeds it: rdl:LightingUnit and
+    /// The sandbox slice as REG-LOCATION seeds it: rdl:Streetlight and
     /// rdl:Instrument both specialise rdl:Equipment, which is itself a root.
     /// </summary>
     private static readonly RdlClass[] SandboxClasses =
     [
         new() { Code = "rdl:Equipment", Name = "Equipment" },
         new() { Code = "rdl:Instrument", Name = "Instrument", ParentCode = "rdl:Equipment" },
-        new() { Code = "rdl:LightingUnit", Name = "Lighting Unit", ParentCode = "rdl:Equipment" }
+        new() { Code = "rdl:Streetlight", Name = "Streetlight", ParentCode = "rdl:Equipment" }
     ];
 
     private static XDocument SandboxResponse() =>
@@ -242,9 +242,9 @@ public class TaxonomySetBodTests
 
         Assert.Equal(3, parsed.Count);
 
-        var lightingUnit = parsed.Single(c => c.Code == "rdl:LightingUnit");
-        Assert.Equal("rdl:Equipment", lightingUnit.ParentCode);
-        Assert.Equal("Lighting Unit", lightingUnit.Name);
+        var streetlight = parsed.Single(c => c.Code == "rdl:Streetlight");
+        Assert.Equal("rdl:Equipment", streetlight.ParentCode);
+        Assert.Equal("Streetlight", streetlight.Name);
 
         Assert.Null(parsed.Single(c => c.Code == "rdl:Equipment").ParentCode);
         Assert.Equal("rdl:Equipment", parsed.Single(c => c.Code == "rdl:Instrument").ParentCode);
@@ -273,13 +273,13 @@ public class TaxonomySetBodTests
     {
         var document = TaxonomySetBods.ShowTaxonomySet(
             "ACME-RDL",
-            [new RdlClass { Code = "rdl:LightingUnit", ParentCode = "rdl:Equipment" }],
+            [new RdlClass { Code = "rdl:Streetlight", ParentCode = "rdl:Equipment" }],
             "RDL", "bod-102", "bod-3");
 
         Assert.Empty(Validate(document));
 
         var parsed = Assert.Single(TaxonomySetBods.ParseShowTaxonomySet(document));
-        Assert.Equal("rdl:LightingUnit", parsed.Code);
+        Assert.Equal("rdl:Streetlight", parsed.Code);
         Assert.Null(parsed.ParentCode);
     }
 }

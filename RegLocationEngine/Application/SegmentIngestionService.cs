@@ -74,6 +74,7 @@ public sealed class SegmentIngestionService(
     IIsbmClient isbm,
     IRegLocationClient regLocation,
     IncomingSegmentMapper mapper,
+    CirClassRegistrar classRegistrar,
     TopologyClient topology,
     IOptions<RegLocationEngineOptions> options,
     ILogger<SegmentIngestionService> logger)
@@ -436,6 +437,18 @@ public sealed class SegmentIngestionService(
             }
 
             var request = result.Request!;
+
+            // The inbound half of the class cross-reference: record in CIR that
+            // this registry's class means the governed class the sender typed
+            // the segment with. Done here rather than in the mapper, which is
+            // deliberately synchronous and free of I/O so its judgements stay
+            // testable without a broker or a registry.
+            //
+            // Awaited but never allowed to fail the segment. A tag a steward
+            // needs to see must not be dropped because a registry entry could
+            // not be written.
+            await classRegistrar.EnsureAsync(
+                request.ClassId, result.ClassIdentity, result.ClassKey, ct);
 
             // The scope comes from the site the sender named, not from engine
             // configuration. A configured scope would be a second opinion about

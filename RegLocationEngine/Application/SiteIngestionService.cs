@@ -3,7 +3,7 @@ using Microsoft.Extensions.Options;
 using Oiie.Ccom.Oagis;
 using Oiie.Ccom.Types;
 using Oiie.Isbm.Client;
-using RegLocationEngine.Infrastructure.Cir;
+using Oiie.Cir.Client;
 using RegLocationEngine.Infrastructure.RegLocation;
 
 namespace RegLocationEngine.Application;

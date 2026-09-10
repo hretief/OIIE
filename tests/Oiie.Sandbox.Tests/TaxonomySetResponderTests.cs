@@ -35,7 +35,7 @@ public class TaxonomySetResponderTests
         new(1701, 1, 1, "rdl:Equipment", "Equipment", null, null, EquipmentUuid),
         new(1702, 1, 1, "rdl:Instrument", "Instrument", null, 1701,
             new Guid("9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a04")),
-        new(1703, 1, 1, "rdl:LightingUnit", "Lighting Unit", "A street light.", 1701,
+        new(1703, 1, 1, "rdl:Streetlight", "Streetlight", "A street light.", 1701,
             new Guid("9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a05")),
         new(2701, 1, 2, "other:Widget", "Widget", null, null)
     ];
@@ -89,7 +89,7 @@ public class TaxonomySetResponderTests
 
         var classes = TaxonomySetBods.ParseShowTaxonomySet(response!);
 
-        Assert.Equal("rdl:Equipment", classes.Single(c => c.Code == "rdl:LightingUnit").ParentCode);
+        Assert.Equal("rdl:Equipment", classes.Single(c => c.Code == "rdl:Streetlight").ParentCode);
         Assert.Null(classes.Single(c => c.Code == "rdl:Equipment").ParentCode);
     }
 
@@ -166,7 +166,7 @@ public class TaxonomySetResponderTests
         var classes = TaxonomySetBods.ParseShowTaxonomySet(response!);
 
         Assert.Equal(3, classes.Count);
-        Assert.Contains(classes, c => c.Code == "rdl:LightingUnit");
+        Assert.Contains(classes, c => c.Code == "rdl:Streetlight");
     }
 
     /// <summary>

@@ -2,6 +2,7 @@ using System.Linq;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using EngEngine.Application;
+using RegLocationEngine.Application;
 using Oiie.Ccom.Oagis;
 using Oiie.Ccom.Types;
 using Xunit;
@@ -150,7 +151,7 @@ public class EngSegmentsBuilderTests
     {
         // A mapped class, because an unmapped one no longer produces a Type at
         // all -- see Unmapped_ec_class_publishes_without_a_segment_type.
-        var bod = BuilderMapping("Bis:PhysicalElement", "rdl:LightingUnit")
+        var bod = BuilderMapping("Bis:PhysicalElement", "rdl:Streetlight")
             .Build(Marker(), [Element()], ITwinId, "corr-4");
 
         var segment = FirstSegment(bod);
@@ -164,18 +165,88 @@ public class EngSegmentsBuilderTests
     }
 
     [Fact]
-    public void Mapped_ec_class_publishes_the_rdl_key_not_the_ec_class()
+    public void Mapped_ec_class_publishes_engs_class_id_under_engs_own_source()
     {
-        var bod = BuilderMapping("Bis:PhysicalElement", "rdl:LightingUnit")
+        var bod = BuilderMapping("Bis:PhysicalElement", "rdl:Streetlight")
             .Build(Marker(), [Element()], ITwinId, "corr-6");
 
         var segment = FirstSegment(bod);
 
-        // The point of DR-030: what travels is the governed key, not ENG's own
-        // vocabulary. A receiver resolves this against the shared library, which
-        // it could not do with "Bis:PhysicalElement".
-        Assert.Equal("rdl:LightingUnit", segment.Type?.IDInInfoSource);
-        Assert.Equal("MIMOSA-RDL", segment.Type?.InfoSource?.ShortName);
+        // IDInInfoSource is ENG's identification of the class -- the class-level
+        // counterpart of the ECInstanceId the segment carries for the element --
+        // so it is the ECClassId, attributed to ENG. Publishing the RDL key here
+        // under MIMOSA-RDL, as an earlier version did, left a receiver no way to
+        // ask ENG about the class by the id ENG actually uses for it.
+        Assert.Equal("99", segment.Type?.IDInInfoSource);
+        Assert.Equal("ENG", segment.Type?.InfoSource?.ShortName);
+
+        // The governed vocabulary still travels, whole, as the short name. Not
+        // the leaf: the receiver's InboundClassMap is keyed on the prefixed key,
+        // so "Streetlight" alone would file every segment under the fallback.
+        Assert.Equal("rdl:Streetlight", segment.Type?.ShortName);
+    }
+
+    [Fact]
+    public void The_governed_key_reaches_the_receivers_class_map()
+    {
+        // The wire contract between the two engines, pinned end to end. This is
+        // the pairing the compiler cannot check: IDInInfoSource stopped carrying
+        // the RDL key when it began carrying ENG's ECClassId, and nothing would
+        // have failed if the key had simply stopped arriving -- the receiver
+        // files unmapped segments under a fallback class rather than erroring,
+        // so the symptom is tags of the wrong class, not an exception.
+        var bod = BuilderMapping("Bis:PhysicalElement", "rdl:Streetlight")
+            .Build(Marker(), [Element()], ITwinId, "corr-10");
+
+        var published = FirstSegment(bod).Type;
+
+        var options = new RegLocationEngineOptions();
+        var resolved = options.ResolveClassId(
+            FirstNonBlank(published?.ShortName, published?.IDInInfoSource),
+            out var mapped);
+
+        Assert.True(mapped, "The receiver could not map the class ENG published.");
+        Assert.Equal(1703, resolved);
+    }
+
+    private static string? FirstNonBlank(params string?[] values) =>
+        values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+
+    [Fact]
+    public void Resolved_class_identity_replaces_the_derived_one()
+    {
+        var governed = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+
+        var bod = BuilderMapping("Bis:PhysicalElement", "rdl:Streetlight")
+            .Build(Marker(), [Element()], ITwinId, "corr-7",
+                new Dictionary<string, Guid> { ["Bis:PhysicalElement"] = governed });
+
+        var segment = FirstSegment(bod);
+
+        // The whole point of resolving through CIR: the identity on the wire is
+        // one somebody registered, not one hashed from the key. A derived value
+        // is well-formed and matches the RDL library only by coincidence.
+        Assert.Equal(governed, segment.Type?.UUID);
+    }
+
+    [Fact]
+    public void Unresolved_class_identity_falls_back_to_the_derived_one()
+    {
+        var withoutCir = BuilderMapping("Bis:PhysicalElement", "rdl:Streetlight")
+            .Build(Marker(), [Element()], ITwinId, "corr-8");
+
+        var withEmptyCir = BuilderMapping("Bis:PhysicalElement", "rdl:Streetlight")
+            .Build(Marker(), [Element()], ITwinId, "corr-9",
+                new Dictionary<string, Guid>());
+
+        // An empty map is the normal state before CIR is seeded, so it must
+        // publish exactly as it did before the lookup path existed. Otherwise
+        // enabling resolution against a cold CIR would silently stop typing
+        // every segment.
+        Assert.NotNull(FirstSegment(withoutCir).Type?.UUID);
+        Assert.Equal(
+            FirstSegment(withoutCir).Type?.UUID,
+            FirstSegment(withEmptyCir).Type?.UUID);
     }
 
     [Fact]

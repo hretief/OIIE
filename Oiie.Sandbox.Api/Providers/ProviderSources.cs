@@ -435,14 +435,20 @@ public sealed class ProviderRegLocationSource(
         // filter server-side; the proposed-only queue does not, so it is
         // narrowed here instead once the registry row is known.
         var rows = includeDecided
-            ? (await client.GetTagsAsync(scopeId, ct))
-                .Select(t => new RegTagDetailDto(t, EmptyObject)).ToList()
+            ? (await client.GetTagsAsync(scopeId, ct)).ToList()
             : (await client.GetProposedTagsAsync(ct)).ToList();
 
         if (scopeId is { } wantedScope && !includeDecided)
         {
             rows = rows.Where(r => r.Object.ScopeId == wantedScope).ToList();
         }
+
+        // The registry classifies a tag by ClassId, which names nothing to a
+        // steward. Its vocabulary is fetched once per queue rather than per row,
+        // and a class the registry no longer holds falls back to the id so the
+        // column still says something rather than reading as unbound.
+        var classNames = (await client.GetClassesAsync(ct))
+            .ToDictionary(c => c.ClassId, c => c.Name);
 
         return rows.Select(r => new StewardshipView(
             r.Tag.TagId.ToString(),
@@ -457,7 +463,9 @@ public sealed class ProviderRegLocationSource(
             // Class degradation happens in the engine on the way in; the
             // registry records only the class it bound.
             RequestedClassKey: null,
-            BoundClassKey: r.Tag.ClassId.ToString(),
+            BoundClassKey: classNames.TryGetValue(r.Tag.ClassId, out var className)
+                ? className
+                : r.Tag.ClassId.ToString(),
             ClassDegraded: null,
             PropertiesMapped: null,
             PropertiesUnmapped: null,
@@ -502,11 +510,4 @@ public sealed class ProviderRegLocationSource(
 
         return approved;
     }
-
-    /// <summary>
-    /// Stands in for the registry row on the "all" path, where the tag list
-    /// route returns tags without their paired object.
-    /// </summary>
-    private static readonly RegObjectDto EmptyObject =
-        new(0, 0, null, 0, null, null);
 }

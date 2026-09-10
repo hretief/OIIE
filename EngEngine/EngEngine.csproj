@@ -28,6 +28,7 @@
   <ItemGroup>
     <ProjectReference Include="../Oiie.Isbm.Client/Oiie.Isbm.Client.csproj" />
     <ProjectReference Include="../Oiie.Ccom/Oiie.Ccom.csproj" />
+    <ProjectReference Include="..\Oiie.Cir.Client\Oiie.Cir.Client.csproj" />
   </ItemGroup>
 
   <ItemGroup>

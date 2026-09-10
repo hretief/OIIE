@@ -274,6 +274,13 @@ public class Sc01EndToEndTests
             ParticipantId = "eng",
             ScenarioId = "sc01",
 
+            // Explicitly off. Both now default true, which is right for a
+            // deployment and wrong here: this test is about the publication
+            // path, and leaving them on would put a CIR round trip and an RDL
+            // request/response on it, neither of which has anything behind it.
+            ResolveClassIdentityFromCir = false,
+            RegisterClassIdentityInCir = false,
+
             // Deliberately wrong. If the engine falls back to these instead of
             // consulting the topology, the publication lands somewhere the
             // subscriber is not listening and the test fails on the channel
@@ -296,6 +303,19 @@ public class Sc01EndToEndTests
                 Options.Create(new EngRdlOptions { Enabled = false }),
                 options,
                 NullLogger<RdlTaxonomyValidator>.Instance),
+            // Disabled for the same reason as the validator: with resolution off
+            // the resolver returns null without contacting CIR, so the segment
+            // types fall back to the derived identity and this stays a test
+            // about the publication path.
+            new CirClassResolver(
+                new UnusedCir(),
+                new RdlTaxonomyValidator(
+                    broker,
+                    Options.Create(new EngRdlOptions { Enabled = false }),
+                    options,
+                    NullLogger<RdlTaxonomyValidator>.Instance),
+                options,
+                NullLogger<CirClassResolver>.Instance),
             options,
             NullLogger<EngPublicationService>.Instance);
 
@@ -330,6 +350,11 @@ public class Sc01EndToEndTests
             broker,
             registry,
             new IncomingSegmentMapper(options, NullLogger<IncomingSegmentMapper>.Instance),
+            // Inert: the options carry no CirBaseUrl, so the registrar returns
+            // before touching CIR. This test is about the ingest path, and the
+            // class cross-reference is covered by CirClassRegistrarTests.
+            new CirClassRegistrar(
+                new UnusedCir(), options, NullLogger<CirClassRegistrar>.Instance),
             topology,
             options,
             NullLogger<SegmentIngestionService>.Instance);

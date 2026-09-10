@@ -16,7 +16,7 @@ namespace SimHost.Tests;
 /// <summary>
 /// ENG checking its own outbound map against the reference library.
 ///
-/// The map is a claim about someone else's data: it says "rdl:LightingUnit is a
+/// The map is a claim about someone else's data: it says "rdl:Streetlight is a
 /// class RDL holds". Nothing was testing that claim, and a wrong one is
 /// invisible -- the segment publishes, the BOD validates, and only a subscriber
 /// trying to resolve the type ever finds out.
@@ -28,14 +28,14 @@ namespace SimHost.Tests;
 /// </summary>
 public class RdlTaxonomyValidatorTests
 {
-    private const string LightingUnit = "rdl:LightingUnit";
+    private const string Streetlight = "rdl:Streetlight";
 
     [Fact]
     public async Task Key_the_library_holds_is_reported_as_verified()
     {
         var validator = Validator(
-            new FakeRdlResponder([LightingUnit, "rdl:Equipment"]),
-            map: new() { ["ENG.Streetlight"] = LightingUnit });
+            new FakeRdlResponder([Streetlight, "rdl:Equipment"]),
+            map: new() { ["ENG.Streetlight"] = Streetlight });
 
         var result = await validator.ValidateAsync();
 
@@ -48,10 +48,10 @@ public class RdlTaxonomyValidatorTests
     {
         // The realistic defect: a plausible key that is simply not there.
         var validator = Validator(
-            new FakeRdlResponder([LightingUnit, "rdl:Equipment"]),
+            new FakeRdlResponder([Streetlight, "rdl:Equipment"]),
             map: new()
             {
-                ["ENG.Streetlight"] = LightingUnit,
+                ["ENG.Streetlight"] = Streetlight,
                 ["ENG.Culvert"] = "rdl:Culvert"
             });
 
@@ -68,7 +68,7 @@ public class RdlTaxonomyValidatorTests
         // "no missing keys" here would report a dead RDL as a healthy mapping.
         var validator = Validator(
             new FakeRdlResponder(codes: null),
-            map: new() { ["ENG.Streetlight"] = LightingUnit });
+            map: new() { ["ENG.Streetlight"] = Streetlight });
 
         var result = await validator.ValidateAsync();
 
@@ -82,8 +82,8 @@ public class RdlTaxonomyValidatorTests
     {
         // The cache is the reason this is a singleton: without it every drain
         // would ask the same question at the poll interval.
-        var broker = new FakeRdlResponder([LightingUnit]);
-        var validator = Validator(broker, map: new() { ["ENG.Streetlight"] = LightingUnit });
+        var broker = new FakeRdlResponder([Streetlight]);
+        var validator = Validator(broker, map: new() { ["ENG.Streetlight"] = Streetlight });
 
         await validator.ValidateAsync();
         await validator.ValidateAsync();
@@ -95,11 +95,11 @@ public class RdlTaxonomyValidatorTests
     [Fact]
     public async Task Disabled_validator_does_not_contact_the_broker()
     {
-        var broker = new FakeRdlResponder([LightingUnit]);
+        var broker = new FakeRdlResponder([Streetlight]);
 
         var validator = Validator(
             broker,
-            map: new() { ["ENG.Streetlight"] = LightingUnit },
+            map: new() { ["ENG.Streetlight"] = Streetlight },
             enabled: false);
 
         var result = await validator.ValidateAsync();
@@ -115,7 +115,7 @@ public class RdlTaxonomyValidatorTests
         // long as RDL stays down, which is exactly when nobody is looking.
         var broker = new FakeRdlResponder(codes: null);
 
-        var validator = Validator(broker, map: new() { ["ENG.Streetlight"] = LightingUnit });
+        var validator = Validator(broker, map: new() { ["ENG.Streetlight"] = Streetlight });
 
         await validator.ValidateAsync();
 

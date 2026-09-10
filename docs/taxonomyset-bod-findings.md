@@ -42,7 +42,7 @@ Per §0 and the §9 escalation trigger, this is reported rather than papered ove
 not a lookup, and the candidates are:
 
 - `ccom:SegmentType` — the concrete class ENG already publishes for
-  `rdl:LightingUnit`, so the response would speak the vocabulary the participant
+  `rdl:Streetlight`, so the response would speak the vocabulary the participant
   mappings already consume. Narrower than "any RDL class".
 - `ccom:CCOMClass` — referenced by `Taxonomy` itself, but describes CCOM
   metamodel classes rather than RDL classes.

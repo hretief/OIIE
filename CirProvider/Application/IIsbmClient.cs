@@ -68,8 +68,12 @@ public sealed class IsbmOptions
     /// <summary>Callback URL for providers supporting asynchronous notification. Polling is used when empty.</summary>
     public string? ListenerUrl { get; set; }
 
-    /// <summary>Set false to keep the listener dormant, e.g. before the ISBM provider exists.</summary>
-    public bool Enabled { get; set; }
+    /// <summary>
+    /// On by default; set false to keep the listener dormant, e.g. before the
+    /// ISBM provider exists. A dormant listener is indistinguishable from a
+    /// quiet bus in the logs, which makes it an expensive default to leave off.
+    /// </summary>
+    public bool Enabled { get; set; } = true;
 
     /// <summary>Messages drained per tick. Bounded so one tick cannot run past the timer.</summary>
     public int MaxMessagesPerPoll { get; set; } = 20;

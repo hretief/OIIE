@@ -15,14 +15,18 @@ namespace EngEngine.Application;
 public sealed class EngRdlOptions
 {
     /// <summary>
-    /// Off by default.
+    /// On by default.
     ///
-    /// Validation posts requests at a channel someone has to have provisioned,
-    /// and an engine that starts doing that on deployment produces errors that
-    /// look like a fault rather than an absence -- the same reasoning that
-    /// keeps <see cref="EngEngineOptions.Enabled"/> off.
+    /// This shipped off so a fresh deployment would not post at a channel
+    /// nobody had provisioned. It now defaults on because the RDL round trip
+    /// stopped being merely advisory: registering a class cross-reference in
+    /// CIR depends on it, since RDL is the only place the governed class GUID
+    /// can come from. Off, the registration silently never happens.
+    ///
+    /// Failure remains non-fatal. An unreachable RDL leaves the map unverified
+    /// and the mapping unregistered; it does not stop a drain.
     /// </summary>
-    public bool Enabled { get; set; }
+    public bool Enabled { get; set; } = true;
 
     /// <summary>Channel RDL reads GetTaxonomySet requests from.</summary>
     public string RequestChannelUri { get; set; } = "/OIIE/RDL/Request";
@@ -51,8 +55,16 @@ public sealed class EngRdlOptions
     /// Bounded because validation is advisory: a drain must not sit waiting on
     /// a provider that may not be running, when the markers it is holding are
     /// publishable either way.
+    ///
+    /// Must exceed RDL's drain interval, not merely its response time. RDL
+    /// reads the request channel on a timer, so a request posted just after a
+    /// tick waits nearly a full interval before anybody looks at it. At 20s
+    /// against a 60s timer this timed out roughly four times in five and
+    /// succeeded only when a drain happened to land just before a tick --
+    /// which reads as an intermittent provider fault rather than the timing
+    /// mismatch it is. 90s covers a full interval plus the fetch.
     /// </summary>
-    public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(20);
+    public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(90);
 
     /// <summary>Gap between response polls while waiting.</summary>
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(1);

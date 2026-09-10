@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 using Oiie.Isbm.Client;
 using Oiie.Isbm.Client.Topology;
 using RegLocationEngine.Application;
-using RegLocationEngine.Infrastructure.Cir;
+using Oiie.Cir.Client;
 using RegLocationEngine.Infrastructure.RegLocation;
 using RegLocationEngine.Infrastructure.State;
 
@@ -134,6 +134,11 @@ builder.Services.AddSingleton<RegLocationSegmentsBuilder>();
 builder.Services.AddSingleton<RegLocationApprovalService>();
 
 builder.Services.AddSingleton<IncomingSegmentMapper>();
+
+// Singleton for its cache: an ingest drain handles many segments of few
+// classes, and a per-request instance would re-ask CIR about the same class for
+// every segment carrying it.
+builder.Services.AddSingleton<CirClassRegistrar>();
 
 // Singleton because it holds the ISBM subscription session between polls. A
 // scoped or transient ingestor would open a new session on every timer tick,

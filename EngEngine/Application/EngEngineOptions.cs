@@ -11,11 +11,19 @@ namespace EngEngine.Application;
 public sealed class EngEngineOptions
 {
     /// <summary>
-    /// Off by default. An engine that starts polling the moment it is deployed,
-    /// against configuration nobody has filled in yet, produces a stream of
-    /// connection errors that look like a fault rather than an absence.
+    /// On by default.
+    ///
+    /// This shipped off, on the reasoning that an engine polling against
+    /// configuration nobody has filled in produces errors that look like a
+    /// fault rather than an absence. In practice the opposite cost proved
+    /// larger: a disabled engine reports success and publishes nothing, so
+    /// every deployment began with the same puzzled look at a clean log and a
+    /// silent bus. A failing poll is at least a failure that says so.
+    ///
+    /// The deploy script still preserves an operator's explicit choice on
+    /// redeploy, so turning an engine off by hand stays turned off.
     /// </summary>
-    public bool Enabled { get; set; }
+    public bool Enabled { get; set; } = true;
 
     /// <summary>
     /// Root of the sandbox API, e.g. https://host, from which this engine reads
@@ -172,7 +180,7 @@ public sealed class EngEngineOptions
     /// </summary>
     public Dictionary<string, string> OutboundRdlClassMap { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["ENG.Streetlight"] = "rdl:LightingUnit"
+        ["ENG.Streetlight"] = "rdl:Streetlight"
     };
 
     /// <summary>
@@ -189,6 +197,72 @@ public sealed class EngEngineOptions
             && OutboundRdlClassMap.TryGetValue(ecClassName, out var key)
                 ? key
                 : null;
+
+    // ---- Class identity via CIR -------------------------------------------
+
+    /// <summary>
+    /// Resolve the RDL class identity from CIR rather than deriving it.
+    ///
+    /// The UUID published in SegmentType used to be computed as a hash of the
+    /// RDL key. A derived value is well-formed and looks correct on the wire,
+    /// but matches the RDL library only by coincidence -- and a consumer that
+    /// binds on it records a false identity as fact. With this enabled the
+    /// engine asks CIR for the CIRID already agreed for the class and publishes
+    /// that, so the value on the wire is one somebody registered rather than one
+    /// this engine invented.
+    ///
+    /// On by default. It shipped off so that an engine pointed at a CIR with no
+    /// class entries would not stop typing its segments -- but the registration
+    /// below now seeds those entries, and a miss still falls back to the derived
+    /// identity, so a cold registry costs a lookup rather than a broken segment.
+    /// </summary>
+    public bool ResolveClassIdentityFromCir { get; set; } = true;
+
+    /// <summary>
+    /// The CIR registry holding class cross-references. Defaults to the
+    /// enterprise, matching how REG-LOCATION scopes the registries it writes.
+    /// </summary>
+    public string? ClassRegistryId { get; set; }
+
+    /// <summary>
+    /// The CIR category holding the ENG-class-to-RDL-class cross-references.
+    ///
+    /// Its own category rather than sharing one with element entries: these
+    /// record an equivalence between vocabulary terms, not between two records
+    /// of the same physical thing, and mixing them would make a registry dump
+    /// impossible to read.
+    /// </summary>
+    public string ClassCategoryId { get; set; } = "RDL-CLASS";
+
+    /// <summary>
+    /// Create the cross-reference in CIR when it is missing, using the identity
+    /// RDL holds for the class.
+    ///
+    /// The lookup half assumes somebody seeded CIR out of band. Nobody has, and
+    /// until they do every drain resolves nothing and falls back. With this on,
+    /// the first drain that meets an unmapped class asks RDL what it holds for
+    /// the mapped key and registers that class's own UUID as the CIRID, so the
+    /// registered identity is the one RDL minted rather than one ENG invented.
+    /// Every later drain then takes the ordinary lookup path.
+    ///
+    /// Requires <see cref="ResolveClassIdentityFromCir"/>: registering an
+    /// identity the engine will not then publish is work with no consequence.
+    ///
+    /// On by default. In a provisioned production system the mapping is
+    /// pre-loaded out-of-band and this finds nothing to do; here it is what
+    /// exercises the workflow, so leaving it off would mean the path never
+    /// runs and never gets proven.
+    /// </summary>
+    public bool RegisterClassIdentityInCir { get; set; } = true;
+
+    /// <summary>
+    /// How long a resolved class identity is kept before CIR is asked again.
+    ///
+    /// Reference data changes on a governance timescale, not a publication one,
+    /// so this is generous. The cache also means a drain publishing many
+    /// elements of the same class asks CIR once rather than once per element.
+    /// </summary>
+    public TimeSpan ClassCacheDuration { get; set; } = TimeSpan.FromMinutes(30);
 
     /// <summary>
     /// The publication channel for an iTwin, per the OIIE channel naming

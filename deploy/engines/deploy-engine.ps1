@@ -66,7 +66,16 @@ param(
     [string]$PlanSku = 'B1',
 
     # Skip the code publish and only ensure the infrastructure exists.
-    [switch]$InfraOnly
+    [switch]$InfraOnly,
+
+    # Overwrite the Enabled / Isbm__Enabled settings on an app that already has
+    # them, rather than preserving what is there.
+    #
+    # These are normally preserved so a redeploy cannot silently switch an
+    # engine an operator turned off back on. That protection also means an app
+    # provisioned while the defaults were 'false' keeps that false forever, so
+    # this switch exists to carry an existing deployment across the change.
+    [switch]$ForceEnable
 )
 
 $ErrorActionPreference = 'Stop'
@@ -133,10 +142,18 @@ $engines = @{
         PeerVar = 'EngBaseUrl'
         PeerKey = 'EngApiKey'
         PeerApi = 'eng'
-        # Enabled stays false: this engine's channel is derived from an iTwin
-        # federation id, and turning it on before an iTwin exists gives a poll
-        # loop that fails every 15 seconds. Flip Enabled by hand once a twin
-        # exists.
+        # Enabled ships TRUE. It used to ship false, because this engine's
+        # channel is derived from an iTwin federation id and polling before a
+        # twin exists fails every 15 seconds -- but a disabled engine reports a
+        # clean deploy and publishes nothing, and that silence cost more to
+        # diagnose than the failing poll ever did. An operator who turns it off
+        # by hand still keeps it off; see the preserve logic further down.
+        #
+        # ResolveClassIdentityFromCir / RegisterClassIdentityInCir drive the
+        # outbound half of the class cross-reference: resolve the EC class
+        # through CIR and, on a miss, register the mapping under the GUID RDL
+        # holds. The second depends on EngRdl__Enabled, which is why that is on
+        # too -- RDL is the only source of a governed class GUID.
         #
         # IModelId is deliberately not set. The engine discovers every iModel
         # ENG holds and publishes each onto its own iTwin's channel, so there is
@@ -146,11 +163,17 @@ $engines = @{
         # stale silently, which is what previously left the engine publishing
         # nothing until someone noticed.
         Extra   = @{
-            'Enabled'   = 'false'
-            'Domain'    = 'engineering'
-            'Topics__0' = 'oiie:sc01/ccom:SyncSegments'
-            'SourceId'  = 'ENG'
-            'LogicalId' = 'ENG'
+            'Enabled'                       = 'true'
+            'Domain'                        = 'engineering'
+            'Topics__0'                     = 'oiie:sc01/ccom:SyncSegments'
+            'SourceId'                      = 'ENG'
+            'LogicalId'                     = 'ENG'
+            'ResolveClassIdentityFromCir'   = 'true'
+            'RegisterClassIdentityInCir'    = 'true'
+        }
+        RawExtra = @{
+            'EngRdl__Enabled'           = 'true'
+            'EngRdl__RequestChannelUri' = '/OIIE/RDL/Request'
         }
         Schedules = @{ 'EngEnginePollSchedule' = '*/15 * * * * *' }
     }
@@ -161,18 +184,26 @@ $engines = @{
         PeerVar = 'RegLocationBaseUrl'
         PeerKey = 'RegLocationApiKey'
         PeerApi = 'reglocation'
-        # Same reasoning as ENG, but the setting here is ITwinFederationId:
-        # REG-LOCATION has no iModel concept. SitesIngest is the exception --
-        # its channel is enterprise-level, so it can run before any iTwin
-        # exists.
+        # Same reasoning as ENG, and the setting here is ITwinFederationId:
+        # REG-LOCATION has no iModel concept. All three legs ship on -- the
+        # sites leg always could, since its channel is enterprise-level, and
+        # the other two now do for the same reason ENG's does.
         Extra   = @{
-            'Enabled'            = 'false'
+            'Enabled'            = 'true'
             'IngestEnabled'      = 'true'
             'SitesIngestEnabled' = 'true'
             'Domain'             = 'operations'
             'InboundDomain'      = 'engineering'
             'SourceId'           = 'REG-LOCATION'
             'LogicalId'          = 'REG-LOCATION'
+            # The inbound half of the class cross-reference. ENG registers that
+            # its EC class means an RDL class; this registers that a
+            # REG-LOCATION class_id means the same one. The category must match
+            # what ENG writes -- the correspondence is the two entries sharing a
+            # CIRID inside one category, so a mismatch here produces two
+            # unrelated halves rather than a mapping.
+            'RegisterClassIdentityInCir' = 'true'
+            'ClassCategoryId'            = 'RDL-CLASS'
         }
         Schedules = @{
             'RegLocationEngineSweepSchedule'       = '0 */5 * * * *'
@@ -211,7 +242,11 @@ $engines = @{
             'Isbm__Topics__0'         = 'OIIE:S35:V1.0/CCOM:GetTaxonomySet:R1.0'
             'Isbm__MaxMessagesPerPoll' = '20'
         }
-        Schedules = @{ 'RdlEngineDrainSchedule' = '0 */1 * * * *' }
+        # Every 10s, not every minute. This is a request/response provider: a
+        # consumer is blocked waiting while the request sits unread, so the
+        # interval is the latency every caller pays. At one minute, ENG's
+        # bounded wait expired before RDL had looked at the channel.
+        Schedules = @{ 'RdlEngineDrainSchedule' = '*/10 * * * * *' }
     }
 }
 
@@ -382,14 +417,16 @@ foreach ($name in $targets) {
             "Isbm__ApiKey=$isbmKey"
         )
 
-        # 'Enabled' is a first-provision default, not a redeploy instruction. It
-        # ships false for ENG and REG-LOCATION because their channel is derived
-        # from an iTwin federation id and polling before one exists just fails
-        # every 15 seconds -- but once an operator has set the id and turned the
-        # engine on, reapplying the default silently switches it back off, and a
-        # disabled engine reports success with nothing published. So the value is
-        # only written when the app does not already carry one. Same reasoning
-        # as deploy/cir/deploy.ps1, which preserves an enabled ISBM binding.
+        # 'Enabled' is a first-provision default, not a redeploy instruction.
+        # Once an operator has turned an engine off deliberately -- to stop it
+        # polling a broken channel, say -- reapplying the default would switch
+        # it back silently, and the reverse is worse still: a disabled engine
+        # reports success with nothing published. So the value is only written
+        # when the app does not already carry one, unless -ForceEnable says
+        # otherwise. Same reasoning as deploy/cir/deploy.ps1.
+        #
+        # Note the defaults themselves now ship 'true'; -ForceEnable is how an
+        # app provisioned under the old 'false' defaults is brought across.
         $existingSettings = @()
         if ($appExists) {
             $existingSettings = az functionapp config appsettings list `
@@ -401,7 +438,7 @@ foreach ($name in $targets) {
         foreach ($k in $cfg.Extra.Keys) {
             $settingName = "$($prefix)__$k"
 
-            if ($k -eq 'Enabled' -and $existingSettings -contains $settingName) {
+            if ($k -eq 'Enabled' -and $existingSettings -contains $settingName -and -not $ForceEnable) {
                 Write-Host "  Preserving the existing $settingName on $appName." -ForegroundColor DarkYellow
                 continue
             }
@@ -417,7 +454,7 @@ foreach ($name in $targets) {
         if ($cfg.ContainsKey('RawExtra')) {
             foreach ($k in $cfg.RawExtra.Keys) {
 
-                if ($k -eq 'Isbm__Enabled' -and $existingSettings -contains $k) {
+                if ($k -eq 'Isbm__Enabled' -and $existingSettings -contains $k -and -not $ForceEnable) {
                     Write-Host "  Preserving the existing $k on $appName." -ForegroundColor DarkYellow
                     continue
                 }

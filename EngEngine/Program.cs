@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure.Storage.Blobs;
 using EngEngine.Application;
-using EngEngine.Infrastructure.Cir;
+using Oiie.Cir.Client;
 using EngEngine.Infrastructure.Eng;
 using EngEngine.Infrastructure.State;
 using Microsoft.Azure.Functions.Worker;
@@ -145,6 +145,15 @@ builder.Services.AddSingleton<EngSegmentsBuilder>();
 // checked" when disabled, so an engine without an RDL peer drains as before.
 builder.Services.Configure<EngRdlOptions>(builder.Configuration.GetSection("EngRdl"));
 builder.Services.AddSingleton<RdlTaxonomyValidator>();
+
+// --- Class identity ---------------------------------------------------------
+//
+// Singleton for the same reason as the validator: the resolved class identities
+// are cached, and a per-drain instance would ask CIR the same question on every
+// poll. Registered unconditionally -- with ResolveClassIdentityFromCir off the
+// resolver returns null without contacting CIR, so the builder falls back to the
+// configured map exactly as before.
+builder.Services.AddSingleton<CirClassResolver>();
 
 builder.Services.AddSingleton<EngPublicationService>();
 builder.Services.AddSingleton<EngSitesBuilder>();

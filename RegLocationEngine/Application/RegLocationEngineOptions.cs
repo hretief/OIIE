@@ -12,16 +12,17 @@ namespace RegLocationEngine.Application;
 public sealed class RegLocationEngineOptions
 {
     /// <summary>
-    /// Off by default, for the same reason as EngEngine: an engine that starts
-    /// reaching out the moment it is deployed, against configuration nobody has
-    /// filled in yet, produces a stream of connection errors that look like a
-    /// fault rather than an absence.
+    /// On by default, for the same reason as EngEngine: this shipped off so a
+    /// fresh deployment would not reach out against configuration nobody had
+    /// filled in, but a disabled engine reports success while reconciling
+    /// nothing, and that silence proved more expensive to diagnose than a
+    /// connection error that names itself.
     ///
     /// This gates the reconciling sweep. The webhook stays live regardless,
     /// because a notification that arrives and is silently dropped is worse than
     /// one that is refused.
     /// </summary>
-    public bool Enabled { get; set; }
+    public bool Enabled { get; set; } = true;
 
     /// <summary>
     /// Root of the sandbox API, e.g. https://host, from which this engine reads
@@ -144,9 +145,10 @@ public sealed class RegLocationEngineOptions
     /// Separate from <see cref="Enabled"/> because the two legs fail
     /// independently: a deployment may want to receive proposals long before it
     /// has a CIR to register approvals in, and a broker outage on one channel
-    /// should not silence the other.
+    /// should not silence the other. On by default: this is the leg that
+    /// receives ENG's proposals, so off means the scenario stops at the bus.
     /// </summary>
-    public bool IngestEnabled { get; set; }
+    public bool IngestEnabled { get; set; } = true;
 
     /// <summary>
     /// The domain of the channel ENG publishes on.
@@ -226,7 +228,7 @@ public sealed class RegLocationEngineOptions
         // free. It is not -- it is a decision that these two happen to coincide,
         // and recording it keeps the mapping step visible for the day a key is
         // renamed on one side only.
-        ["rdl:LightingUnit"] = 1703,
+        ["rdl:Streetlight"] = 1703,
 
         // Retained so a publisher that has not yet moved to RDL keys still
         // lands somewhere sensible instead of falling through to the fallback.
@@ -254,8 +256,11 @@ public sealed class RegLocationEngineOptions
     /// two legs are not merely independent -- they are ordered. Sites must be
     /// ingested before segments have a scope to land in, so a deployment being
     /// bootstrapped may want this leg on while the segment leg is still off.
+    ///
+    /// On by default. Its channel is enterprise-level, so unlike the segment
+    /// leg it can run before any iTwin exists.
     /// </summary>
-    public bool SitesIngestEnabled { get; set; }
+    public bool SitesIngestEnabled { get; set; } = true;
 
     /// <summary>
     /// The enterprise channel SyncSites arrives on, matching what EngEngine
@@ -340,6 +345,43 @@ public sealed class RegLocationEngineOptions
     /// yet should still be able to publish.
     /// </summary>
     public bool RegisterInCir { get; set; } = true;
+
+    // ---- Class cross-references in CIR (the inbound leg) -------------------
+
+    /// <summary>
+    /// Check, and if necessary create, the cross-reference between the governed
+    /// RDL class and this registry's own class_id.
+    ///
+    /// The mirror of ENG's outbound registration. ENG records that its
+    /// <c>ENG.Streetlight</c> means the RDL class whose GUID is X; this records
+    /// that REG-LOCATION's <c>class_id 1703</c> means the same X. Together they
+    /// make CIR the place the correspondence lives, so a participant can ask
+    /// what a class means to somebody else rather than keeping a private map.
+    ///
+    /// On by default for the prototype. In a provisioned production system
+    /// both sides are pre-loaded out-of-band and this finds nothing to do.
+    /// </summary>
+    public bool RegisterClassIdentityInCir { get; set; } = true;
+
+    /// <summary>
+    /// The CIR registry holding class cross-references. Defaults to the
+    /// enterprise, matching the registries this engine already writes.
+    /// </summary>
+    public string? ClassRegistryId { get; set; }
+
+    /// <summary>
+    /// The CIR category holding class cross-references. Must match what ENG
+    /// writes: the whole point is that both participants' entries sit in one
+    /// category, so a reader can see the correspondence between them.
+    /// </summary>
+    public string ClassCategoryId { get; set; } = "RDL-CLASS";
+
+    /// <summary>
+    /// How long a checked class cross-reference is kept before CIR is asked
+    /// again. Reference data changes on a governance timescale, and an ingest
+    /// drain handles many segments of few classes.
+    /// </summary>
+    public TimeSpan ClassCacheDuration { get; set; } = TimeSpan.FromMinutes(30);
 
     // ---- Engine state ------------------------------------------------------
 

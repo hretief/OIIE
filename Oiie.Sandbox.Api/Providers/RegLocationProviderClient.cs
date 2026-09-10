@@ -51,6 +51,15 @@ public sealed record RegTagDetailDto(RegTagDto Tag, RegObjectDto Object);
 /// </summary>
 public sealed record RegScopeDto(int ScopeId, string Name);
 
+/// <summary>
+/// A class in the registry's vocabulary.
+///
+/// Code is the governed key a tag is classified against (rdl:Streetlight) and
+/// Name is what a person reads. Only these are restated: the queue needs a
+/// label for a ClassId and nothing more.
+/// </summary>
+public sealed record RegClassDto(int ClassId, string Code, string Name);
+
 /// <summary>Who decided, which the registry requires for an approval.</summary>
 public sealed record ApproveTagRequestDto(string DecidedBy);
 
@@ -79,13 +88,25 @@ public sealed class RegLocationProviderClient(
     /// <summary>
     /// Every tag, or those in one scope. Used to show decided rows beside
     /// outstanding ones, which is what the queue's "all" filter asks for.
+    ///
+    /// Returns the tag paired with its registry row, like every other tag route:
+    /// GET /tags answers RegTagDetail, and reading it as a bare tag bound every
+    /// field to its default -- a queue of rows with no code, no name and a null
+    /// state, which the panel could not render.
     /// </summary>
-    public async Task<IReadOnlyList<RegTagDto>> GetTagsAsync(int? scopeId, CancellationToken ct)
+    public async Task<IReadOnlyList<RegTagDetailDto>> GetTagsAsync(int? scopeId, CancellationToken ct)
     {
         var route = scopeId is null ? "tags" : $"tags?scopeId={scopeId}";
 
-        return await SendAsync<List<RegTagDto>>(HttpMethod.Get, route, null, ct) ?? [];
+        return await SendAsync<List<RegTagDetailDto>>(HttpMethod.Get, route, null, ct) ?? [];
     }
+
+    /// <summary>
+    /// The registry's class vocabulary, so a tag's ClassId can be shown as the
+    /// name a steward recognises rather than as an integer.
+    /// </summary>
+    public async Task<IReadOnlyList<RegClassDto>> GetClassesAsync(CancellationToken ct) =>
+        await SendAsync<List<RegClassDto>>(HttpMethod.Get, "classes", null, ct) ?? [];
 
     /// <summary>
     /// Resolves a twin GUID to the scope carrying it.

@@ -29,6 +29,7 @@
     <File Path="Directory.Build.props" />
     <File Path="NuGet.config" />
   </Folder>
+  <Project Path="Oiie.Cir.Client/Oiie.Cir.Client.csproj" />
 </Solution>
 
 

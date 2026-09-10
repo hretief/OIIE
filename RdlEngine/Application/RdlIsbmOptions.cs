@@ -31,8 +31,16 @@ public sealed class RdlIsbmOptions
     public IReadOnlyList<string> EffectiveTopics =>
         Topics.Count == 0 ? [DefaultTopic] : Topics.Distinct(StringComparer.Ordinal).ToList();
 
-    /// <summary>Set false to keep the listener dormant, e.g. before the channel exists.</summary>
-    public bool Enabled { get; set; }
+    /// <summary>
+    /// On by default; set false to keep the listener dormant.
+    ///
+    /// RDL answers Get/ShowTaxonomySet on a fixed literal channel rather than
+    /// one derived from an iTwin, so there is nothing to wait for. It is also
+    /// the responder ENG depends on to learn a class's governed GUID, so a
+    /// dormant listener shows up at the far end as a mapping that never
+    /// registers -- a silence two systems away from its cause.
+    /// </summary>
+    public bool Enabled { get; set; } = true;
 
     /// <summary>Messages drained per tick. Bounded so one tick cannot run past the timer.</summary>
     public int MaxMessagesPerPoll { get; set; } = 20;

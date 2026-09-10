@@ -1791,8 +1791,21 @@ diagnosis at the wrong leg entirely.
 
 ## DR-030 — SegmentType carries a common RDL key; REG-LOCATION is an EIS participant, not the library
 
-**Status:** Partially unblocked — one class agreed (`rdl:LightingUnit`), see the addendum below
+**Status:** Partially unblocked — one class agreed (`rdl:Streetlight`), see the addendum below
 **Date:** 2026-09-08
+
+> **Identity regime (canonical).** Reference data — classes, property defs, relationship
+> defs, enumeration values — has its UUID minted by **RDL and no one else**; instance data
+> has its identity minted by the participant that creates the thing. CIR asserts
+> *equivalence* between independently-minted instance keys, but for reference data it can
+> only record a *cross-reference* from a local vocabulary term to the governed one, because
+> RDL already conferred the identity. That cross-reference is required work, not decoration:
+> the plan is to map ENG→RDL completely **out-of-band**, **pre-load** those entries into CIR,
+> and then resolve to the class UUID by registry lookup — which retires the string-code
+> matching below and the per-participant class maps with it. Full statement:
+> [federation-guid-guideline](FederationId/federation-guid-guideline.md#instance-data-vs-reference-data--two-minting-regimes),
+> [cir-provider](cir-provider.md#instance-data-and-reference-data-enter-differently),
+> [2026-09-eng-classes-two-stores](decision-records/2026-09-eng-classes-two-stores.md#which-store-owns-the-identity).
 
 **Context:** Bringing MMS onto the SC01 route exposed a question that ENG → REG-LOCATION had
 been able to avoid. MMS does not use a UAV schema: its table names *are* its classes, so an
@@ -1878,22 +1891,23 @@ The blocking question above ("which RDL class is a MnDOT light unit?") is answer
 light-unit slice only, and answered **provisionally, to make the route testable end to end**.
 The mappings are not the formal governance process; that is still to come.
 
-`rdl:LightingUnit` (class_id 1703) is seeded in `RegLocationProvider/Infrastructure/Sql/bootstrap.sql`
+`rdl:Streetlight` (class_id 1703) is seeded in `RegLocationProvider/Infrastructure/Sql/bootstrap.sql`
 as a child of `rdl:Equipment` (1701), which matches the reasoning already recorded above — a light
 unit is physical plant, not a functional location. The three edges are now written:
 
 | Participant | Direction | Mapping | Where |
 |---|---|---|---|
-| ENG | out | `ENG.Streetlight` → `rdl:LightingUnit` | `EngEngineOptions.OutboundRdlClassMap` |
-| REG-LOCATION | in | `rdl:LightingUnit` → `1703` | `RegLocationEngineOptions.InboundClassMap` |
-| MMS | in | `rdl:LightingUnit` → `LIGHT_UNIT_INVENTORY` | `MmsEngineOptions.InboundRdlTableMap` |
+| ENG | out | `ENG.Streetlight` → `rdl:Streetlight` | `EngEngineOptions.OutboundRdlClassMap` |
+| REG-LOCATION | in | `rdl:Streetlight` → `1703` | `RegLocationEngineOptions.InboundClassMap` |
+| MMS | in | `rdl:Streetlight` → `LIGHT_UNIT_INVENTORY` | `MmsEngineOptions.InboundRdlTableMap` |
 
 Consequences of writing them:
 
-- **ENG no longer publishes its EC class.** `EngSegmentsBuilder` emits the RDL key sourced as
-  `MIMOSA-RDL`, which is the claim it previously and correctly refused to make. An unmapped class
-  now publishes **no** `SegmentType` rather than a fabricated one — a publisher that guesses a
-  governed key puts a false statement on the bus, and a receiver can still bind at a parent.
+- **ENG no longer publishes its EC class.** `EngSegmentsBuilder` emits the RDL key as the
+  `SegmentType` short name. An unmapped class publishes **no** `SegmentType` rather than a
+  fabricated one — a publisher that guesses a governed key puts a false statement on the bus, and a
+  receiver can still bind at a parent. (The `IDInInfoSource`/`InfoSource` pair described here as
+  `MIMOSA-RDL` was corrected on 2026-09-11 — see the addendum below.)
 - **The REG-LOCATION mapping is an identity mapping and is still written down.** Both sides took
   the name from the same source, so the correspondence looks free. It is not: it is a decision that
   the two coincide, and recording it keeps the translation step visible for the day one side is
@@ -1912,9 +1926,9 @@ Consequences of writing them:
 ### Addendum, 2026-09-10 — ENG validates its outbound map against the RDL library
 
 `OutboundRdlClassMap` is a claim about a library ENG does not own, and nothing was checking it. A
-key that is merely a typo — `rdl:LightingUnits` — publishes a `SegmentType` no subscriber can
+key that is merely a typo — `rdl:Streetlights` — publishes a `SegmentType` no subscriber can
 resolve, and every consumer records it as fact. The map itself cannot be derived automatically
-(deciding that a Streetlight is a LightingUnit is a modelling judgement, per the addendum above),
+(deciding which RDL class a Streetlight is is a modelling judgement, per the addendum above),
 but it *can* be told when it names something that does not exist, which is the failure that
 actually occurs.
 
@@ -1970,6 +1984,272 @@ Three obstacles, in order:
    Retaining a code→GUID cache is the enabling step.
 3. **It is a coordinated breaking change.** ENG and REG-LOCATION must switch together, and
    REG-LOCATION's lookup must key on `class_objects.guid`, not on the derived UUID.
+
+### Addendum, 2026-09-11 — the resolution path is built, off by default
+
+Obstacles 1 and 2 above are addressed. `CirClassResolver` in `EngEngine` asks CIR for the class
+identity and `EngSegmentsBuilder` publishes it as `Type.UUID`. The CIR client was extracted to a
+shared `Oiie.Cir.Client` library first, since every engine that participates in identity resolution
+needs the same contract — and `EngEngine` and `RegLocationEngine` turned out to be carrying two
+independent copies of it already.
+
+The field mapping now matches the proposed end state exactly:
+
+| Field | Carries |
+|---|---|
+| `Type.UUID` | the CIRID resolved from CIR, falling back to the derived value on a miss |
+| `Type.IDInInfoSource` | `ECClassId` — ENG's own id for its EC class |
+| `Type.InfoSource` | `ENG` — moved with `IDInInfoSource`, per the rule above |
+| `Type.ShortName` | the governed RDL key, **whole** — this is what the receiver still matches on |
+
+That last row is the subtle part, and it nearly broke the scenario. `IDInInfoSource` previously
+carried the governed key, and `IncomingSegmentMapper` reads it to look up `InboundClassMap`. Moving
+`IDInInfoSource` to `ECClassId` therefore removed the key from the only field the receiver was
+reading, and `ShortName` was publishing just the leaf (`Streetlight`) against a map keyed on
+`rdl:Streetlight`. Nothing would have failed loudly: unmapped segments are filed under
+`InboundFallbackClassId` with a warning, so the symptom is tags of the wrong class — precisely the
+`class_id = 1001` mystery already recorded in open items. `ShortName` now carries the full key and
+`IncomingSegmentMapper` reads `ShortName` first, falling back to `IDInInfoSource` for publishers
+that have not moved. A test now pins the round trip across both engines.
+
+Decisions worth recording:
+
+- **Advisory, not enforcing.** Disabled, no CIR entry, and CIR unreachable all return null and fall
+  back to the derived identity. They are distinguished in the log, not the return value, because the
+  caller's response to all three is identical. CIR being down says nothing about whether the mapping
+  is correct, and a drain has markers to publish.
+- **Off by default** (`ResolveClassIdentityFromCir`). The entries are not pre-loaded yet, so
+  enabling it against a cold registry would stop typing every segment. A test pins that an empty
+  result publishes byte-identically to the pre-resolver behaviour.
+- **Resolved once per marker over distinct classes**, not per element, with misses cached alongside
+  hits. The unseeded case is the common one; caching only hits would put a round trip on the publish
+  path for every element that will never resolve.
+- **Obstacle 3 is untouched.** REG-LOCATION still keys on the string code. ENG merely publishes a
+  better identity alongside it; the coordinated switch is still ahead.
+
+### Addendum, 2026-09-11 — `rdl:LightingUnit` renamed to `rdl:Streetlight`
+
+The governed class name was a typo. Correcting it demonstrated the fragility this DR exists to
+remove: the key is match-on-code in **three** separate config maps, so changing the RDL seed alone
+would have silently unbound class 1703 across the whole ENG→REG-LOCATION→MMS chain — no build error,
+no test failure, segments simply filing under the fallback. All four locations had to move in one
+commit. Once resolution runs through CIR entries to the UUID, a rename is a one-place
+edit.
+
+### Addendum, 2026-09-11 — ENG seeds the class cross-reference from RDL's GUID
+
+The lookup half shipped against a registry nobody was filling. A live run reached REG-ENG cleanly
+and `cir.Entry` held only instance rows — `ITWIN`, `ITWIN-SITE`, `SITE-TYPE` — because no code path
+has ever written an `RDL-CLASS` entry. "Pre-load out-of-band" was the recorded plan, but out-of-band
+meant nobody, so resolution fell back on every pass and the config map stayed the only place the
+mapping lived.
+
+`RegisterClassIdentityInCir` closes it. On a genuine miss the resolver takes the RDL key from
+`OutboundRdlClassMap`, asks RDL over Get/ShowTaxonomySet what it holds for that key, and registers
+`(IDInSource=ENG.Streetlight, SourceID=ENG, CIRID=<RDL class GUID>)`. Later drains take the ordinary
+lookup path, so the round trip is once per class, not once per drain.
+
+Decisions worth recording:
+
+- **The CIRID is RDL's UUID or there is no registration.** No configured key, no class in the
+  library, or a class RDL holds no GUID for all leave CIR untouched. A registration carrying a
+  locally minted identity is worse than a gap: the next lookup finds it and publishes it as though
+  it were governed, which is exactly the fabricated identity this DR exists to remove.
+  `CreateCirid: false` for the same reason — letting CIR mint one defeats having asked RDL.
+- **Only a genuine miss registers.** An unreachable CIR also resolves to null, but writing on it
+  would race a mapping that already exists and merely could not be seen. The resolver distinguishes
+  "CIR answered and holds nothing" from "CIR did not answer".
+- **The modelling judgement is not automated.** That `ENG.Streetlight` means `rdl:Streetlight` is
+  still a human decision recorded in config. What is automated is the clerical half: publishing a
+  decision already made into the registry, under the identity RDL minted.
+- **Reuses the validator's cached fetch.** `RdlTaxonomyValidator` already holds the library per
+  drain; it now exposes `FindClassAsync` rather than the resolver opening a second session to ask
+  the same question.
+- **Off by default, and requires resolution to be on.** Writing reference data into a shared
+  registry is an operator's decision, not one that arrives with a deploy, and registering an
+  identity the engine will not then publish is work with no consequence.
+  *Superseded the same day \u2014 see below.*
+
+### Addendum, 2026-09-11 \u2014 the cross-reference is written from both ends, and ships on
+
+Two changes, and they are the same change viewed from either side of the engine.
+
+**The flags now default true.** `EngEngine__Enabled`, `EngRdl__Enabled`, `RegLocationEngine__Enabled`,
+`IngestEnabled`, `SitesIngestEnabled`, `Isbm__Enabled` on RDL and CIR, and both class-identity flags
+above all shipped `false`. The reasoning was sound in isolation \u2014 an engine polling a channel derived
+from an iTwin that does not exist yet fails every fifteen seconds \u2014 but the cost landed elsewhere: a
+disabled engine reports a clean deploy and publishes nothing, and every session began by finding
+which flag was off this time. A failing poll is noisy and self-describing. Silence is neither, and it
+was costing more to diagnose than the noise ever did.
+
+The preserve-on-redeploy logic stays: an operator who turns an engine off by hand keeps it off.
+`deploy-engine.ps1` gains `-ForceEnable` so apps provisioned under the old defaults can be brought
+across deliberately rather than by a deploy quietly reversing an operator's decision.
+
+**The cross-reference is now written from both ends.** ENG's registration records that
+`ENG.Streetlight` means the RDL class whose GUID is X. That is half a mapping. REG-LOCATION's new
+`CirClassRegistrar` records the other half \u2014 that its `class_id 1703` means that same X \u2014 so the
+correspondence lives in CIR as two entries sharing a CIRID inside one `RDL-CLASS` category, and a
+participant can ask what a class means to somebody else instead of keeping a private copy of their
+vocabulary. That is the point of the registry; one-sided, it was a note ENG left itself.
+
+Decisions worth recording:
+
+- **The inbound leg verifies before it mirrors.** The identity arrives on the wire in
+  `Segment.Type.UUID`, and a publisher that could not resolve its class still sends one \u2014 derived
+  locally from the class key. Mirroring that would put a fabricated identity into CIR under
+  REG-LOCATION's name and the next reader would take it for governed: the precise failure the
+  outbound leg exists to prevent, reintroduced from the other end. So CIR is asked whether any
+  participant has registered the GUID. A governed one has been, by the publisher's own outbound leg.
+  A derived one has not.
+- **The two legs are ordered, not symmetric.** Outbound seeds, inbound confirms. On a first
+  end-to-end run the REG-LOCATION entry appears one drain after ENG's. That is the ordering working.
+- **One query answers two questions.** Filtering on the CIRID returns every participant's entry for
+  the class, which settles both "has anyone vouched for this" and "have we already recorded it".
+- **Advisory throughout.** A cold CIR, an unverifiable UUID or a failed write all leave the
+  cross-reference unmade and the tag ingested regardless. An ingest leg has proposals to put in front
+  of a steward, and a missing registry row is not a reason to drop a location.
+- **Prototype now, provisioning later.** In a production system both halves are pre-loaded when the
+  system is provisioned and these paths find nothing to do. Until then they are how the entries come
+  to exist at all, which is why they run on one class end to end rather than waiting for a bulk load.
+
+### Addendum, 2026-09-11 — the cross-reference is keyed on the internal id, not the class name
+
+The first live run wrote `IdInSource=ENG.Streetlight` on the outbound entry and `IdInSource=1703` on
+the inbound one. REG-LOCATION's was right and ENG's was wrong, and the inconsistency between the two
+is what made it visible.
+
+`IdInSource` is the id in the source system, the registry's counterpart to `IDInInfoSource` on the
+wire. The segment already publishes `ECClassId` there — ENG had the internal key in hand and used the
+display name in CIR instead. That leaves a receiver holding a segment unable to look up the entry
+with the id it was just given, which is the one operation the cross-reference exists to support. It
+also keys the registry on a renameable label: `rdl:LightingUnit` → `rdl:Streetlight` earlier in this
+register had to touch three config maps, and this would have added CIR to that list.
+
+Now `IdInSource=24`, ENG's `ECClassId`, with `ENG.Streetlight` kept in `Name` where a rename costs
+nothing. Both halves are keyed on their own system's internal identifier and joined by RDL's GUID —
+`24` and `1703` are the two participants' private keys for the same governed class, which is what a
+cross-reference is.
+
+`ResolveAsync` and `RegisterAsync` now take the id alongside the name. The name is still what the
+outbound RDL map is keyed on, so it remains a parameter rather than being replaced.
+
+### Addendum, 2026-09-11 — ENG's RDL timeout must exceed RDL's drain interval
+
+Verifying the rekeyed entry, ENG reported `RDL did not answer within 20s` on four consecutive drains
+and the registration was skipped each time — correctly, since without RDL's GUID the only entry it
+could have written was an invented one. RDL looked healthy throughout: enabled, listening on the
+right channel and topic, draining successfully every minute, no errors on either side.
+
+The broker's request log settled it. ENG posted at 18:18:32 and polled for a response; RDL's timer
+fired at 18:19:00, read the request and posted a valid response 300ms later. ENG had given up at
+18:18:52, eight seconds earlier. RDL was answering every request correctly and ENG was never there
+to hear it.
+
+Two timings had to agree and neither knew about the other: a 20s bounded wait against a 60s poll. The
+request is only visible to RDL at a tick, so the wait had to cover a full interval, not a response
+time. It failed roughly four times in five and succeeded exactly when a drain happened to land just
+before a tick — which is why the first live run worked and looked like proof. An intermittent
+provider fault and a timing mismatch present identically from one end.
+
+Both sides moved: `ResponseTimeout` to 90s so a full interval fits inside the wait, and RDL's drain
+schedule from one minute to ten seconds. The second is the more important one. For a
+request/response provider the drain interval is not a background housekeeping rate, it is the latency
+every caller pays while blocked, and a minute was the wrong order of magnitude for a synchronous
+lookup on the publish path. The 90s timeout is now headroom rather than the mechanism.
+
+### Addendum, 2026-09-11 — a null nobody settled is not an answer worth caching
+
+With RDL answering and the seed corrected, a reset still produced a named version, two published
+elements and an empty `RDL-CLASS`. Restarting ENG and re-draining registered the entry immediately.
+Nothing else changed, which located the fault precisely: process memory.
+
+`CirClassResolver` cached the result of every resolution for 30 minutes, hits and misses alike. The
+miss cache is deliberate and worth keeping — a marker is many elements of few classes, and an
+unseeded CIR is the ordinary state before first registration, so re-asking per element would put a
+round trip on the publish path for an answer that will not change within the drain. What it did not
+distinguish is *why* the answer was null. On the first drain after a reset, RDL had not yet finished
+re-seeding, so it offered no identity for `rdl:Streetlight`; ENG declined to register — correctly,
+because the alternative was inventing a GUID — and then remembered that decline. RDL was correct
+seconds later and ENG never asked again.
+
+The distinction now drawn is between a null somebody settled and a null nobody did. An unmapped class
+or registration switched off is a decision recorded in configuration: it will read the same way on
+the next drain, so it caches. An unreachable RDL, an RDL not yet holding the class, or a failed write
+to CIR are all states of the world at one instant, and none of them is evidence that no mapping
+exists. Those are left uncached and retried on the next drain. The lookup half already drew this line
+for an unreachable CIR via `_lastLookupWasAnswered`; the registration half now draws it too, via
+`_lastRegisterWasSettled`.
+
+Left uncached entirely rather than cached briefly, because the drain interval already *is* the retry
+interval, and the RDL fetch behind the call keeps its own failure cache — so a provider that is down
+is not re-dialled per element.
+
+The general shape is worth naming, because this is the second time it has bitten in this area and the
+first time was the timeout. A negative cache must record *settled absence*, never *failure to
+determine*. The two are indistinguishable at the return value and completely different in meaning,
+and collapsing them converts a transient upstream outage into a fixed-length local one that outlives
+it — silently, since the fallback path keeps publishing and nothing looks broken.
+
+> **Correction, 2026-09-11.** The principle above stands and the change is kept, but the claim that
+> this "located the fault precisely" was wrong: the symptom recurred with the fix deployed. The
+> caching change is a sound improvement that was not the cause. See the two addenda below.
+
+### Addendum, 2026-09-11 — a reset must be visible to work already in flight
+
+The next hypothesis was that reset raced the drain, and it was pursued because `ClearAsync` deleted
+the state blob. Deleting is genuinely weaker than clearing: it destroys the ETag, so an in-flight
+drain holding the old one has nothing to conflict with and its write recreates what the reset just
+removed. `ClearAsync` now overwrites with an empty state instead.
+
+The ETag alone is still not sufficient, and the reason is worth recording. A drain is not
+instantaneous — an RDL round trip sits inside it — so the damaging sequence is a drain that reads
+*after* the reset lands, finds a legitimately empty state, and then writes back a watermark it
+gathered *before* the reset from markers it had already decided were published. Every precondition
+in that sequence matches. The reset is undone by a write that is entirely well-behaved under the old
+rules, because the rules only asked "did anyone write since I read?" and never "is what I concluded
+still about the current world?"
+
+`EngEngineState` therefore carries a `Generation`, incremented by every reset. A drain captures it at
+read time and writes it back unchanged; `TryWriteAsync` refuses any write whose generation is behind
+the stored one. Concurrency control is on the *reasoning*, not merely on the bytes.
+
+This is kept because the hole is real. It is recorded honestly that the hole was **not observed in
+practice** — see below.
+
+### Addendum, 2026-09-11 — what the day-zero symptom actually is
+
+Two diagnoses above were wrong, and the method that produced them is the lesson. Both were inferred
+from live readings that were themselves broken: a state-blob watch loop used a non-existent resource
+group and a storage auth mode the caller lacked rights to, so failed reads surfaced as empty values
+and were misread as "the reset held, then was undone". A later read with correct credentials showed
+`generation: 1` and a watermark equal to the marker's own timestamp — that is, state written by a
+drain that ran after the reset and republished correctly. There was never any resurrection.
+
+The rule taken from this: a negative observation from a command that can fail silently is not
+evidence. Confirm the read path succeeds before drawing conclusions from what it returns.
+
+Measured against live data, the pipeline stands as:
+
+- ENG is healthy — reset then drain yields `markersSeen 1, markersPublished 1, segmentsPublished 2`.
+- REG-LOCATION's classes are healthy — `class_objects` holds 1703 as `rdl:Streetlight`.
+- Elements did register — `dbo.tags` holds `LL-001` and `LL-002`, both on `class_id 1703`.
+- CIR holds one `RDL-CLASS` row, ENG's. REG-LOCATION's mirror row is absent.
+
+The two halves of the reported symptom are one defect, not two. Every REG-LOCATION ingest returns
+`messagesRead: 0` — including immediately after a reset with the subscription opened before ENG
+published — and `CirClassRegistrar` runs per ingested segment, so it has never executed. That also
+explains the absence of REG-LOCATION traces. The tags in the table are residue from an earlier
+successful run, which is exactly why elements looked registered while classes did not, and why the
+fault appeared to be in class registration when it is in message delivery.
+
+So: **ENG publishes and REG-LOCATION's subscriber reads nothing.** Both sides agree on
+`/acme/{itwin}/engineering/publication` and on the topic, and the channel exists on the broker, so
+the open question is why `ReadPublicationAsync` drains empty. Two untested suspects: ENG's status
+reports its topic list duplicated, hinting the publish-side topic construction is not what the
+configuration implies; and the durable subscriber id may name a subscription orphaned when day zero
+recreated the channel — the recovery path for exactly that case exists but never fired, as
+`sessionReopened` stayed `false`.
 
 
 

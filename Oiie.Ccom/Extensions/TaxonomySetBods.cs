@@ -481,7 +481,7 @@ public sealed record TaxonomySetSelector
 /// </summary>
 public sealed record RdlClass
 {
-    /// <summary>The identifier callers classify against, e.g. rdl:LightingUnit.</summary>
+    /// <summary>The identifier callers classify against, e.g. rdl:Streetlight.</summary>
     public required string Code { get; init; }
 
     public string? Name { get; init; }
