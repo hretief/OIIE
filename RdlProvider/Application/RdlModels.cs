@@ -35,6 +35,15 @@ public sealed record RdlClassGroup(int GroupId);
 /// <see cref="ParentClassId"/> is the class this one specialises, or null for a
 /// root. It is what lets a participant holding only a subset bind something
 /// classified against a leaf it does not hold at the nearest ancestor it does.
+///
+/// <see cref="Uuid"/> is the class's federation identity, held in
+/// dbo.objects.guid rather than in class_objects. It is what a CCOM consumer
+/// keys on: <see cref="Code"/> is what a human reads in a mapping, but the
+/// UUID is what ShowTaxonomySet quotes and what a participant stores against
+/// its local copy of the vocabulary. Nullable because the shared EIS schema
+/// permits it and older rows predate the seeding -- a null here means the
+/// library has no identity to offer, which the responder must handle rather
+/// than paper over.
 /// </summary>
 public sealed record RdlClass(
     int ClassId,
@@ -43,4 +52,5 @@ public sealed record RdlClass(
     string Code,
     string Name,
     string? Description,
-    int? ParentClassId);
+    int? ParentClassId,
+    Guid? Uuid = null);

@@ -23,6 +23,17 @@ public sealed record EngDrainReport
     /// </summary>
     public IReadOnlyList<string> Skipped { get; init; } = [];
 
+    /// <summary>
+    /// What the RDL library had to say about this engine's outbound class map.
+    ///
+    /// Distinct from <see cref="Errors"/> and <see cref="Skipped"/> because it
+    /// describes the configuration rather than the pass: nothing was skipped
+    /// and nothing failed, but a segment type published this pass may name a
+    /// class the reference library does not hold. Advisory, and never a reason
+    /// to withhold a marker.
+    /// </summary>
+    public IReadOnlyList<string> RdlWarnings { get; init; } = [];
+
     public bool Idle => MarkersPublished == 0 && Errors.Count == 0;
 }
 
@@ -45,6 +56,7 @@ public sealed class EngPublicationService(
     IEngEngineStateStore stateStore,
     EngSegmentsBuilder builder,
     TopologyClient topology,
+    RdlTaxonomyValidator rdlValidator,
     IOptions<EngEngineOptions> options,
     ILogger<EngPublicationService> logger)
 {
@@ -63,6 +75,12 @@ public sealed class EngPublicationService(
 
         if (string.IsNullOrWhiteSpace(_options.Enterprise))
             return Failed("EngEngine__Enterprise is not configured.");
+
+        // Checked before anything is published, so the warning appears above
+        // the segments it is about rather than after them. Advisory: the
+        // result is reported and the drain proceeds either way, because a
+        // marker ENG has already cut is not made wrong by a mapping typo.
+        var rdlWarnings = await ValidateOutboundMapAsync(ct);
 
         // What to publish is discovered, not configured.
         //
@@ -102,7 +120,8 @@ public sealed class EngPublicationService(
         {
             return new EngDrainReport
             {
-                Skipped = ["ENG holds no iModels, so there is nothing to publish."]
+                Skipped = ["ENG holds no iModels, so there is nothing to publish."],
+                RdlWarnings = rdlWarnings
             };
         }
 
@@ -168,8 +187,73 @@ public sealed class EngPublicationService(
             SegmentsPublished = run.SegmentCount,
             AlreadyPublished = run.AlreadyPublished,
             Errors = run.Errors,
-            Skipped = run.Skipped
+            Skipped = run.Skipped,
+            RdlWarnings = rdlWarnings
         };
+    }
+
+    /// <summary>
+    /// Asks RDL whether the keys this engine publishes actually exist, and
+    /// turns the answer into lines a human can act on.
+    ///
+    /// Never throws and never blocks the drain. A missing key is a real defect
+    /// -- it puts an unresolvable segment type on the bus -- but it is one that
+    /// only the person holding the settings file can fix, so the engine's job
+    /// is to say so clearly and carry on.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> ValidateOutboundMapAsync(CancellationToken ct)
+    {
+        RdlValidationResult result;
+
+        try
+        {
+            result = await rdlValidator.ValidateAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The validator already swallows its own failures, so reaching
+            // here means something unanticipated. Still not fatal: validation
+            // is not why this engine exists.
+            logger.LogWarning(ex, "Validating the outbound RDL map failed unexpectedly.");
+            return [$"The outbound RDL map could not be validated: {ex.Message}"];
+        }
+
+        if (!result.Checked)
+        {
+            return result.Reason is { Length: > 0 } reason
+                ? [$"The outbound RDL map is unverified: {reason}"]
+                : [];
+        }
+
+        if (result.MissingKeys.Count == 0) return [];
+
+        // A map where nothing at all resolves is almost never N independent
+        // typos; it is the wrong library, the wrong namespace, or a code form
+        // that changed. Said once, as one problem, because N warnings would
+        // send someone looking for N fixes.
+        if (result.MissingKeys.Count == _options.OutboundRdlClassMap.Count && result.LibrarySize > 0)
+        {
+            var line =
+                $"None of the {result.MissingKeys.Count} configured RDL keys appear among the " +
+                $"{result.LibrarySize} classes RDL holds. This looks like a mismatch in the key " +
+                $"form rather than individual typos; expected keys like '{result.MissingKeys[0]}'.";
+
+            logger.LogWarning("{Warning}", line);
+            return [line];
+        }
+
+        var warnings = result.MissingKeys
+            .Select(key =>
+                $"RDL does not hold '{key}', which OutboundRdlClassMap publishes as a " +
+                "SegmentType. Segments carrying it will name a class no subscriber can resolve.")
+            .ToList();
+
+        foreach (var warning in warnings)
+        {
+            logger.LogWarning("{Warning}", warning);
+        }
+
+        return warnings;
     }
 
     /// <summary>

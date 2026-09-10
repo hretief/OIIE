@@ -38,9 +38,18 @@ public sealed class SqlRdlStore(IOptions<RdlOptions> options) : IRdlStore
     // scope could not classify anything outside it.
     private const int GlobalScopeId = 1;
 
+    // The guid lives on dbo.objects, not class_objects, so every read of a
+    // class joins the registry row that the foreign key already guarantees is
+    // there. An INNER JOIN would be defensible for that reason, but LEFT is
+    // used deliberately: if a class ever did lose its registry row the right
+    // answer is a class with no identity, not a class that vanishes from the
+    // library without explanation.
     private const string ClassSelect = """
-        SELECT class_id, group_id, namespace_id, code, name, description, parent_class_id
-        FROM dbo.class_objects
+        SELECT c.class_id, c.group_id, c.namespace_id, c.code, c.name, c.description, c.parent_class_id,
+               o.guid
+        FROM dbo.class_objects AS c
+        LEFT JOIN dbo.objects AS o
+               ON o.object_id = c.class_id AND o.object_type = 185
         """;
 
     private async Task<SqlConnection> OpenAsync(CancellationToken ct)
@@ -79,8 +88,8 @@ public sealed class SqlRdlStore(IOptions<RdlOptions> options) : IRdlStore
         await using var cn = await OpenAsync(ct);
         await using var cmd = new SqlCommand($"""
             {ClassSelect}
-            WHERE (@ns IS NULL OR namespace_id = @ns)
-            ORDER BY class_id;
+            WHERE (@ns IS NULL OR c.namespace_id = @ns)
+            ORDER BY c.class_id;
             """, cn);
         cmd.Parameters.AddWithValue("@ns", (object?)namespaceId ?? DBNull.Value);
 
@@ -95,7 +104,7 @@ public sealed class SqlRdlStore(IOptions<RdlOptions> options) : IRdlStore
         await using var cn = await OpenAsync(ct);
         await using var cmd = new SqlCommand($"""
             {ClassSelect}
-            WHERE class_id = @id;
+            WHERE c.class_id = @id;
             """, cn);
         cmd.Parameters.AddWithValue("@id", classId);
 
@@ -116,8 +125,8 @@ public sealed class SqlRdlStore(IOptions<RdlOptions> options) : IRdlStore
         await using var cn = await OpenAsync(ct);
         await using var cmd = new SqlCommand($"""
             {ClassSelect}
-            WHERE code = @code
-            ORDER BY class_id;
+            WHERE c.code = @code
+            ORDER BY c.class_id;
             """, cn);
         cmd.Parameters.AddWithValue("@code", code);
 
@@ -159,7 +168,16 @@ public sealed class SqlRdlStore(IOptions<RdlOptions> options) : IRdlStore
                         : $"Class code '{request.Code}' is already in use.");
             }
 
-            await InsertObjectAsync(cn, tx, request.ClassId, GlobalScopeId, ct);
+            // Every class leaves this method with an identity. The caller's is
+            // honoured when given, so a class already governed elsewhere keeps
+            // the UUID its consumers know it by; otherwise this library is the
+            // origin of the class and mints one. What is not an option is
+            // storing nothing -- a class with a NULL guid cannot be quoted in
+            // ShowTaxonomySet, and the responder would be left inventing a
+            // value that no two systems would agree on.
+            var uuid = request.Uuid ?? Guid.NewGuid();
+
+            await InsertObjectAsync(cn, tx, request.ClassId, uuid, GlobalScopeId, ct);
 
             // Classes are locked (lock_flags 18) to match how REG-LOCATION's
             // bootstrap and EIS's own ebps_pop_announce_class_objs record them:
@@ -196,7 +214,7 @@ public sealed class SqlRdlStore(IOptions<RdlOptions> options) : IRdlStore
 
             return new RdlClass(
                 request.ClassId, request.GroupId, request.NamespaceId,
-                request.Code, request.Name, request.Description, request.ParentClassId);
+                request.Code, request.Name, request.Description, request.ParentClassId, uuid);
         }
         catch (SqlException ex) when (IsConstraintViolation(ex))
         {
@@ -251,18 +269,25 @@ public sealed class SqlRdlStore(IOptions<RdlOptions> options) : IRdlStore
     /// A per-project copy of REG-LOCATION's equivalent rather than a shared
     /// helper: these apps deliberately take no ProjectReference on each other,
     /// and the duplication is the cheaper price for that isolation.
+    ///
+    /// The guid is written here because this is where the object begins to
+    /// exist. Assigning it later would leave a window in which the class is
+    /// readable but unquotable, and a back-fill after the fact cannot tell the
+    /// difference between an object that never had an identity and one whose
+    /// identity was deliberately withheld.
     /// </summary>
     private static async Task InsertObjectAsync(
-        SqlConnection cn, SqlTransaction tx, int objectId, int scopeId, CancellationToken ct)
+        SqlConnection cn, SqlTransaction tx, int objectId, Guid uuid, int scopeId, CancellationToken ct)
     {
         await using var cmd = new SqlCommand("""
             INSERT INTO dbo.objects
                 (object_id, object_type, guid, scope_id, hide_flags, lock_flags, date_added)
             VALUES
-                (@id, @type, NULL, @scope, 0, 0, SYSUTCDATETIME());
+                (@id, @type, @guid, @scope, 0, 0, SYSUTCDATETIME());
             """, cn, tx);
         cmd.Parameters.AddWithValue("@id", objectId);
         cmd.Parameters.AddWithValue("@type", TypeClass);
+        cmd.Parameters.AddWithValue("@guid", uuid);
         cmd.Parameters.AddWithValue("@scope", scopeId);
         await cmd.ExecuteNonQueryAsync(ct);
     }
@@ -290,5 +315,6 @@ public sealed class SqlRdlStore(IOptions<RdlOptions> options) : IRdlStore
         r.GetString(3),
         r.GetString(4),
         r.IsDBNull(5) ? null : r.GetString(5),
-        r.IsDBNull(6) ? null : r.GetInt32(6));
+        r.IsDBNull(6) ? null : r.GetInt32(6),
+        r.IsDBNull(7) ? null : r.GetGuid(7));
 }

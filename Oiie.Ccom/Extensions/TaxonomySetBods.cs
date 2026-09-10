@@ -210,13 +210,21 @@ public static class TaxonomySetBods
     /// mandatory -- without it the document does not validate. Note that
     /// CcomBod.CleanUpDocument strips xsi:type as a serialiser artefact; here
     /// it is load-bearing, which is one reason these BODs are hand-built.
+    ///
+    /// The UUID is the one the library holds. Only when the class arrives
+    /// without one is a value derived from the code, and that is a fallback
+    /// rather than the design: a derived identity is reproducible but not
+    /// authoritative, and it silently changes meaning if the derivation ever
+    /// does. Preferring the stored value makes the response a report of what
+    /// the library knows instead of a claim this serialiser invents.
     /// </summary>
     private static XElement BaseType(string elementName, RdlClass rdlClass)
     {
+        var uuid = rdlClass.Uuid ?? CcomUuid.ForReferenceData(RdlSourceId, rdlClass.Code);
+
         var element = new XElement(Ccom + elementName,
             new XAttribute(Xsi + "type", $"ccom:{rdlClass.ConcreteType}"),
-            new XElement(Ccom + "UUID",
-                CcomUuid.ForReferenceData(RdlSourceId, rdlClass.Code).ToString()),
+            new XElement(Ccom + "UUID", uuid.ToString()),
             new XElement(Ccom + "IDInInfoSource", rdlClass.Code),
             new XElement(Ccom + "ShortName", rdlClass.Code));
 
@@ -309,6 +317,13 @@ public static class TaxonomySetBods
             Code = code,
             Name = (string?)element.Element(Ccom + "FullName"),
             Description = (string?)element.Element(Ccom + "Description"),
+            // Carried through so a consumer sees the identity the provider
+            // actually published rather than re-deriving one locally and
+            // reaching a different answer. Parsed leniently: a malformed UUID
+            // is not worth discarding an otherwise usable class over.
+            Uuid = Guid.TryParse((string?)element.Element(Ccom + "UUID"), out var uuid)
+                ? uuid
+                : null,
             ConcreteType = concreteType
         };
     }
@@ -475,6 +490,21 @@ public sealed record RdlClass
 
     /// <summary>Code of the class this one specialises. Null for a root.</summary>
     public string? ParentCode { get; init; }
+
+    /// <summary>
+    /// The class's identity as the library holds it.
+    ///
+    /// Set this when the value came from storage. It is what a consumer keys
+    /// its local copy of the vocabulary on, so it must be the same value on
+    /// every response and from every provider serving the same library.
+    ///
+    /// Null means the source had no identity to give, and the builder falls
+    /// back to deriving one from the code. That fallback keeps a document
+    /// well-formed but is strictly worse: it is only stable for as long as the
+    /// derivation is, and two systems agree only by both happening to run this
+    /// code. A library that stores its guids should never reach it.
+    /// </summary>
+    public Guid? Uuid { get; init; }
 
     /// <summary>
     /// The concrete ccom:BaseType derivation this class is expressed as.

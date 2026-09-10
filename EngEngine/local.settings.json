@@ -17,6 +17,9 @@
     "Isbm__BaseUrl": "https://acme-api-isbm-dev.azurewebsites.net/api",
     "Isbm__ApiKey": "",
 
+    "EngRdl__Enabled": "false",
+    "EngRdl__RequestChannelUri": "/OIIE/RDL/Request",
+
     "EngEnginePollSchedule": "*/15 * * * * *"
   }
 }

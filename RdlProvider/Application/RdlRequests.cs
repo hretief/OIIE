@@ -7,6 +7,15 @@ namespace RdlProvider.Application;
 /// store, so a curator can align ids with an external authority.
 ///
 /// <see cref="ParentClassId"/> is optional; null makes the class a root.
+///
+/// <see cref="Uuid"/> is optional and exists for the case where the class
+/// already has an identity somewhere else -- issued by a governing authority,
+/// or carried over from a library being imported. Supplying it preserves that
+/// identity instead of minting a competing one for the same concept. Omitting
+/// it means this library is the origin of the class, and the store assigns a
+/// fresh UUID rather than storing nothing: an object with no identity cannot
+/// be quoted on the wire, and leaving the column NULL only defers that problem
+/// to the responder.
 /// </summary>
 public sealed record CreateClassRequest(
     int ClassId,
@@ -15,7 +24,8 @@ public sealed record CreateClassRequest(
     string Code,
     string Name,
     string? Description,
-    int? ParentClassId);
+    int? ParentClassId,
+    Guid? Uuid = null);
 
 /// <summary>
 /// Edits an existing class.

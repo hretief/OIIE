@@ -38,6 +38,15 @@ both derive their channel from `IModelId` and would otherwise fail on a timer
 before an iTwin exists. The `SitesIngest` legs are enabled, because the sites
 channel is enterprise-level rather than iTwin-derived.
 
+`EngRdl__Enabled` also ships **false**. It turns on ENG's validation of its
+outbound RDL class map, which posts a `GetTaxonomySet` on `EngRdl__RequestChannelUri`
+(default `/OIIE/RDL/Request`) and checks the reply. Enable it only with RdlEngine
+running and that channel provisioned. Note the consumer-request routes it uses are
+marked UNVERIFIED on `IIsbmClient` — ws-CIR never exercised them — so confirm them
+against Bruno on first live run. Validation is advisory: a failed check logs a
+warning and reports through `EngDrainReport.RdlWarnings`, never withholding a
+marker.
+
 Provisioning and deployment are in
 [deploy/engines/README.md](../deploy/engines/README.md).
 

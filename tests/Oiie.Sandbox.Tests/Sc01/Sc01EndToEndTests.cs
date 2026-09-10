@@ -288,6 +288,14 @@ public class Sc01EndToEndTests
             new FakeEngStateStore(),
             new EngSegmentsBuilder(options, NullLogger<EngSegmentsBuilder>.Instance),
             topology,
+            // Disabled: this test is about the publication path, and a
+            // validator left on would post a GetTaxonomySet at a fake broker
+            // that has no RDL behind it.
+            new RdlTaxonomyValidator(
+                broker,
+                Options.Create(new EngRdlOptions { Enabled = false }),
+                options,
+                NullLogger<RdlTaxonomyValidator>.Instance),
             options,
             NullLogger<EngPublicationService>.Instance);
 

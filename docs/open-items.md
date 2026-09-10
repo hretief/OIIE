@@ -784,10 +784,17 @@ What remains:
   from at its own edge. Two things are needed and only the first is blocking:
   agreement on the key vocabulary, and eventually the RDL participant itself
   (Technical Specification §237/§468) for definition propagation.
+  - **Largely resolved by DR-030's 2026-09-09 addendum.** ENG now publishes
+    `rdl:LightingUnit` sourced as `MIMOSA-RDL` for its one mapped class, and as of
+    2026-09-10 `RdlTaxonomyValidator` checks the configured keys against the live
+    library over ISBM. What remains is breadth: one class is agreed, and MMS still
+    has no segments leg consuming `InboundRdlTableMap`.
   - **Which RDL class is a MnDOT light unit?** A MIMOSA/OIIE modelling decision,
     not a coding one, and the MMS slice waits on it.
     `rdl:FunctionalLocation` (1001) is probably wrong; `rdl:Equipment` (1701) is
     nearer, since a light unit is physical plant rather than a location.
+    Answered provisionally for the light-unit slice as `rdl:LightingUnit` (1703,
+    a child of 1701); the formal governance process is still to come.
 - **The ENG-class-to-`class_id` map is guesswork.** `InboundClassMap` seeds
   `Functional:FunctionalComponentElement` to `1001` (`rdl:FunctionalLocation`),
   but nobody has confirmed that is the intended correspondence. Note the original
@@ -801,6 +808,27 @@ What remains:
   A steward is the only thing that would catch it. Live runs are hitting this
   constantly — every segment so far has logged the fallback warning, so the map
   is not merely unconfirmed, it is unused.
+- **Unresolved: tags are landing on `class_id = 1001` when 1703 was expected.**
+  Observed 2026-09-10 on two elements added through ENG. Both mapping tables are
+  correct — `OutboundRdlClassMap` has `ENG.Streetlight → rdl:LightingUnit`,
+  `InboundClassMap` has `rdl:LightingUnit → 1703` — and both sides agree on the
+  wire contract (`EngSegmentsBuilder` writes `Type.IDInInfoSource`,
+  `IncomingSegmentMapper` reads it). 1001 is `InboundFallbackClassId`, so the
+  fallback fired, which means the segment arrived with **no `SegmentType` at
+  all**: `EngSegmentsBuilder` omits the element entirely when
+  `ResolveRdlClassKey` returns null.
+  - **Most likely cause**, per DR-030's addendum: the shipped test element is a
+    `Bis:PhysicalElement`, which is deliberately unmapped so it exercises the
+    degradation path. If the two new elements are anything other than
+    `ENG.Streetlight`, the fallback is doing its documented job and the fix is a
+    map entry, not a wire-format change.
+  - **To confirm**, against the ENG database:
+    `SELECT ECInstanceId, CodeValue, FullyQualifiedECClassName FROM dbo.vElement ORDER BY CreatedUtc DESC;`
+    The view builds the lookup key as `CONCAT(SchemaName, '.', ClassName)`, so
+    that column is exactly what `OutboundRdlClassMap` is keyed on. Either
+    engine's warning log settles it too.
+  - **Note this is orthogonal to the UUID-vs-code question** in DR-030. If no
+    `Type` element is published, neither matching strategy would help.
 - **`CreateTagRequest.State` still defaults to `Approved` in the provider.** The
   inbound leg passes `Proposed` explicitly, so it is correct today, but the safe
   behaviour depends on every future caller remembering. The default should

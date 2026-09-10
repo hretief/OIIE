@@ -136,6 +136,16 @@ builder.Services.AddSingleton(sp =>
 
 builder.Services.AddSingleton<IEngEngineStateStore, BlobEngEngineStateStore>();
 builder.Services.AddSingleton<EngSegmentsBuilder>();
+
+// --- RDL validation --------------------------------------------------------
+//
+// Singleton because the cache is the point: the RDL library changes on a human
+// timescale, so re-fetching it every drain would ask the same question every
+// poll interval. Registered unconditionally -- the validator returns "not
+// checked" when disabled, so an engine without an RDL peer drains as before.
+builder.Services.Configure<EngRdlOptions>(builder.Configuration.GetSection("EngRdl"));
+builder.Services.AddSingleton<RdlTaxonomyValidator>();
+
 builder.Services.AddSingleton<EngPublicationService>();
 builder.Services.AddSingleton<EngSitesBuilder>();
 builder.Services.AddSingleton<EngSitePublicationService>();

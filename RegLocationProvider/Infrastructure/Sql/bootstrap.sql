@@ -158,9 +158,32 @@ GO
    compared between runs; stamping a wall-clock time would make two runs
    differ for no meaningful reason.
 
-   guid is the FederationGuid and applies only to tags, which this script no
-   longer seeds -- every row below is reference data and carries NULL. See the
-   tag federation identity note further down for who authors those values.
+   guid carries the federation identity of the object. Tags are not seeded
+   here, so the tag guids are authored elsewhere -- see the tag federation
+   identity note further down.
+
+   Classes are the exception among the reference rows below: they do carry a
+   guid, because a class identity travels on the wire. ShowTaxonomySet quotes
+   ccom:UUID for every class it returns, and a consumer keys its local copy of
+   the vocabulary on that value. If the column were NULL the responder would
+   have to invent one at serialisation time, and an invented identity is not an
+   identity -- two providers over the same library would disagree, and the same
+   provider would disagree with itself if the derivation ever changed. Seeding
+   them here makes the library the authority and the wire a report of it.
+
+   The literals are fixed rather than generated so that every environment that
+   runs this script arrives at the same identity for the same class. NEWID()
+   would give dev, test and production three different UUIDs for
+   rdl:Equipment, which is the failure this seeding exists to prevent.
+
+   These values are sandbox-local. A class in a real deployment is issued its
+   UUID by the authority that governs the library -- MIMOSA's published RDL for
+   the standard classes, or the operator's own registrar for extensions. What
+   matters here is that the value is stored and stable, not that it is
+   well-known; replacing it later is a data change, not a code change.
+
+   The remaining reference rows carry NULL. Scopes, namespaces, class groups
+   and units are structural and are never quoted by UUID on the wire.
    ============================================================================ */
 INSERT INTO dbo.objects (object_id, object_type, guid, scope_id, hide_flags, lock_flags)
 SELECT v.object_id, v.object_type, v.guid, 1, 0, v.lock_flags
@@ -182,11 +205,11 @@ FROM (VALUES
 
     -- Classes (185). Locked against user modification, as
     -- ebps_pop_announce_class_objs does for populate-created classes.
-    (1001, 185, 18, CONVERT(UNIQUEIDENTIFIER, NULL)),   -- rdl:FunctionalLocation
-    (1002, 185, 18, CONVERT(UNIQUEIDENTIFIER, NULL)),   -- rdl:Site
-    (1701, 185, 18, CONVERT(UNIQUEIDENTIFIER, NULL)),   -- rdl:Equipment
-    (1702, 185, 18, CONVERT(UNIQUEIDENTIFIER, NULL)),   -- rdl:Instrument
-    (1703, 185, 18, CONVERT(UNIQUEIDENTIFIER, NULL))    -- rdl:LightingUnit
+    (1001, 185, 18, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a01')),   -- rdl:FunctionalLocation
+    (1002, 185, 18, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a02')),   -- rdl:Site
+    (1701, 185, 18, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a03')),   -- rdl:Equipment
+    (1702, 185, 18, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a04')),   -- rdl:Instrument
+    (1703, 185, 18, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a05'))    -- rdl:LightingUnit
 
     -- No physical items (1) or tags (212) are registered here. Both are
     -- received from ENG over the bus rather than authored by this provider --
@@ -199,6 +222,40 @@ WHERE NOT EXISTS
     SELECT 1 FROM dbo.objects AS o
     WHERE o.object_id = v.object_id AND o.object_type = v.object_type
 );
+GO
+
+/* ============================================================================
+   Class identity back-fill
+
+   The INSERT above is guarded by NOT EXISTS, so it does nothing for a database
+   that was bootstrapped before classes carried a guid. Those rows exist with
+   the column NULL and the INSERT will never revisit them, which would leave
+   every already-deployed environment serving classes with no identity while a
+   freshly created one serves them correctly. That divergence is worse than
+   either state on its own.
+
+   Only NULLs are touched. A row that already holds a guid is left exactly as
+   it is: it may have been issued by a governing authority or federated in from
+   another system, and overwriting it would break every consumer that has
+   already keyed on the old value. This is the difference between filling a
+   gap and rewriting history.
+
+   Restricted to object_type 185 for the same reason the seed is: classes are
+   the only reference rows here whose identity is quoted on the wire.
+   ============================================================================ */
+UPDATE o
+   SET o.guid = v.guid
+FROM dbo.objects AS o
+INNER JOIN (VALUES
+    (1001, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a01')),   -- rdl:FunctionalLocation
+    (1002, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a02')),   -- rdl:Site
+    (1701, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a03')),   -- rdl:Equipment
+    (1702, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a04')),   -- rdl:Instrument
+    (1703, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a05'))    -- rdl:LightingUnit
+) AS v(object_id, guid)
+    ON v.object_id = o.object_id
+WHERE o.object_type = 185
+  AND o.guid IS NULL;
 GO
 
 /* ============================================================================

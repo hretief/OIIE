@@ -1909,6 +1909,68 @@ Consequences of writing them:
   untouched: the shipped test element is a `Bis:PhysicalElement`, which is unmapped, so it exercises
   the no-`SegmentType` path rather than the light-unit one.
 
+### Addendum, 2026-09-10 — ENG validates its outbound map against the RDL library
+
+`OutboundRdlClassMap` is a claim about a library ENG does not own, and nothing was checking it. A
+key that is merely a typo — `rdl:LightingUnits` — publishes a `SegmentType` no subscriber can
+resolve, and every consumer records it as fact. The map itself cannot be derived automatically
+(deciding that a Streetlight is a LightingUnit is a modelling judgement, per the addendum above),
+but it *can* be told when it names something that does not exist, which is the failure that
+actually occurs.
+
+`RdlTaxonomyValidator` now performs a `GetTaxonomySet` → `ShowTaxonomySet` round trip once per
+drain and checks every configured RDL key against the answer. Decisions worth recording:
+
+- **Over ISBM, not RDL's HTTP API.** ENG has no business knowing RdlProvider's REST endpoint: in
+  the field the reference library is reachable only through the bus, and validating over a private
+  back channel would prove the mapping while proving nothing about the integration. This is the
+  first consumer-side use of the request-response half of `IIsbmClient`.
+- **Warn, never block.** A failed check never withholds a marker. An unverifiable key is a
+  configuration defect only the person holding the settings file can fix, so the engine says so
+  and carries on — the same posture as the existing unmapped-EC-class path.
+- **"Could not verify" is a distinct state from "verified and clean."** `RdlValidationResult.Checked`
+  separates them. Collapsing the two would let RDL being down read as a healthy mapping, which is
+  precisely the failure the check exists to prevent.
+- **Cached, and failures cached too.** The library changes on a human timescale, so re-fetching it
+  every drain would ask the same question at the poll interval. Failures cache for a shorter
+  interval so a provider that is down does not cost every subsequent drain the full timeout.
+- **Off by default.** The consumer-request routes on `IIsbmClient` are marked UNVERIFIED — ws-CIR is
+  a request *provider* and never exercised them — so they need confirming against a live broker
+  before a deployment relies on them.
+
+### Open — should `SegmentType` be matched on UUID rather than code?
+
+Raised 2026-09-10, not yet decided, recorded so the reasoning is not lost.
+
+`IncomingSegmentMapper` resolves `class_id` from `Type.IDInInfoSource` (the string key), while
+`Type.UUID` is published and then ignored. Matching on the UUID would be more durable — a UUID
+survives a rename, a string code does not — and would align `SegmentType` with how every other
+identity on the wire behaves. The proposed end state:
+
+| Field | Would carry |
+|---|---|
+| `Type.UUID` | the RDL class GUID from `class_objects.guid`, acting as the CIRID |
+| `Type.IDInInfoSource` | ENG's own id for its EC class |
+| `Type.InfoSource` | `ENG` — **must** move with `IDInInfoSource`, or the pair asserts an ENG identifier is sourced from the RDL library |
+
+This is consistent with established CIR practice: both `EngSitePublicationService` and
+`RegLocationApprovalService` supply a pre-existing GUID as the CIRID with `CreateCirid: false`,
+because the minting authority already assigned one and letting CIR allocate another would create a
+second identity. Registering a *class* rather than an instance would be a new category, but
+`Category` exists precisely to separate kinds of thing.
+
+Three obstacles, in order:
+
+1. **The two sides do not currently mean the same thing by that UUID.** `EngSegmentsBuilder` emits
+   `CcomUuid.ForReferenceData(RdlSourceId, rdlKey)` — a derived hash — while `class_objects` holds
+   a hand-authored GUID. Switching the match today would miss on every segment and file everything
+   under the fallback.
+2. **ENG must first learn the real GUIDs.** `ShowTaxonomySet` now carries the stored GUIDs, and
+   `RdlTaxonomyValidator` already fetches them but discards them after the existence check.
+   Retaining a code→GUID cache is the enabling step.
+3. **It is a coordinated breaking change.** ENG and REG-LOCATION must switch together, and
+   REG-LOCATION's lookup must key on `class_objects.guid`, not on the derived UUID.
+
 
 
 

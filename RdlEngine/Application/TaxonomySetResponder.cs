@@ -121,6 +121,11 @@ public sealed class TaxonomySetResponder(
     /// outside this namespace has no code in this set, so the child is emitted
     /// as a root — see the response builder, which does the same for any parent
     /// it cannot resolve.
+    ///
+    /// The UUID is passed through untouched. It is the library's, not this
+    /// engine's to mint: a responder that generated identities would give the
+    /// same class a different UUID than the provider holds, and consumers key
+    /// on that value. Where RDL has none, the builder's fallback applies.
     /// </summary>
     private static List<CcomRdlClass> ToCcomClasses(IReadOnlyList<RdlClassDto> classes)
     {
@@ -131,6 +136,7 @@ public sealed class TaxonomySetResponder(
             Code = c.Code,
             Name = c.Name,
             Description = c.Description,
+            Uuid = c.Uuid,
             ParentCode = c.ParentClassId is { } parentId
                 && codeById.TryGetValue(parentId, out var parentCode)
                     ? parentCode

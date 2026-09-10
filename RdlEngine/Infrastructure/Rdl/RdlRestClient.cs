@@ -18,7 +18,8 @@ public sealed record RdlClassDto(
     string Code,
     string Name,
     string? Description,
-    int? ParentClassId);
+    int? ParentClassId,
+    Guid? Uuid = null);
 
 public interface IRdlClient
 {

@@ -22,12 +22,21 @@ public class TaxonomySetResponderTests
     /// Two namespaces, so set selection is actually exercised. Namespace 1 is
     /// the seeded sandbox slice; namespace 2 stands in for a second library
     /// that must not leak into the first's answer.
+    ///
+    /// The UUIDs mirror what bootstrap.sql seeds into dbo.objects.guid, so
+    /// these fixtures fail if the engine ever starts inventing identities of
+    /// its own rather than publishing the library's. other:Widget is left
+    /// without one on purpose, to keep the no-identity path covered.
     /// </summary>
+    private static readonly Guid EquipmentUuid = new("9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a03");
+
     private static readonly RdlClassDto[] Library =
     [
-        new(1701, 1, 1, "rdl:Equipment", "Equipment", null, null),
-        new(1702, 1, 1, "rdl:Instrument", "Instrument", null, 1701),
-        new(1703, 1, 1, "rdl:LightingUnit", "Lighting Unit", "A street light.", 1701),
+        new(1701, 1, 1, "rdl:Equipment", "Equipment", null, null, EquipmentUuid),
+        new(1702, 1, 1, "rdl:Instrument", "Instrument", null, 1701,
+            new Guid("9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a04")),
+        new(1703, 1, 1, "rdl:LightingUnit", "Lighting Unit", "A street light.", 1701,
+            new Guid("9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a05")),
         new(2701, 1, 2, "other:Widget", "Widget", null, null)
     ];
 
@@ -180,5 +189,42 @@ public class TaxonomySetResponderTests
 
         var classes = TaxonomySetBods.ParseShowTaxonomySet(response!);
         Assert.Equal("rdl:Pump", Assert.Single(classes).Code);
+    }
+
+    /// <summary>
+    /// The identity on the wire is the library's, not one the responder made
+    /// up. This is the whole point of storing the guid: a consumer keys its
+    /// local vocabulary on the UUID, so if the engine published a value of its
+    /// own devising the two would disagree about what rdl:Equipment is.
+    /// </summary>
+    [Fact]
+    public async Task Publishes_the_uuid_the_library_holds()
+    {
+        var response = await Responder().RespondAsync(
+            Request(new TaxonomySetSelector { ShortName = "ACME-RDL" }), default);
+
+        var classes = TaxonomySetBods.ParseShowTaxonomySet(response!);
+        var equipment = Assert.Single(classes, c => c.Code == "rdl:Equipment");
+
+        Assert.Equal(EquipmentUuid, equipment.Uuid);
+    }
+
+    /// <summary>
+    /// A class with no stored identity is still answerable. The document needs
+    /// a UUID to be well-formed, so one is derived from the code -- reproducible
+    /// but not authoritative, which is why it applies only here and never in
+    /// preference to a stored value.
+    /// </summary>
+    [Fact]
+    public async Task Derives_a_uuid_only_when_the_library_has_none()
+    {
+        var response = await Responder().RespondAsync(
+            Request(new TaxonomySetSelector { ShortName = "OTHER-RDL" }), default);
+
+        var widget = Assert.Single(TaxonomySetBods.ParseShowTaxonomySet(response!));
+
+        Assert.Equal("other:Widget", widget.Code);
+        Assert.NotNull(widget.Uuid);
+        Assert.NotEqual(Guid.Empty, widget.Uuid);
     }
 }
