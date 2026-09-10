@@ -2251,6 +2251,51 @@ configuration implies; and the durable subscriber id may name a subscription orp
 recreated the channel — the recovery path for exactly that case exists but never fired, as
 `sessionReopened` stayed `false`.
 
+## DR-031 — Whatever invalidates a source invalidates its caches, and channels are owned
+
+Decided 2026-09-11, after day zero repeatedly produced an empty CIR registry while every engine
+reported success.
+
+Two independent defects shared one shape: state describing something outlived the thing it
+described, and the mismatch surfaced as silence rather than as an error.
+
+**Caches are invalidated by whatever invalidates their source.** `CirClassResolver` and
+`CirClassRegistrar` cache class identity in memory for the lifetime of the Functions host. Day zero
+drops the CIR registry but restarts nothing, so the caches survived the database they described,
+answered every subsequent lookup from memory, and skipped the writes that would have rebuilt the
+rows. Both classes now expose `ClearCacheAsync`, wired into the reset endpoints, and day zero drops
+CIR before calling them so identity is never left describing rows that no longer exist.
+
+The corollary is about ordering, and it is not symmetric. Identity outliving its data is the harmful
+direction — CIR entries key on integer ids that a reset restarts from 1, so a surviving registry
+collides with the first rows created afterwards. Data briefly without identity is repaired by the
+next registration. When the two cannot be atomic, drop identity first.
+
+**A channel belongs to whoever opens sessions on it.** Day zero deletes every channel the broker
+reports, because clutter from earlier demos is exactly what it exists to remove, but recreates only
+what the registry declares. The CIR provider's publication channel was configured on the provider
+and declared in no personality pack, so each run deleted it, destroyed the provider's session, and
+warned about an orphan it had created itself. The rule already existed for the provider's request
+channel — ensure it, never delete it. `CirSettings.PublicationChannelUri` extends it to the
+publication side.
+
+Generalised: a system's configuration is not a declaration. If day zero is to reason about a channel
+at all, some pack must declare it; otherwise the channel is invisible to the recreate path and
+visible only to the delete path, which is the worst of both.
+
+Two supporting rules, both learned by being misled:
+
+- **Derive, do not assume, channel type.** The ensure loop hardcoded `Request`. Applied to a
+  publication channel that produces a provider that cannot post — a failure that reads as quiet, not
+  as broken. Type is now taken from the URI.
+- **Query the store, not the API, when caches may lie.** The missing rows were invisible through the
+  provider API because incidental restarts kept repopulating them. Direct `cir.Entry` reads isolated
+  the defect in one attempt after days of ambiguity.
+
+Verified over two independent day-zero runs, each yielding 3 `SITE`, 2 `RDL-CLASS` and 2
+`FunctionalLocation` entries. A warm repeat reuses the two `RDL-CLASS` rows rather than adding more;
+a third row for the same class would indicate the cross-reference is not being consulted.
+
 
 
 

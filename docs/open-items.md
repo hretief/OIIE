@@ -1341,7 +1341,9 @@ gets pointed at and silently misreports.
 ## REG-LOCATION reads no segments from the engineering channel
 
 Raised 2026-09-11 while chasing the day-zero symptom "neither classes nor
-elements registered". **Open, and the live blocker.**
+elements registered". **Resolved 2026-09-11.** Root cause and fix are recorded
+at the end of this item; the narrative below is kept because it is the record of
+how three wrong diagnoses were arrived at.
 
 ENG publishes correctly — reset then drain gives `markersSeen 1,
 markersPublished 1, segmentsPublished 2` — but every REG-LOCATION ingest returns
@@ -1370,3 +1372,124 @@ Two prior diagnoses (a stale negative cache, then a reset/drain race) were wrong
 Both changes were kept on their own merits; neither addressed this. See the
 decision register addenda of the same date, including how broken live readings
 produced false evidence.
+
+### Root cause and fix
+
+The second suspect was right about the subscription and wrong about the cause.
+Nothing orphaned the subscription: `TableSessionRegistry` never persisted
+`SubscriberId`. It was set on `SessionMetadata` at open time and used to derive
+the durable subscription name, but `RegisterAsync` did not write the column and
+`ToSessionMetadata` did not read it, so every session rehydrated from Table
+Storage came back with `SubscriberId` null. The broker then fell back to the
+session id and read from `pub-<hash>|<sessionId>`, a subscription that has never
+existed, while the real one accumulated the backlog unread.
+
+Two changes, both in `ISBMProvider`:
+
+- `TableSessionRegistry` now persists and restores `SubscriberId`, so a
+  rehydrated session resolves to the same durable subscription it opened.
+- `ServiceBusMessageBroker.PeekNextAsync` re-ensures the subscription before
+  recreating the receiver on `MessagingEntityNotFound`. Previously it only
+  evicted the cached receiver, so the retry hit the same missing entity and the
+  fault surfaced as a 404 — indistinguishable from an empty queue to a caller.
+  That is what made a permanent misconfiguration look like a channel that was
+  merely quiet, and it is why the symptom read as `messagesRead: 0` for days
+  rather than as an error.
+
+`sessionReopened` stayed `false` throughout because the recovery path keys off a
+session fault, and there was no session fault to detect: the read succeeded and
+honestly reported an empty subscription. It was the wrong subscription.
+
+Verified live after deploying the broker: reset and drain ENG
+(`segmentsPublished 2`), then ingest returns
+`messagesRead 1, segmentsSeen 2, alreadyKnown 2`, with a matching
+`PostPublication 201` / `ReadPublication 200` / `RemovePublication 204` triple on
+the same session id in broker telemetry. Subsequent polls return 0, which is now
+a true empty rather than a masked fault.
+
+The first suspect — ENG reporting its topic list duplicated — is cosmetic and did
+not affect delivery; the subscription rule matches on a single topic either way.
+It is left as a separate tidy-up.
+
+## Class identity caches outlive the CIR registry they describe
+
+Raised 2026-09-11, after the delivery fix above. **Resolved 2026-09-11.**
+
+With delivery working, day zero still produced a CIR holding no `RDL-CLASS`
+entries. The engines reported success throughout: ENG published, REG-LOCATION
+ingested, tags were filed, and nothing logged an error.
+
+Both engines cache what they have already established about a class.
+`CirClassResolver` caches the resolved identity for an ENG EC class;
+`CirClassRegistrar` caches the fact that an inbound class has been verified.
+Both caches are in-memory and live for the lifetime of the Functions host. Day
+zero drops the CIR registry, but the hosts are not restarted, so the caches
+survive the database they describe. Every subsequent lookup answered from cache,
+concluded the mapping already existed, and skipped the write that would have
+recreated it. The registry stayed empty and nothing reported a fault, because
+from each engine's point of view there was no work to do.
+
+This was masked for some time by re-drains: any run that happened to restart a
+host repopulated the rows, so the registry intermittently looked correct. The
+defect was only isolated by querying `cir.Entry` directly rather than through the
+provider API, after deliberately deleting the two `RDL-CLASS` rows.
+
+The fix follows the rule that a cache must be invalidated by whatever invalidates
+its source. Both classes gained `ClearCacheAsync`, wired into the reset endpoints
+the engines already exposed (`EngEngineReset`, `RegLocationEngineReset`). Day
+zero calls `ResetCirAsync` before `ResetAsync`, so CIR is dropped first and the
+caches are cleared immediately afterwards — identity is never left describing
+rows that no longer exist.
+
+Verified by deleting both `RDL-CLASS` rows from `cir.Entry`, then reset and
+drain: both rebuilt. Confirmed end to end over two independent day-zero runs,
+each producing 3 `SITE`, 2 `RDL-CLASS` and 2 `FunctionalLocation` entries, the
+latter after REG-LOCATION approval. A warm repeat reuses the two `RDL-CLASS`
+rows rather than adding more, which is the cross-reference behaving correctly; a
+third row for the same class would be the defect.
+
+## Day zero orphaned the CIR provider's publication channel
+
+Raised 2026-09-11. **Resolved 2026-09-11.**
+
+Every day zero closed with:
+
+> 2 channel(s) not known to the registry were deleted and NOT recreated. Any
+> system still holding a session on one will keep polling an id the broker has
+> forgotten; restart it or have it re-open.
+
+Day zero builds its delete list from everything the broker reports, so that
+clutter left by earlier demos is removed, but its recreate list only from the
+participant registry. A channel that is discovered and not expected is therefore
+deleted and deliberately left gone.
+
+The CIR provider is configured with two channels — `Isbm__RequestChannelUri`
+(`/OIIE/CIR/Request`) and `Isbm__PublicationChannelUri`
+(`/OIIE/CIR/Publication`). Only the request channel was declared in the
+personality packs. The publication channel was discovered as an orphan, deleted,
+and then re-created by the provider itself, so the warning returned on every run
+and the provider's publication session was destroyed each time.
+
+The packs already carried the rule for the request channel — *reset ensures it
+exists but never deletes it* — because deleting a channel owned by another system
+destroys that system's long-lived session. The publication channel was simply
+never added when that rule was written.
+
+`CirSettings` gained `PublicationChannelUri`, declared in all four packs, and
+`SandboxAdminEndpoints` now includes it wherever the request channel is treated
+as foreign: day zero's `expected` set and the lighter reset's `foreignChannels`
+list, both with `Ours = false` so it is ensured rather than owned.
+
+The ensure loop hardcoded `IsbmChannelType.Request`, which would have created the
+publication channel with the wrong type — a fault that surfaces as a provider
+unable to post, not as an error. Channel type is now derived from the URI.
+
+This did not cause the missing `RDL-CLASS` rows: class registration travels over
+`/OIIE/CIR/Request`, which was always registry-known and correctly recreated. The
+two defects were concurrent and unrelated, which is part of why either took as
+long as it did to see.
+
+Only one orphan is accounted for. The warning reported two, and the second was
+not present on the broker when the first was identified. The `channelsRemoved`
+array in the day-zero response names them, so the next run that still warns will
+identify it.

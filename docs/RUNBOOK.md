@@ -300,7 +300,13 @@ steps are outside the Sandbox.
 1. POST {sandbox}/admin/reset/day-zero
       closes Sandbox sessions, deletes and recreates every channel
       (including the CIR provider's), rebuilds tables and fixtures,
-      and seeds CMS owners, CMS sites and ENG's four iTwins
+      and seeds CMS owners, CMS sites and ENG's four iTwins.
+      Also drops the CIR registry and then calls each engine's
+      engine/reset, in that order: the engines cache class identity in
+      memory, and a cache that outlives the registry it describes makes
+      them skip the writes that rebuild it. Dropping CIR first and
+      clearing the caches immediately after is what keeps identity from
+      describing rows that no longer exist.
 
 2. POST {cir}/api/isbm/reset                     host key required
       the CIR provider re-opens its sessions. REQUIRED: step 1 destroyed
@@ -570,6 +576,8 @@ Only ENG is twin-scoped today. REG-LOCATION, MMS and CMS are not.
 | `No handler registered` | Expected until a handler exists for that verb and noun. The message is archived, not dropped |
 | CIR call times out | Work in this order. **(1)** `GET /admin/cir/last?participantId=eng` — durable evidence of the last exchange, safe to call repeatedly. **(2)** `POST /admin/cir/await-response` — re-reads the still-open consumer session; if the response appears, the CIR did reply and only the wait window was short. **(3)** `POST {cir}/api/isbm/drain` — if that completes the exchange, the message path is fine and the CIR's `IsbmPoll` timer is not running: check the plan is `B1`+ with Always On and that App Insights shows `IsbmPoll` requests. **(4)** only then `GET /admin/cir/diagnose`, which *consumes* from the queue and destroys the evidence |
 | A consumer looks healthy but consumes nothing | Its session predates the last channel deletion. Channels take their sessions with them, and a poll loop that swallows session faults will not notice |
+| CIR holds no `RDL-CLASS` entries after day zero, and no engine reports an error | The engines cache class identity in memory for the lifetime of the host. If the cache survives a registry drop, every lookup is answered from memory and the write that would rebuild the row is skipped -- correctly, from the engine's point of view, which is why nothing faults. Day zero clears both caches via `engine/reset`; if you dropped CIR by hand, call `POST {eng-engine}/api/engine/reset` and `POST {reglocation-engine}/api/engine/reset` yourself. Verify against `cir.Entry` directly, not the provider API: an incidental restart repopulates the rows and makes the registry look correct |
+| Day zero warns that channels "not known to the registry" were deleted | It deletes everything the broker reports but recreates only what the personality packs declare, so a channel configured on a provider and declared in no pack is deleted every run. The `channelsRemoved` array names them. Fix by declaring the channel in the packs so reset ensures it instead of orphaning it -- do not stop deleting undeclared channels, which is how demo clutter gets cleared |
 | `NotValidated` | No XSD held for that namespace. `Schemas/ccom` is empty by design |
 | A tag is missing from `/admin/eng/tags` | Almost always the wrong twin, not a lost row. A request naming no twin reads ENG's default, so a tag created under `x-itwin-id` will not appear in it. `GET /admin/eng/twins` lists what exists |
 | Invalid column name `ITwinId` | The schema predates the twin columns. `/admin/reset` will not add them — use `/admin/reset/day-zero` |
