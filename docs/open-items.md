@@ -1493,3 +1493,66 @@ Only one orphan is accounted for. The warning reported two, and the second was
 not present on the broker when the first was identified. The `channelsRemoved`
 array in the day-zero response names them, so the next run that still warns will
 identify it.
+
+## MMS has no segment ingest leg
+
+Raised 2026-09-11. **Not started.** Scoped, not implemented — recorded so the
+next session begins on implementation rather than rediscovery.
+
+MMS consumes sites and writes them to `SETUP_OWNER`, which works. It has no
+equivalent of REG-LOCATION's segment leg, so approved locations never reach
+`LIGHT_UNIT_INVENTORY` and MMS registers no `RDL-CLASS` mirror in CIR.
+
+Most of the groundwork is already laid, largely by DR-030:
+
+- `MmsProvider` is complete. `POST /lightunits` reaches
+  `SqlMmsAssetStore.UpsertLightUnitsAsync`, which upserts on `EXT_ASSET_ID` and
+  follows the same partial-success and 503-on-all-transient convention as the
+  owners path, so the ingest leg's retry behaviour needs no special casing.
+- `MmsEngineOptions.InboundRdlTableMap` already maps `rdl:Streetlight` to
+  `LIGHT_UNIT_INVENTORY`, and `ResolveTargetTable` deliberately has no fallback:
+  MMS's tables are its classes, so an unmapped key must decline the segment
+  rather than pick a table.
+
+What is missing is the engine's second leg:
+
+1. `MmsRestClient.UpsertLightUnitsAsync` — mechanical, mirrors
+   `UpsertOwnersAsync`.
+2. `MmsEngine/Application/IncomingSegmentMapper` — maps `SyncSegments` onto
+   `LightUnitUpsert`, dispatching on the segment's RDL key through
+   `ResolveTargetTable`.
+3. `MmsEngine/Application/SegmentIngestionService` — parallels REG-LOCATION's.
+4. `MmsEngine/Application/CirClassRegistrar` — near-copy of REG-LOCATION's,
+   including `ClearCacheAsync` so it is cleared by the reset that drops CIR.
+5. Wiring: `Program.cs`, an ingest and a reset endpoint on `MmsEngineFunctions`,
+   segments channel and topics on `MmsEngineOptions`, and the approved-locations
+   channel declared in `mms/personality.yaml` — declared there, per the CIR
+   publication channel item above, so day zero ensures it rather than orphaning
+   it.
+
+Estimated at roughly 60-70% of the REG-LOCATION effort: lower because the
+provider, the table map and the DR-030 decisions already exist.
+
+### `LIGHT_SYSTEM_ID` is not the engine's to populate
+
+`LIGHT_UNIT_INVENTORY.LIGHT_SYSTEM_ID` names a parent light system, and nothing
+in the sites leg establishes one, so an inbound location appears to have no
+parent to attach to. This was initially read as a modelling gap that had to be
+closed before the leg could be built.
+
+Decided 2026-09-11 that it is not. The column is nullable, and it describes how
+MMS groups its own assets — a maintenance system's internal structure, not
+anything engineering asserts. The first pass leaves it null.
+
+What the engine writes is a **footprint row**: the engineering facts about an
+asset, in the MMS table that represents its class, identified by `EXT_ASSET_ID`
+so MMS can recognise it again. Grouping it into a light system is MMS's to do,
+by whatever rule MMS uses, and the upsert-on-`EXT_ASSET_ID` behaviour means a
+later engineering update will not overwrite that choice.
+
+The general rule, worth applying to the next such column: a nullable column that
+encodes the receiving system's own organisation is that system's to populate.
+Filling it from engineering data invents a fact the publisher never asserted, and
+the invention is durable — it survives as data long after the reasoning behind it
+is forgotten. Leaving it null is the honest representation of "engineering has no
+opinion about this".

@@ -2296,6 +2296,35 @@ Verified over two independent day-zero runs, each yielding 3 `SITE`, 2 `RDL-CLAS
 `FunctionalLocation` entries. A warm repeat reuses the two `RDL-CLASS` rows rather than adding more;
 a third row for the same class would indicate the cross-reference is not being consulted.
 
+## DR-032 — An engine writes a footprint row; the receiving system's own structure stays its own
+
+Decided 2026-09-11, while scoping the MMS segment ingest leg. Not yet implemented.
+
+`LIGHT_UNIT_INVENTORY.LIGHT_SYSTEM_ID` names a parent light system. Nothing in the sites leg
+establishes one, so the column initially looked like a modelling gap that had to be closed before an
+inbound location could be written at all.
+
+It is not a gap. The column is nullable, and it describes how MMS groups its own assets. That is a
+maintenance system's internal organisation, not a fact engineering asserts about the world. The
+first pass leaves it null.
+
+What an engine writes into a receiving system is a **footprint row**: the engineering facts about an
+asset, in the table that represents its class, keyed by `EXT_ASSET_ID` so the receiver can recognise
+it again. Everything past that belongs to the receiver. Upsert-on-`EXT_ASSET_ID` is what makes the
+division hold — MMS may set `LIGHT_SYSTEM_ID` by whatever rule it likes, and a later engineering
+update will not overwrite the choice.
+
+The rule, stated so it survives the specific column: **a nullable column encoding the receiving
+system's own organisation is that system's to populate.** Filling it from engineering data invents a
+fact the publisher never asserted, and the invention is durable — it persists as data long after the
+reasoning behind it is forgotten, and is indistinguishable from a fact that was actually published.
+Null is the honest representation of "engineering has no opinion about this".
+
+This is the same instinct as DR-030's refusal to give `ResolveTargetTable` a fallback, applied one
+level down. There, guessing a table for an unmapped class would be corruption rather than degraded
+behaviour; here, guessing a parent would be fabrication rather than incompleteness. In both cases
+the safe answer is to write less, not to write something plausible.
+
 
 
 
