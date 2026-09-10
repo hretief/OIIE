@@ -209,7 +209,7 @@ FROM (VALUES
     (1002, 185, 18, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a02')),   -- rdl:Site
     (1701, 185, 18, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a03')),   -- rdl:Equipment
     (1702, 185, 18, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a04')),   -- rdl:Instrument
-    (1703, 185, 18, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a05'))    -- rdl:LightingUnit
+    (1703, 185, 18, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a05'))    -- rdl:Streetlight
 
     -- No physical items (1) or tags (212) are registered here. Both are
     -- received from ENG over the bus rather than authored by this provider --
@@ -251,7 +251,7 @@ INNER JOIN (VALUES
     (1002, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a02')),   -- rdl:Site
     (1701, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a03')),   -- rdl:Equipment
     (1702, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a04')),   -- rdl:Instrument
-    (1703, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a05'))    -- rdl:LightingUnit
+    (1703, CONVERT(UNIQUEIDENTIFIER, '9f2a4c60-6d31-4b8e-9a17-0c5b2e7d1a05'))    -- rdl:Streetlight
 ) AS v(object_id, guid)
     ON v.object_id = o.object_id
 WHERE o.object_type = 185
@@ -418,12 +418,49 @@ FROM (VALUES
     (1002, 5,  1, 'rdl:Site',               'Site',                NULL),   -- Locations group
     (1701, 17, 1, 'rdl:Equipment',          'Equipment',           NULL),   -- Tags group
     (1702, 17, 1, 'rdl:Instrument',         'Instrument',          1701),   -- Tags group, child of rdl:Equipment
-    (1703, 17, 1, 'rdl:LightingUnit',       'Lighting Unit',       1701)    -- Tags group, child of rdl:Equipment
+    (1703, 17, 1, 'rdl:Streetlight',         'Streetlight',         1701)    -- Tags group, child of rdl:Equipment
 ) AS v(class_id, group_id, namespace_id, code, name, parent_class_id)
 WHERE NOT EXISTS
 (
     SELECT 1 FROM dbo.class_objects AS c WHERE c.class_id = v.class_id
 );
+GO
+
+/* ============================================================================
+   Class code reconciliation
+
+   The INSERT above is guarded on class_id alone, so it does nothing at all for
+   a class that already exists -- including one whose code this file has since
+   renamed. Without this block a rename is applied only on a database that gets
+   dropped, and every environment that merely restarts keeps serving the old
+   code while the script claims to be re-runnable. That is precisely how
+   rdl:LightingUnit survived a redeploy after being renamed to rdl:Streetlight,
+   and it failed silently: ENG asked RDL for a class that was not there, so the
+   CIR class registration declined rather than erroring.
+
+   Codes are reconciled rather than back-filled, which is the opposite of the
+   guid rule above and deliberately so. A guid is an identity that a consumer
+   may already have keyed on, so it is filled only when absent. A code is this
+   file's own vocabulary -- the seed is its only author -- so the script's value
+   is the intended one and converging on it is a repair, not a rewrite.
+
+   Only the seeded class_ids are touched, and only where the value actually
+   differs, so a database that is already correct sees no writes.
+   ============================================================================ */
+UPDATE c
+   SET c.code = v.code,
+       c.name = v.name
+FROM dbo.class_objects AS c
+INNER JOIN (VALUES
+    (1001, 'rdl:FunctionalLocation', 'Functional Location'),
+    (1002, 'rdl:Site',               'Site'),
+    (1701, 'rdl:Equipment',          'Equipment'),
+    (1702, 'rdl:Instrument',         'Instrument'),
+    (1703, 'rdl:Streetlight',        'Streetlight')
+) AS v(class_id, code, name)
+    ON v.class_id = c.class_id
+WHERE c.code <> v.code
+   OR c.name <> v.name;
 GO
 
 /* ============================================================================
