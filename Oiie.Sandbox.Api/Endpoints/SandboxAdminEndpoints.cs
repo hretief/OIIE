@@ -67,7 +67,7 @@ app.MapPost("/admin/reset", async (
         .ToList();
 
     var foreignChannels = registry.All
-        .Select(p => p.Config.Cir.ChannelUri)
+        .SelectMany(p => new[] { p.Config.Cir.ChannelUri, p.Config.Cir.PublicationChannelUri })
         .Where(uri => !string.IsNullOrWhiteSpace(uri))
         .Distinct(StringComparer.Ordinal)
         .ToList();
@@ -94,11 +94,17 @@ app.MapPost("/admin/reset", async (
 
     foreach (var uri in foreignChannels)
     {
+        // The CIR provider owns both a request and a publication channel. Creating
+        // the publication one as Request would leave the provider unable to post to
+        // it, so the type follows the URI rather than being assumed.
+        var isRequest = uri.EndsWith("/Request", StringComparison.Ordinal);
+        var type = isRequest ? IsbmChannelType.Request : IsbmChannelType.Publication;
+
         try
         {
             // Create-if-absent only. Already-exists is the expected outcome.
             await anyClient.CreateChannelAsync(
-                uri, IsbmChannelType.Request, "ws-CIR request channel", null, ct);
+                uri, type, isRequest ? "ws-CIR request channel" : "ws-CIR publication channel", null, ct);
             ensured.Add(uri);
         }
         catch (Exception ex)
@@ -171,8 +177,9 @@ app.MapPost("/admin/reset/day-zero", async (
             Ours = true
         }))
         .Concat(registry.All
-            .Where(p => !string.IsNullOrWhiteSpace(p.Config.Cir.ChannelUri))
-            .Select(p => new { Uri = p.Config.Cir.ChannelUri, IsRequest = true, Ours = false }))
+            .SelectMany(p => new[] { p.Config.Cir.ChannelUri, p.Config.Cir.PublicationChannelUri })
+            .Where(uri => !string.IsNullOrWhiteSpace(uri))
+            .Select(uri => new { Uri = uri, IsRequest = uri.EndsWith("/Request", StringComparison.Ordinal), Ours = false }))
         .GroupBy(c => c.Uri, StringComparer.Ordinal)
         .Select(g => new
         {

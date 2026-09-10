@@ -43,5 +43,10 @@ cir:
   # CIR provider's own, taken from its deployed configuration -- it is not
   # RDL's channel and reset must not delete it.
   channelUri: /OIIE/CIR/Request
+
+  # The provider's publication side, declared for the same reason. Undeclared it
+  # was discovered on the broker, matched nothing, and was deleted without being
+  # recreated on every day zero.
+  publicationChannelUri: /OIIE/CIR/Publication
   requestTopic: ws-CIR
   baseUrl: https://acme-api-cir-dev.azurewebsites.net/api

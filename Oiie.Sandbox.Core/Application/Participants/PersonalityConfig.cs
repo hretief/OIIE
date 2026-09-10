@@ -69,6 +69,18 @@ public sealed class CirSettings
     public string ChannelUri { get; set; } = string.Empty;
 
     /// <summary>
+    /// ISBM publication channel the CIR provider announces registry changes on.
+    ///
+    /// Declared here for the same reason as <see cref="ChannelUri"/>: it is owned by
+    /// the CIR provider, so reset must ensure it rather than delete it. Left
+    /// undeclared it was discovered on the broker, matched nothing in the registry,
+    /// and was deleted and not recreated on every day zero -- which the provider
+    /// then re-opened, so each run reported channels it had orphaned and destroyed
+    /// the provider's publication session in the process.
+    /// </summary>
+    public string PublicationChannelUri { get; set; } = string.Empty;
+
+    /// <summary>
     /// Topic the CIR provider's request listener subscribes to.
     ///
     /// A single topic for the whole BOD family rather than one per BOD name. Topic
