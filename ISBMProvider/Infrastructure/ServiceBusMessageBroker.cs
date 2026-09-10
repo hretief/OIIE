@@ -121,14 +121,21 @@ public sealed class ServiceBusMessageBroker : IMessageBroker, IAsyncDisposable
                 // that should simply have reported an empty queue, which is what
                 // made the broker look intermittently broken.
                 //
-                // Evicted and recreated once. If the entity is genuinely gone
-                // the retry throws again and the fault is reported honestly,
-                // rather than being retried forever.
+                // The subscription is re-ensured, not merely re-resolved. A new
+                // receiver pointed at a subscription that genuinely no longer
+                // exists throws exactly the same way, so evicting alone turned a
+                // permanent fault into a silent one: the retry threw, the fault
+                // became a 404, and a 404 is indistinguishable from an empty
+                // queue to the caller. A consumer polling every fifteen seconds
+                // then reported "no messages" indefinitely while its messages
+                // accumulated unread on the topic.
                 _log.LogWarning(
-                    "Receiver for session {SessionId} pointed at a missing entity; recreating it.",
+                    "Receiver for session {SessionId} pointed at a missing entity; " +
+                    "re-ensuring the subscription and recreating it.",
                     session.SessionId);
 
                 EvictReceiver(session);
+                await CreateSubscriptionAsync(session, ct);
                 receiver = ReceiverFor(session);
 
                 recv = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(2), ct);

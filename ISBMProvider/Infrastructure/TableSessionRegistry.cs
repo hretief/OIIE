@@ -84,6 +84,12 @@ public sealed class TableSessionRegistry : ISessionRegistry
             { "ChannelUri", session.ChannelUri },
             { "SessionType", session.SessionType.ToString() },
             { "Topics", JsonSerializer.Serialize(session.Topics, Json) },
+            // Persisted because the subscription name is derived from it. A
+            // rehydrated session that has lost its subscriber id silently falls
+            // back to naming the subscription after the session id -- a name
+            // nothing ever created -- and every read then fails against a
+            // subscription that does not exist.
+            { "SubscriberId", session.SubscriberId ?? "" },
             { "ListenerUrl", session.ListenerUrl ?? "" },
             { "ExpirationListenerUrl", session.ExpirationListenerUrl ?? "" },
             { "FilterExpressions", JsonSerializer.Serialize(session.FilterExpressions, Json) },
@@ -142,6 +148,7 @@ public sealed class TableSessionRegistry : ISessionRegistry
         ChannelUri = entity.GetString("ChannelUri"),
         SessionType = Enum.Parse<SessionType>(entity.GetString("SessionType")),
         Topics = JsonSerializer.Deserialize<List<string>>(entity.GetString("Topics") ?? "[]", Json) ?? new(),
+        SubscriberId = NullIfEmpty(entity.GetString("SubscriberId")),
         ListenerUrl = NullIfEmpty(entity.GetString("ListenerUrl")),
         ExpirationListenerUrl = NullIfEmpty(entity.GetString("ExpirationListenerUrl")),
         FilterExpressions = JsonSerializer.Deserialize<List<string>>(entity.GetString("FilterExpressions") ?? "[]", Json) ?? new(),
