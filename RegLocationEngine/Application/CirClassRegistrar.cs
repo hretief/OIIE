@@ -97,6 +97,36 @@ public sealed class CirClassRegistrar(
         }
     }
 
+    /// <summary>
+    /// Forgets every class check, so the next ingest re-verifies against CIR
+    /// and re-writes any cross-reference it no longer holds.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart of the same problem on the publishing side. This cache
+    /// records that a cross-reference was seen in place, but day zero empties
+    /// CIR without this process knowing, and a check cached before the wipe
+    /// keeps answering for the whole duration afterwards. The engine then files
+    /// tags against a class whose cross-reference is gone, which is exactly the
+    /// state that looks like working ingestion until someone asks CIR what a
+    /// class means.
+    ///
+    /// Only successful checks are cached, so clearing costs one verification
+    /// per class on the next drain and nothing else.
+    /// </remarks>
+    public async Task ClearCacheAsync(CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct);
+
+        try
+        {
+            _checked.Clear();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     /// <returns>
     /// True when the cross-reference is known to be in place and the answer is
     /// worth caching. False when CIR could not be reached or the identity could

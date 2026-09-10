@@ -133,6 +133,37 @@ public sealed class CirClassResolver(
         }
     }
 
+    /// <summary>
+    /// Forgets every resolved class identity, so the next drain re-asks CIR and
+    /// re-registers anything it no longer holds.
+    /// </summary>
+    /// <remarks>
+    /// Exists because this cache describes a database that something else can
+    /// empty. Day zero wipes CIR, but the cache is process memory and survives
+    /// it, so the engine goes on believing it registered a class that no longer
+    /// exists anywhere. It then publishes the right identity while writing
+    /// nothing -- and a receiver that verifies the identity against CIR before
+    /// mirroring it finds nothing to verify, so the cross-reference silently
+    /// never comes back.
+    ///
+    /// The entries are only a cache in the sense that they can be rebuilt; the
+    /// fact they stand for lives in CIR, and a wipe there has to be reflected
+    /// here or the two disagree until the duration expires.
+    /// </remarks>
+    public async Task ClearCacheAsync(CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct);
+
+        try
+        {
+            _cache.Clear();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private async Task<Guid?> LookupAsync(string ecClassName, long ecClassId, CancellationToken ct)
     {
         // Keyed on ECClassId, ENG's internal identifier for the class, not on

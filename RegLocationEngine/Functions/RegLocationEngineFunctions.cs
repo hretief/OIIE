@@ -15,6 +15,7 @@ public sealed class RegLocationEngineFunctions(
     SegmentIngestionService ingestion,
     SiteIngestionService siteIngestion,
     IRegLocationEngineStateStore stateStore,
+    CirClassRegistrar classRegistrar,
     IOptions<RegLocationEngineOptions> options,
     ILogger<RegLocationEngineFunctions> logger)
 {
@@ -44,7 +45,16 @@ public sealed class RegLocationEngineFunctions(
         try
         {
             await stateStore.ClearAsync(ct);
-            logger.LogWarning("REG-LOCATION engine state cleared: published tags forgotten.");
+
+            // The receiving half of the same problem the publisher has: day zero
+            // empties CIR, but a cross-reference check cached before the wipe
+            // keeps answering afterwards, so the next ingest files tags against a
+            // class whose cross-reference is gone and never rewrites it.
+            await classRegistrar.ClearCacheAsync(ct);
+
+            logger.LogWarning(
+                "REG-LOCATION engine state cleared: published tags and " +
+                "class cross-reference checks forgotten.");
 
             return new OkObjectResult(new { reset = true });
         }

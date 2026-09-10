@@ -14,6 +14,7 @@ public sealed class EngEngineFunctions(
     EngPublicationService publisher,
     EngSitePublicationService sitePublisher,
     IEngEngineStateStore stateStore,
+    CirClassResolver classResolver,
     IOptions<EngEngineOptions> options,
     ILogger<EngEngineFunctions> logger)
 {
@@ -320,7 +321,18 @@ public sealed class EngEngineFunctions(
         try
         {
             await stateStore.ClearAsync(ct);
-            logger.LogWarning("ENG engine state cleared: watermark and published markers forgotten.");
+
+            // Day zero empties CIR as well as ENG, and the resolver's cache is
+            // process memory that outlives both. Left alone it keeps reporting
+            // identities CIR no longer holds, so the next drain publishes them
+            // without re-registering -- and a receiver that verifies against CIR
+            // before mirroring finds nothing, leaving the cross-reference
+            // permanently unmade.
+            await classResolver.ClearCacheAsync(ct);
+
+            logger.LogWarning(
+                "ENG engine state cleared: watermark, published markers and " +
+                "resolved class identities forgotten.");
 
             return new OkObjectResult(new { reset = true });
         }
