@@ -79,30 +79,44 @@ az ad sp create --id $appId
 ### 2. Add the federated credential
 
 The `subject` must match exactly — it is how Entra decides whether to trust the
-token GitHub presents. `repo:<owner>/<repo>:ref:refs/heads/main` covers pushes to
-`main`; a mismatch here is the usual cause of `AADSTS70021`.
+token GitHub presents. It is not a pattern and does not wildcard. A mismatch is
+the usual cause of `AADSTS700213`.
 
-> **Do not use the portal's numeric-id form.** Some Entra portal builds ask for
-> an Organization ID and Repository ID and build a subject of the shape
-> `repo:owner@6044359/repo@1327196407:ref:refs/heads/main`. That is GitHub's
-> *immutable* subject format, and GitHub only sends it if the repository's OIDC
-> subject claim template has been customised to use `repository_owner_id` and
-> `repository_id`. By default it sends the plain name form below, so a credential
-> created that way rejects every token. This happened during the original setup
-> and was corrected with `az ad app federated-credential update`.
+> **This repository uses GitHub's immutable subject claim.** The subject is
+> *not* the plain `repo:<owner>/<repo>:ref:refs/heads/main` form shown in most
+> documentation. GitHub embeds the numeric account and repository ids:
 >
-> Note also that `hretief` is a GitHub *user* account, not an organisation, so
-> there is no organisation id to supply in the first place.
+> ```
+> repo:hretief@6044359/OIIE@1327196407:ref:refs/heads/main
+> ```
+>
+> This is enabled by `use_immutable_subject` on the repository's OIDC settings,
+> which survives renames of either the account or the repository — that is the
+> point of it. It is enforced above the repository, so it cannot be turned off
+> here: `PUT /repos/hretief/OIIE/actions/oidc/customization/sub` with
+> `use_default: true` returns success but leaves the setting unchanged.
+>
+> Confirm what GitHub will actually send before creating or editing a
+> credential, instead of copying the plain form from a tutorial:
+>
+> ```powershell
+> gh api repos/hretief/OIIE/actions/oidc/customization/sub
+> ```
+>
+> The failing `azure/login` step also prints the exact `subject claim` it
+> presented, which is the fastest way to diagnose a rejected token.
 
 ```powershell
 $cred = @{
     name      = "github-main"
     issuer    = "https://token.actions.githubusercontent.com"
-    subject   = "repo:hretief/OIIE:ref:refs/heads/main"
+    subject   = "repo:hretief@6044359/OIIE@1327196407:ref:refs/heads/main"
     audiences = @("api://AzureADTokenExchange")
 } | ConvertTo-Json -Compress
 
-az ad app federated-credential create --id $appId --parameters $cred
+# az on Windows needs @file for JSON parameters; an inline string is mangled.
+Set-Content "$env:TEMP\fedcred.json" $cred -Encoding utf8
+az ad app federated-credential create --id $appId --parameters "@$env:TEMP\fedcred.json"
 ```
 
 Verify what was actually stored, rather than what you meant to store:
@@ -112,7 +126,7 @@ az ad app federated-credential list --id $appId --query "[].subject" -o tsv
 ```
 
 If you later add a GitHub Environment or deploy from tags, add a second
-credential — `subject` is not a pattern and does not wildcard. A
+credential — each needs its own, and each must use the immutable prefix above. A
 `workflow_dispatch` run started from `main` presents the same subject as a push,
 so the manual-run button needs no extra credential; a dispatch from any other
 branch does.
