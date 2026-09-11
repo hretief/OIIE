@@ -48,8 +48,13 @@ param(
     # Basic keeps the host resident. Service Bus triggered notification
     # dispatch and expiry only run promptly on an always-on host; on Y1 they
     # wait for the scale controller, which makes expiry look broken.
-    [ValidateSet('B1', 'B2', 'EP1')]
-    [string]$PlanSku = 'B1',
+    #
+    # Only read when -CreatePlan is passed; an existing plan keeps its own size.
+    # There is no default, because the shared plan carries every provider and
+    # engine in the environment and guessing small is how dev ended up with
+    # twelve always-on apps on one B1 core.
+    [ValidateSet('B1', 'B2', 'B3', 'EP1')]
+    [string]$PlanSku,
 
     [ValidateSet(2, 3, 4)]
     [int]$SecurityLevel = 3,
@@ -72,14 +77,24 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+if ($CreatePlan -and -not $PlanSku) {
+    throw '-CreatePlan requires -PlanSku. The shared plan hosts every provider and engine in the environment, so its size is a deliberate choice rather than a default.'
+}
+if ($PlanSku -and -not $CreatePlan) {
+    throw '-PlanSku only applies with -CreatePlan. An existing plan keeps its own size; scale it with: az appservice plan update -g <rg> -n <plan> --sku <sku>.'
+}
+
 $repoRoot   = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $bicepFile  = Join-Path $repoRoot 'infra\isbm\main.bicep'
 $projectDir = Join-Path $repoRoot 'ISBMProvider'
 
 $appName     = "acme-api-isbm-$Environment"
 # Shared across every provider in the environment, like storage and Service
-# Bus. One B1 hosts them all; a plan per provider was six B1s billing
+# Bus. One plan hosts them all; a plan per provider was six B1s billing
 # continuously to run one app each. Do not reintroduce a per-provider plan.
+# Size it for the total number of always-on apps, not for this one: dev runs
+# twelve, which needs B3. This script does not set the SKU unless -CreatePlan
+# is passed, so scaling done by hand survives a deploy.
 $planName    = "acme-plan-$Environment"
 $sbName      = "acme-sb-$Environment"
 $storageName = "acmestorage${Environment}01"
@@ -114,6 +129,12 @@ if (-not $SkipInfrastructure) {
         $storageParams = @("storageNameOverride=$storageName")
     }
 
+    # planSku is only meaningful when the plan is being created. Passing it
+    # otherwise is harmless to the template but misleading in the deployment
+    # record, which is where the earlier silent downgrade hid.
+    $planParams = @("createPlan=$($CreatePlan.IsPresent.ToString().ToLowerInvariant())")
+    if ($CreatePlan) { $planParams += "planSku=$PlanSku" }
+
     Write-Host 'Applying infrastructure...' -ForegroundColor Cyan
 
     az deployment group create `
@@ -125,8 +146,7 @@ if (-not $SkipInfrastructure) {
             planNameOverride=$planName `
             serviceBusNameOverride=$sbName `
             keyVaultNameOverride=$keyVaultName `
-            planSku=$PlanSku `
-            createPlan=$($CreatePlan.IsPresent.ToString().ToLowerInvariant()) `
+            $planParams `
             securityLevel=$SecurityLevel `
             skipSql=true `
             assignRoles=$($AssignRoles.IsPresent.ToString().ToLowerInvariant()) `

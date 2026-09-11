@@ -212,10 +212,11 @@ longer change its size. Scale it deliberately, in the portal or with:
 az appservice plan update -g <rg> -n acme-plan-dev --sku B3
 ```
 
-Pass `-CreatePlan` only when standing up a new environment. If you add more apps
-to the shared plan, size it for the total; deploys are where undersizing shows
-first, as intermittent 503s from the SCM endpoint rather than as an obvious
-capacity error.
+`-PlanSku` has no default and is only accepted together with `-CreatePlan`;
+passing either alone is an error. A default would have quietly reintroduced the
+same undersizing the first time a new environment was created. Size the plan for
+the total number of always-on apps it will carry — dev runs twelve, which needs
+B3, not the B1 the templates used to assume.
 
 **RBAC role assignments.** Each function app and the sandbox web app reach
 storage, Key Vault and Service Bus as their own managed identity, which requires

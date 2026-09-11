@@ -85,7 +85,9 @@ param(
     # engine that republishes nothing.
     [string]$RegLocationEngineApp = 'acme-engn-reglocation-dev',
 
-    [string]$PlanSku = 'B1',
+    # Only read when -CreatePlan is passed; an existing plan keeps its own size.
+    [ValidateSet('B1', 'B2', 'B3', 'P0v3', 'P1v3')]
+    [string]$PlanSku,
 
     # Browser origins allowed to call the API. Only needed if the React app is
     # ever hosted separately; it currently ships inside the API, so same-origin
@@ -113,6 +115,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($CreatePlan -and -not $PlanSku) {
+    throw '-CreatePlan requires -PlanSku. Size the plan deliberately rather than inheriting a default.'
+}
+if ($PlanSku -and -not $CreatePlan) {
+    throw '-PlanSku only applies with -CreatePlan. An existing plan keeps its own size; scale it with: az appservice plan update -g <rg> -n <plan> --sku <sku>.'
+}
 Set-StrictMode -Version Latest
 
 # $PSScriptRoot is deploy/sandbox, so the repository root is two levels up.
@@ -227,7 +236,12 @@ if (-not $SkipInfrastructure) {
         $corsJson = '[' + (($CorsOrigin | ForEach-Object { '"' + $_ + '"' }) -join ',') + ']'
     }
 
-    $outputs = Invoke-Az -AsJson @(
+    # planSku is only meaningful when the plan is being created; an existing
+    # plan keeps whatever size it was scaled to.
+    $planParams = @("createPlan=$($CreatePlan.IsPresent.ToString().ToLowerInvariant())")
+    if ($CreatePlan) { $planParams += "planSku=$PlanSku" }
+
+    $outputs = Invoke-Az -AsJson (@(
         'deployment', 'group', 'create',
         '--resource-group', $ResourceGroup,
         '--template-file', (Join-Path $repoRoot 'infra/sandbox/main.bicep'),
@@ -237,15 +251,14 @@ if (-not $SkipInfrastructure) {
         "storageAccountName=$StorageAccount",
         "sqlServerName=$SqlServer",
         "isbmBaseUrl=$isbmBaseUrl",
-        "isbmApiKey=$isbmKey",
-        "planSku=$PlanSku",
-        "createPlan=$($CreatePlan.IsPresent.ToString().ToLowerInvariant())",
+        "isbmApiKey=$isbmKey"
+    ) + $planParams + @(
         "adminKey=$adminKey",
         "allowedCorsOrigins=$corsJson",
         "assignRoles=$($AssignRoles.IsPresent.ToString().ToLowerInvariant())",
         '--query', 'properties.outputs',
         '-o', 'json'
-    ) -Because 'Infrastructure deployment'
+    )) -Because 'Infrastructure deployment'
 
     # One site, one system-assigned principal. It needs the Key Vault and
     # Storage grants, and waits on the propagation delay.
