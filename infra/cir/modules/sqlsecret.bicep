@@ -8,6 +8,9 @@ param secretName string
 param principalId string
 param tags object = {}
 
+@description('Create the Key Vault Secrets User assignment for principalId. Off by default; ARM issues roleAssignments/write on every deployment even when unchanged, which a Contributor-only deploy identity cannot do.')
+param assignRoles bool = false
+
 @secure()
 param secretValue string
 
@@ -41,7 +44,7 @@ resource secret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   }
 }
 
-resource secretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource secretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignRoles) {
   scope: vault
   name: guid(vault.id, principalId, secretsUserRoleId)
   properties: {

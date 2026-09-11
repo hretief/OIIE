@@ -26,6 +26,14 @@
 .NOTES
     Run once per environment. Re-running is safe; the Bicep deployment is
     idempotent and zip deploy overwrites the app content.
+
+    The function app's role assignments are not applied unless -AssignRoles is
+    passed. They are a one-time bootstrap, but ARM re-issues
+    roleAssignments/write on every deployment even when nothing changes, which
+    fails for a Contributor-only identity -- so routine and CI deploys leave
+    them alone. Pass -AssignRoles when standing up a new environment or after
+    the function app identity changes, signed in as a principal with User
+    Access Administrator.
 #>
 
 [CmdletBinding()]
@@ -47,7 +55,14 @@ param(
     [int]$SecurityLevel = 3,
 
     [switch]$SkipInfrastructure,
-    [switch]$SkipPublish
+    [switch]$SkipPublish,
+
+    # Create the function app's RBAC role assignments (blob, Key Vault,
+    # Service Bus). Off by default because ARM issues roleAssignments/write on
+    # every deployment even when the assignment is unchanged, which a
+    # Contributor-only identity such as CI cannot do. Needed once per new
+    # environment, by a principal with User Access Administrator.
+    [switch]$AssignRoles
 )
 
 $ErrorActionPreference = 'Stop'
@@ -108,6 +123,7 @@ if (-not $SkipInfrastructure) {
             planSku=$PlanSku `
             securityLevel=$SecurityLevel `
             skipSql=true `
+            assignRoles=$($AssignRoles.IsPresent.ToString().ToLowerInvariant()) `
             $storageParams `
         --output none
 

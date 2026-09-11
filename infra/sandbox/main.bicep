@@ -34,6 +34,9 @@ app is served from its own origin, so without this its calls fail preflight.
 ''')
 param allowedCorsOrigins array = []
 
+@description('Create the web app\'s RBAC role assignments. Off by default: the assignments are a one-time bootstrap, but ARM issues roleAssignments/write on every deployment even when the assignment already exists, which a Contributor-only deploy identity cannot do. Turn on for a new environment or after the app identity changes, using a principal with User Access Administrator.')
+param assignRoles bool = false
+
 // One site, one plan.
 //
 // The API was `oiie-sandbox-{env}` until 2026-09. That name was kept while other
@@ -216,7 +219,7 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
 }
 
 // Key Vault Secrets User
-resource apiKeyVaultGrant 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource apiKeyVaultGrant 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignRoles) {
   scope: keyVault
   name: guid(keyVault.id, apiApp.id, '4633458b-17de-408a-b874-0445c86b69e6')
   properties: {
@@ -230,7 +233,7 @@ resource apiKeyVaultGrant 'Microsoft.Authorization/roleAssignments@2022-04-01' =
 }
 
 // Storage Blob Data Contributor
-resource apiStorageGrant 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource apiStorageGrant 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignRoles) {
   scope: storage
   name: guid(storage.id, apiApp.id, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
   properties: {

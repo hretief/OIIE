@@ -192,6 +192,41 @@ Two things follow:
 
 ## What CD still does not do
 
+**RBAC role assignments.** Each function app and the sandbox web app reach
+storage, Key Vault and Service Bus as their own managed identity, which requires
+role assignments on those resources. The Bicep templates can create them, but
+only when `assignRoles=true`, and the deploy scripts only pass that when given
+`-AssignRoles`. CD never does.
+
+The reason is not that the grants are unwanted but that ARM re-issues
+`Microsoft.Authorization/roleAssignments/write` on every deployment even when the
+assignment already exists and is byte-for-byte identical. A Contributor cannot
+perform that write, so an unconditional grant makes every subsequent deployment
+fail with `InvalidTemplateDeployment` — which is exactly how this surfaced, long
+after the assignments had been correctly created by hand.
+
+Granting CI `User Access Administrator` would fix it, at the price of letting
+anyone who can push to `main` assign any role to any principal in the resource
+group. The grants are a one-time bootstrap for long-lived apps, so that trade is
+not worth making.
+
+Run the bootstrap once per new environment, signed in as a principal with User
+Access Administrator:
+
+```powershell
+./ISBMProvider/deploy/deploy-functionapp.ps1 -Environment dev -AssignRoles
+./deploy/sandbox/deploy.ps1               -Environment dev -AssignRoles
+```
+
+Also needed if an app is deleted and recreated, since a new system-assigned
+identity gets a new principal id and the old assignment no longer refers to it.
+Confirm what an app actually holds before assuming it is missing:
+
+```powershell
+$p = az webapp identity show -g <rg> -n <app> --query principalId -o tsv
+az role assignment list --assignee $p --all -o table
+```
+
 **SQL database users.** Each provider authenticates to SQL as its user-assigned
 managed identity, and that identity needs a database user created inside the
 database. `az` cannot do this; it requires a connection to the database as a SQL

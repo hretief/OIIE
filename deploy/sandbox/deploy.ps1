@@ -98,7 +98,14 @@ param(
     [switch]$SkipWeb,
 
     [switch]$SkipInfrastructure,
-    [switch]$SkipVerify
+    [switch]$SkipVerify,
+
+    # Create the web app's RBAC role assignments (Key Vault, blob). Off by
+    # default because ARM issues roleAssignments/write on every deployment even
+    # when the assignment is unchanged, which a Contributor-only identity such
+    # as CI cannot do. Needed once per new environment, by a principal with
+    # User Access Administrator.
+    [switch]$AssignRoles
 )
 
 $ErrorActionPreference = 'Stop'
@@ -230,6 +237,7 @@ if (-not $SkipInfrastructure) {
         "planSku=$PlanSku",
         "adminKey=$adminKey",
         "allowedCorsOrigins=$corsJson",
+        "assignRoles=$($AssignRoles.IsPresent.ToString().ToLowerInvariant())",
         '--query', 'properties.outputs',
         '-o', 'json'
     ) -Because 'Infrastructure deployment'

@@ -106,6 +106,9 @@ param keyVaultNameOverride string = ''
 @description('Explicit Storage Account name, used when creating one. Empty = derive the historic name.')
 param storageNameOverride string = ''
 
+@description('Create the function app\'s RBAC role assignments. Off by default: the assignments are a one-time bootstrap, but ARM issues roleAssignments/write on every deployment even when the assignment already exists, which a Contributor-only deploy identity cannot do. Turn on for a new environment or after the function app identity changes, using a principal with User Access Administrator.')
+param assignRoles bool = false
+
 // ---- Flags ----------------------------------------------------------------
 
 var createServiceBus  = empty(existingServiceBusName)
@@ -344,7 +347,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
 // ============================================================================
 
 // --- Storage Blob Data Contributor ---
-resource blobRoleNew 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createStorage) {
+resource blobRoleNew 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignRoles && createStorage) {
   name: guid(storageNew.id, functionApp.id, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
   scope: storageNew
   properties: {
@@ -354,7 +357,7 @@ resource blobRoleNew 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (
   }
 }
 
-resource blobRoleExisting 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!createStorage) {
+resource blobRoleExisting 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignRoles && !createStorage) {
   name: guid(storageExisting.id, functionApp.id, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
   scope: storageExisting
   properties: {
@@ -365,7 +368,7 @@ resource blobRoleExisting 'Microsoft.Authorization/roleAssignments@2022-04-01' =
 }
 
 // --- Key Vault Secrets Officer ---
-resource kvRoleNew 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createKeyVault) {
+resource kvRoleNew 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignRoles && createKeyVault) {
   name: guid(keyVaultNew.id, functionApp.id, 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')
   scope: keyVaultNew
   properties: {
@@ -375,7 +378,7 @@ resource kvRoleNew 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (cr
   }
 }
 
-resource kvRoleExisting 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!createKeyVault) {
+resource kvRoleExisting 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignRoles && !createKeyVault) {
   name: guid(keyVaultExisting.id, functionApp.id, 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')
   scope: keyVaultExisting
   properties: {
@@ -386,7 +389,7 @@ resource kvRoleExisting 'Microsoft.Authorization/roleAssignments@2022-04-01' = i
 }
 
 // --- Service Bus Data Owner ---
-resource sbRoleNew 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createServiceBus) {
+resource sbRoleNew 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignRoles && createServiceBus) {
   name: guid(serviceBusNew.id, functionApp.id, '090c5cfd-751d-490a-894a-3ce6f1109419')
   scope: serviceBusNew
   properties: {
@@ -396,7 +399,7 @@ resource sbRoleNew 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (cr
   }
 }
 
-resource sbRoleExisting 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!createServiceBus) {
+resource sbRoleExisting 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignRoles && !createServiceBus) {
   name: guid(serviceBusExisting.id, functionApp.id, '090c5cfd-751d-490a-894a-3ce6f1109419')
   scope: serviceBusExisting
   properties: {

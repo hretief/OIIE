@@ -97,6 +97,9 @@ param planSku string = 'B1'
 @description('Keep the host warm. Unavailable on Y1, so it is forced off there.')
 param alwaysOn bool = true
 
+@description('Create RBAC role assignments for the app identity. Off by default: the assignments are a one-time bootstrap, but ARM issues roleAssignments/write on every deployment even when the assignment already exists, which a Contributor-only deploy identity cannot do. Turn on for a new environment or after the app identity changes, using a principal with User Access Administrator.')
+param assignRoles bool = false
+
 @description('Tags applied to every resource.')
 param tags object = {
   workload: 'ws-cir'
@@ -265,6 +268,7 @@ module sqlSecret 'modules/sqlsecret.bicep' = if (useSqlAuth) {
     secretName: sqlSecretName
     secretValue: sqlConnectionSql
     principalId: identity.properties.principalId
+    assignRoles: assignRoles
     tags: tags
   }
 }
