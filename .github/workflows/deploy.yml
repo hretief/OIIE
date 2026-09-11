@@ -129,7 +129,7 @@ jobs:
 
       - name: Ensure ${{ matrix.provider }} databases
         shell: pwsh
-        run: ./${{ matrix.provider }}/deploy/provision-databases.ps1 -ResourceGroup "$env:AZURE_RESOURCE_GROUP"
+        run: ./${{ matrix.provider }}/deploy/provision-databases.ps1 -Environment "$env:AZURE_ENVIRONMENT" -ResourceGroup "$env:AZURE_RESOURCE_GROUP"
 
   # ---------------------------------------------------------------------------
   # ISBM. Deployed before the other providers because the CIR reads its function

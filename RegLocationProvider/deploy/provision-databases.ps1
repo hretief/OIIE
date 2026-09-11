@@ -24,17 +24,24 @@
 
 .NOTES
     Requires the Az CLI and an account with rights to create databases on
-    the server. Run it yourself; it is not run automatically.
+    the server. The deploy workflow runs this for the dev environment on every
+    push; prod is only created when -Environment prod is passed by hand.
 
 .EXAMPLE
     ./provision-databases.ps1
 
 .EXAMPLE
-    ./provision-databases.ps1 -Databases acme-db-eis-dev
+    ./provision-databases.ps1 -Environment prod
 #>
 
 [CmdletBinding(SupportsShouldProcess)]
 param(
+    # Defaults to dev. Prod must be asked for explicitly -- it should never be
+    # created as a side effect of standing up dev, which is what an unattended
+    # CI run does.
+    [ValidateSet('dev', 'prod', 'all')]
+    [string]$Environment = 'dev',
+
     [string]$ResourceGroup = 'HilmarRetiefRG',
     [string]$SqlServerName = 'acme-sql-server',
 
@@ -44,10 +51,18 @@ param(
     [string]$ServiceObjective = 'GP_S_Gen5_1',
     [int]   $AutoPauseDelayMinutes = 60,
 
-    [string[]]$Databases = @('acme-db-eis-dev', 'acme-db-eis-prod')
+    # Derived from -Environment unless named explicitly.
+    [string[]]$Databases
 )
 
 $ErrorActionPreference = 'Stop'
+
+if (-not $Databases) {
+    $Databases = switch ($Environment) {
+        'all'   { @('acme-db-eis-dev', 'acme-db-eis-prod') }
+        default { @("acme-db-eis-$Environment") }
+    }
+}
 
 foreach ($db in $Databases) {
 
