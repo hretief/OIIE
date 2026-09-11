@@ -314,7 +314,20 @@ elseif ($PSCmdlet.ShouldProcess($appName, 'Publish code')) {
     dotnet publish $projectPath -c Release -o $publishDir --nologo
     if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed.' }
 
-    Compress-Archive -Path (Join-Path $publishDir '*') -DestinationPath $zipPath
+    if (-not (Test-Path (Join-Path $publishDir '.azurefunctions'))) {
+        throw "'.azurefunctions' is missing from $publishDir. The deployed app would index no functions."
+    }
+
+    # Compress-Archive skips entries whose names begin with a dot, which drops
+    # the '.azurefunctions' folder the isolated worker needs. The host then
+    # starts, indexes nothing, and every route answers 404 while the app still
+    # reports Running. ZipFile.CreateFromDirectory includes it.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+        $publishDir,
+        $zipPath,
+        [System.IO.Compression.CompressionLevel]::Optimal,
+        $false)
 
     # The publishing profile carries the SCM credentials; --query on a nested
     # object keeps the password out of the command line.

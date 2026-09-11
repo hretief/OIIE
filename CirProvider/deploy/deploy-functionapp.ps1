@@ -242,7 +242,15 @@ elseif ($PSCmdlet.ShouldProcess($appName, 'Publish code')) {
             if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 
             if (Test-Path $zipPath) { Remove-Item $zipPath }
-            Compress-Archive -Path (Join-Path $outDir '*') -DestinationPath $zipPath
+            # Compress-Archive skips dot-prefixed entries, which drops the
+            # '.azurefunctions' folder the isolated worker needs; the app then
+            # indexes no functions and every route 404s.
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [System.IO.Compression.ZipFile]::CreateFromDirectory(
+                $outDir,
+                $zipPath,
+                [System.IO.Compression.CompressionLevel]::Optimal,
+                $false)
 
             az functionapp deployment source config-zip `
                 --resource-group $ResourceGroup --name $appName --src $zipPath `
