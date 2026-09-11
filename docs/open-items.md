@@ -1510,28 +1510,39 @@ Most of the groundwork is already laid, largely by DR-030:
   follows the same partial-success and 503-on-all-transient convention as the
   owners path, so the ingest leg's retry behaviour needs no special casing.
 - `MmsEngineOptions.InboundRdlTableMap` already maps `rdl:Streetlight` to
-  `LIGHT_UNIT_INVENTORY`, and `ResolveTargetTable` deliberately has no fallback:
-  MMS's tables are its classes, so an unmapped key must decline the segment
-  rather than pick a table.
+  `LIGHT_UNIT_INVENTORY`. Per DR-033 this is the seed that registers the class
+  in CIR on first contact, not the lookup the ingest path consults — dispatch
+  resolves the table from CIR on `Segment.Type.UUID`, because MMS's table name
+  *is* its `IdInSource` for that class.
 
-What is missing is the engine's second leg:
+The column mapping is settled in DR-033. What is missing is the engine's second
+leg:
 
 1. `MmsRestClient.UpsertLightUnitsAsync` — mechanical, mirrors
    `UpsertOwnersAsync`.
 2. `MmsEngine/Application/IncomingSegmentMapper` — maps `SyncSegments` onto
-   `LightUnitUpsert`, dispatching on the segment's RDL key through
-   `ResolveTargetTable`.
-3. `MmsEngine/Application/SegmentIngestionService` — parallels REG-LOCATION's.
-4. `MmsEngine/Application/CirClassRegistrar` — near-copy of REG-LOCATION's,
-   including `ClearCacheAsync` so it is cleared by the reset that drops CIR.
-5. Wiring: `Program.cs`, an ingest and a reset endpoint on `MmsEngineFunctions`,
+   `LightUnitUpsert`: `LIGHT_UNIT_NAME` from `Segment.ShortName`, `OWNER_ID`
+   resolved from CIR on `Segment.RegistrationSite.UUID`, `LIGHT_SYSTEM_ID` left
+   null per DR-032.
+3. `MmsEngine/Application/SegmentIngestionService` — parallels REG-LOCATION's,
+   plus the write-back below.
+4. `MmsEngine/Application/CirClassRegistrar` — seeds the `RDL-CLASS` entry whose
+   `IdInSource` is the table name, resolves dispatch from CIR, and exposes
+   `ClearCacheAsync` so it is cleared by the reset that drops CIR, per DR-031.
+5. **Register `LIGHT_UNIT_ID` back into CIR** against `Segment.UUID`. MMS assigns
+   it by IDENTITY, so it is known only from the upsert response, and until CIR
+   holds it MMS has a row no other participant can name. This has no equivalent
+   in REG-LOCATION's leg.
+6. Wiring: `Program.cs`, an ingest and a reset endpoint on `MmsEngineFunctions`,
    segments channel and topics on `MmsEngineOptions`, and the approved-locations
    channel declared in `mms/personality.yaml` — declared there, per the CIR
    publication channel item above, so day zero ensures it rather than orphaning
    it.
 
-Estimated at roughly 60-70% of the REG-LOCATION effort: lower because the
-provider, the table map and the DR-030 decisions already exist.
+Originally estimated at 60-70% of the REG-LOCATION effort. DR-033 revises that
+upward, closer to parity: the leg is bidirectional rather than one-directional,
+and dispatch reads CIR rather than a local dictionary. The provider side is still
+complete, so the extra work is in the engine's application layer, not in SQL.
 
 ### `LIGHT_SYSTEM_ID` is not the engine's to populate
 

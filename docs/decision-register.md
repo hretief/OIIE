@@ -2325,6 +2325,82 @@ level down. There, guessing a table for an unmapped class would be corruption ra
 behaviour; here, guessing a parent would be fabrication rather than incompleteness. In both cases
 the safe answer is to write less, not to write something plausible.
 
+## DR-033 — The MMS segment mapping: CIR resolves the table, and MMS's key goes back into CIR
+
+Decided 2026-09-11, scoping the MMS segment ingest leg. Not yet implemented. This is the concrete
+mapping DR-032 leaves open, and it corrects one assumption in DR-030.
+
+`LIGHT_UNIT_INVENTORY` has `LIGHT_UNIT_ID` as its primary key, IDENTITY-assigned by MMS.
+`EXT_ASSET_ID` is an alternate id, also managed by MMS. Neither is supplied by the publisher, which
+is what shapes everything below.
+
+### The mapping
+
+| Column | Source |
+| --- | --- |
+| *table selection* | resolve from CIR where `CirId` = `Segment.Type.UUID` |
+| `LIGHT_UNIT_ID` | MMS-generated; **written back** to CIR against `Segment.UUID` |
+| `LIGHT_UNIT_NAME` | `Segment.ShortName` |
+| `OWNER_ID` | resolve from CIR where `CirId` = `Segment.RegistrationSite.UUID` |
+| `LIGHT_SYSTEM_ID` | populated by MMS users — see DR-032 |
+| `DATE_UPDATE` | date of transaction |
+
+Worked example, `LIGHT_UNIT_INVENTORY` as MMS's expression of `rdl:Streetlight`. Both entries carry
+the same `CirId`, which is what makes them the same class:
+
+```json
+{
+  "CategoryId": "RDL-CLASS", "CategorySourceId": "ENG",
+  "Entry": { "IdInSource": "LIGHT_UNIT_INVENTORY", "SourceId": "MMS",
+             "CirId": "9F2A4C60-6D31-4B8E-9A17-0C5B2E7D1A05", "Name": "LIGHT_UNIT_INVENTORY" }
+},
+{
+  "CategoryId": "RDL-CLASS", "CategorySourceId": "REG-LOCATION",
+  "Entry": { "IdInSource": "1703", "SourceId": "REG-LOCATION",
+             "CirId": "9F2A4C60-6D31-4B8E-9A17-0C5B2E7D1A05", "Name": "rdl:Streetlight" }
+}
+```
+
+### The table name is an `IdInSource`, not configuration
+
+This is the correction to DR-030. `MmsEngineOptions.InboundRdlTableMap` holds `rdl:Streetlight` →
+`LIGHT_UNIT_INVENTORY` as a local dictionary. The registry above shows the same fact already lives
+in CIR, where `LIGHT_UNIT_INVENTORY` is the `IdInSource` of an `RDL-CLASS` entry whose `SourceId` is
+`MMS` — exactly as `1703` is REG-LOCATION's. MMS's classes are its table names, so registering a
+class and naming a table are the same act.
+
+Dispatch therefore resolves from CIR on `Segment.Type.UUID` rather than from the static map. The map
+remains as the seed that registers the entry on first contact, which is the same role
+`CirClassRegistrar` plays for REG-LOCATION — not as the lookup the ingest path consults. Keeping it
+as the lookup would put the authority for a class mapping in a deployment setting while CIR holds a
+second copy, and the two would diverge silently in the direction that reads as "the segment was
+declined" rather than as an error.
+
+It follows that MMS needs the same cache invalidation as the other two engines: whatever resolves a
+table from CIR must be cleared by the reset that drops CIR, per DR-031.
+
+### MMS's key belongs in CIR
+
+`LIGHT_UNIT_ID` is IDENTITY-assigned, so the engine learns it only from the upsert response, and it
+is meaningless to every other participant until CIR records it against the federated identity that
+originated in ENG — `Segment.UUID`. Without that write-back, MMS holds a row nobody else can name,
+and the next publisher referring to the same asset has no way to discover that MMS already has it.
+
+This makes the leg bidirectional in a way the earlier scoping missed. The ingest path is not
+read-segment-then-write-row: it is resolve, write, then **register the assigned key back into CIR**.
+That is a step beyond what `CirClassRegistrar` does for REG-LOCATION, which mirrors a class and
+stops there.
+
+`EXT_ASSET_ID` still drives the upsert, because it is the key the engine can supply on first contact
+and on every subsequent one. `LIGHT_UNIT_ID` is the identity CIR federates. They are different jobs
+and should not be collapsed.
+
+### Consequence for the estimate
+
+The earlier 60-70% figure assumed a one-directional leg. The write-back and the CIR-resolved dispatch
+push it closer to parity with REG-LOCATION. The provider side remains complete, so the additional
+work is in the engine's application layer, not in SQL.
+
 
 
 
