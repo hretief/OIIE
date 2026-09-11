@@ -2338,10 +2338,10 @@ is what shapes everything below.
 
 | Column | Source |
 | --- | --- |
-| *table selection* | resolve from CIR where `CirId` = `Segment.Type.UUID` |
-| `LIGHT_UNIT_ID` | MMS-generated; **written back** to CIR against `Segment.UUID` |
+| *table selection* | resolve from CIR where `CirId` = `Segment.Type.UUID` (`RDL-CLASS`) |
+| `LIGHT_UNIT_ID` | MMS-generated; **written back** to CIR against `Segment.UUID` in `ASSET`, not `RDL-CLASS` |
 | `LIGHT_UNIT_NAME` | `Segment.ShortName` |
-| `OWNER_ID` | resolve from CIR where `CirId` = `Segment.RegistrationSite.UUID` |
+| `OWNER_ID` | resolve from CIR where `CirId` = `Segment.RegistrationSite.UUID` (`ITWIN-SITE`, already live) |
 | `LIGHT_SYSTEM_ID` | populated by MMS users — see DR-032 |
 | `DATE_UPDATE` | date of transaction |
 
@@ -2379,12 +2379,36 @@ declined" rather than as an error.
 It follows that MMS needs the same cache invalidation as the other two engines: whatever resolves a
 table from CIR must be cleared by the reset that drops CIR, per DR-031.
 
-### MMS's key belongs in CIR
+### MMS's key belongs in CIR — in an `ASSET` category, not `RDL-CLASS`
 
 `LIGHT_UNIT_ID` is IDENTITY-assigned, so the engine learns it only from the upsert response, and it
 is meaningless to every other participant until CIR records it against the federated identity that
 originated in ENG — `Segment.UUID`. Without that write-back, MMS holds a row nobody else can name,
 and the next publisher referring to the same asset has no way to discover that MMS already has it.
+
+**It does not go in `RDL-CLASS`.** `Segment.Type.UUID` and `Segment.UUID` are different levels of
+the identity decomposition, and conflating them is a category error with a concrete cost:
+
+| Level | Example | Field | Category |
+| --- | --- | --- | --- |
+| Class | `rdl:Streetlight`, `LIGHT_UNIT_INVENTORY` | `Segment.Type.UUID` | `RDL-CLASS` |
+| Individual asset | this streetlight, `LIGHT_UNIT_ID = 4471` | `Segment.UUID` | `ASSET` |
+| Site | the owning district | `Segment.RegistrationSite.UUID` | `ITWIN-SITE` |
+
+A class and an instance are not the same kind of thing, and asserting equivalence between them is the
+same mistake as equating a tag with a serial number. If `LIGHT_UNIT_ID` lands in `RDL-CLASS`, a query
+for that category returns the classes *and* every registered streetlight, with nothing in the data
+distinguishing them. Untangling it later means reissuing CIRIDs that other participants already hold,
+so it is worth getting right before the first row is written.
+
+`ITWIN-SITE` already federates sites and is what makes `OWNER_ID` resolve today, so no new category
+is needed for the site level. `ASSET` is new, and follows the same shape.
+
+The write-back uses **`CreateEquivalentEntries`** (§3.1.2), not `CreateRegistry`. The ENG entry
+already carries the CIRID, so the merge rule gives the existing CIRID precedence and the new MMS
+entry adopts it — the federated identity cannot be displaced by a late registration. That is exactly
+the guarantee a write-back path wants, and the provider already implements it
+(`ProcessEquivalentEntries`).
 
 This makes the leg bidirectional in a way the earlier scoping missed. The ingest path is not
 read-segment-then-write-row: it is resolve, write, then **register the assigned key back into CIR**.
@@ -2393,13 +2417,44 @@ stops there.
 
 `EXT_ASSET_ID` still drives the upsert, because it is the key the engine can supply on first contact
 and on every subsequent one. `LIGHT_UNIT_ID` is the identity CIR federates. They are different jobs
-and should not be collapsed.
+and should not be collapsed. `EXT_ASSET_ID` is worth registering as its own `ASSET` entry with
+`SourceID = "MMS"`, since a participant may know the asset only by that.
+
+### Categories are split by registrar, and that is the existing convention
+
+A review proposed collapsing `RDL-CLASS` into a single category keyed on the defining scheme —
+`CategorySourceID = "MIMOSA CCOM RDL"` — with ENG, REG-LOCATION and MMS as peer entries under it, on
+the reading that `Category.SourceID` names the scheme rather than the registrar.
+
+That reading is defensible on the specification, but it is not what is deployed. The live `acme`
+registry splits by registrar throughout, and federation works across the split because the CIRID is
+what unifies peers:
+
+```
+RDL-CLASS  / ENG           24    9f2a4c60…      ITWIN-SITE / MMS          5   d543ebf6…
+RDL-CLASS  / REG-LOCATION  1703  9f2a4c60…      ITWIN-SITE / REG-LOCATION 2   d543ebf6…
+```
+
+MMS follows this convention: `RDL-CLASS` / `MMS` holding `IdInSource = LIGHT_UNIT_INVENTORY`, and
+`ASSET` / `MMS` holding `LIGHT_UNIT_ID`. Whether the convention should change is a separate question
+affecting five deployed categories, both other engines' registration paths and every CIRID already
+issued — it is not MMS's to settle, and doing it here would mean re-verifying a flow that currently
+passes.
 
 ### Consequence for the estimate
 
 The earlier 60-70% figure assumed a one-directional leg. The write-back and the CIR-resolved dispatch
 push it closer to parity with REG-LOCATION. The provider side remains complete, so the additional
 work is in the engine's application layer, not in SQL.
+
+### Cached resolutions need a TTL, not only the reset hook
+
+DR-031 clears the class caches when the registry is dropped, which covers day zero. It does not cover
+`UpdateEntryCIRID` (§3.1.4), which can collapse two CIRIDs at any time with no notification to anyone
+holding the old one. ws-CIR has no Sync verb, so a cached resolution goes stale silently whether or
+not anyone reset anything. MMS's table-dispatch cache should carry a TTL alongside the reset hook for
+that reason; the same applies to the other two engines' caches and is worth doing when one is next
+touched.
 
 
 

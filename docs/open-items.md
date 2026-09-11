@@ -1529,10 +1529,13 @@ leg:
 4. `MmsEngine/Application/CirClassRegistrar` — seeds the `RDL-CLASS` entry whose
    `IdInSource` is the table name, resolves dispatch from CIR, and exposes
    `ClearCacheAsync` so it is cleared by the reset that drops CIR, per DR-031.
-5. **Register `LIGHT_UNIT_ID` back into CIR** against `Segment.UUID`. MMS assigns
-   it by IDENTITY, so it is known only from the upsert response, and until CIR
-   holds it MMS has a row no other participant can name. This has no equivalent
-   in REG-LOCATION's leg.
+5. **Register `LIGHT_UNIT_ID` back into CIR** against `Segment.UUID`, in an
+   `ASSET` category — not `RDL-CLASS`, which holds classes. MMS assigns the id
+   by IDENTITY, so it is known only from the upsert response, and until CIR
+   holds it MMS has a row no other participant can name. Use
+   `CreateEquivalentEntries`, whose merge rule lets the new entry adopt the
+   existing CIRID rather than displace it. This has no equivalent in
+   REG-LOCATION's leg.
 6. Wiring: `Program.cs`, an ingest and a reset endpoint on `MmsEngineFunctions`,
    segments channel and topics on `MmsEngineOptions`, and the approved-locations
    channel declared in `mms/personality.yaml` — declared there, per the CIR
