@@ -82,10 +82,19 @@ jobs:
 
       # EngHostFixture shells out to a real 'func' host rather than using an
       # in-memory server, so the E2E suite needs Core Tools the same way the
-      # deploying jobs do. The npm global bin is on PATH, which the fixture
-      # searches before any guessed install location.
+      # deploying jobs do. It looks for 'func.exe' as a file on PATH, but npm's
+      # global prefix only receives the func.cmd/func.ps1 shims -- the actual
+      # executable sits under the package's bin directory, so that is what has
+      # to go on PATH.
       - name: Install Azure Functions Core Tools
-        run: npm install -g azure-functions-core-tools@4 --unsafe-perm true
+        shell: pwsh
+        run: |
+          npm install -g azure-functions-core-tools@4 --unsafe-perm true
+          $bin = Join-Path (npm root -g) 'azure-functions-core-tools\bin'
+          if (-not (Test-Path (Join-Path $bin 'func.exe'))) {
+            throw "func.exe not found under $bin"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
 
       - name: Restore
         run: dotnet restore OpenOM.slnx
