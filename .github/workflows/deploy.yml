@@ -1,0 +1,243 @@
+name: deploy
+
+# Continuous deployment to the dev environment.
+#
+# This workflow ORCHESTRATES the deployment scripts that already live beside
+# each project; it does not reimplement them. That is deliberate. The scripts
+# carry behaviour that a declarative template cannot express -- deploy/engines/
+# deploy-engine.ps1 preserves an operator's 'Enabled' toggle across redeploys,
+# and every engine and the sandbox read their peers' function keys at deploy
+# time. Re-expressing either in YAML would drop the reasoning recorded in their
+# comments and silently change behaviour.
+#
+# Order matters and is enforced by 'needs', not by hope:
+#
+#   databases -> isbm -> providers -> engines -> sandbox
+#
+# Each provider throws if its database is absent, each engine throws if its peer
+# provider is absent, and the CIR reads a function key from the ISBM app. A flat
+# matrix over all thirteen apps fails on a cold environment for all three
+# reasons.
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+# id-token is what makes OIDC work. Without it azure/login cannot request a
+# federated token and fails with a message that does not mention permissions.
+permissions:
+  id-token: write
+  contents: read
+
+# Deployments are not cancelled mid-flight: a half-applied environment is worse
+# than a queued one.
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+env:
+  AZURE_ENVIRONMENT: dev
+  AZURE_RESOURCE_GROUP: HilmarRetiefRG
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Test gate. build.yml only runs on pull requests, so without this nothing
+  # would compile or test the merge commit before it is deployed. Everything
+  # below needs this job, directly or transitively.
+  # ---------------------------------------------------------------------------
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore OpenOM.slnx
+
+      - name: Build
+        run: dotnet build OpenOM.slnx --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test OpenOM.slnx --no-build --configuration Release
+
+  # ---------------------------------------------------------------------------
+  # Databases. Idempotent by construction -- each script skips a database that
+  # already exists -- so this runs every time rather than being a manual
+  # prerequisite. RdlProvider has no script of its own: it reads the EIS
+  # database owned by REG-LOCATION.
+  # ---------------------------------------------------------------------------
+  databases:
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [ CirProvider, CmsProvider, EngProvider, MmsProvider, RegLocationProvider ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure ${{ matrix.provider }} databases
+        shell: pwsh
+        run: ./${{ matrix.provider }}/deploy/provision-databases.ps1 -ResourceGroup "$env:AZURE_RESOURCE_GROUP"
+
+  # ---------------------------------------------------------------------------
+  # ISBM. Deployed before the other providers because the CIR reads its function
+  # key, and an empty key leaves the CIR listener draining nothing while
+  # reporting a clean deploy.
+  # ---------------------------------------------------------------------------
+  isbm:
+    runs-on: ubuntu-latest
+    needs: databases
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install Azure Functions Core Tools
+        run: npm install -g azure-functions-core-tools@4 --unsafe-perm true
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy IsbmProvider
+        shell: pwsh
+        run: ./ISBMProvider/deploy/deploy-functionapp.ps1 -Environment "$env:AZURE_ENVIRONMENT" -ResourceGroup "$env:AZURE_RESOURCE_GROUP"
+
+  # ---------------------------------------------------------------------------
+  # The remaining providers. Independent of one another, so a matrix is safe
+  # here where it is not across tiers.
+  #
+  # -SkipSqlGrant is passed where the script offers it: the grant needs an AAD
+  # token for database.windows.net and a login that is a SQL AD admin, which the
+  # deployment identity is not. The grant remains the documented manual step in
+  # each provider's README.
+  # ---------------------------------------------------------------------------
+  providers:
+    runs-on: ubuntu-latest
+    needs: isbm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: CirProvider
+            args: ''
+          - project: CmsProvider
+            args: ''
+          - project: EngProvider
+            args: ''
+          - project: MmsProvider
+            args: '-SkipSqlGrant'
+          - project: RdlProvider
+            args: '-SkipSqlGrant'
+          - project: RegLocationProvider
+            args: '-SkipSqlGrant'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install Azure Functions Core Tools
+        run: npm install -g azure-functions-core-tools@4 --unsafe-perm true
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy ${{ matrix.project }}
+        shell: pwsh
+        run: >-
+          ./${{ matrix.project }}/deploy/deploy-functionapp.ps1
+          -Environment "$env:AZURE_ENVIRONMENT"
+          -ResourceGroup "$env:AZURE_RESOURCE_GROUP"
+          ${{ matrix.args }}
+
+  # ---------------------------------------------------------------------------
+  # Engines. One invocation for all five: the script already loops, and it reads
+  # the ISBM and CIR keys once rather than five times.
+  #
+  # -ForceEnable is NOT passed. The script's default is to preserve an existing
+  # 'Enabled' value, so an engine an operator has deliberately stopped stays
+  # stopped across a redeploy. Passing it here would make every push to main
+  # override that.
+  # ---------------------------------------------------------------------------
+  engines:
+    runs-on: ubuntu-latest
+    needs: providers
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install Azure Functions Core Tools
+        run: npm install -g azure-functions-core-tools@4 --unsafe-perm true
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy all engines
+        shell: pwsh
+        run: ./deploy/engines/deploy-engine.ps1 -Engine all -Environment "$env:AZURE_ENVIRONMENT" -ResourceGroup "$env:AZURE_RESOURCE_GROUP"
+
+  # ---------------------------------------------------------------------------
+  # Sandbox API, last: it reads a function key from every provider and from two
+  # engines to configure its read-through panels.
+  #
+  # The script builds the React app in WorkflowOrchestration/ into the API's
+  # wwwroot and verifies /health itself, so neither is repeated here. Node is
+  # installed for it; -SkipWeb is not passed, because a deployment that silently
+  # kept the previously deployed UI is exactly the failure CD should remove.
+  # ---------------------------------------------------------------------------
+  sandbox:
+    runs-on: ubuntu-latest
+    needs: engines
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy sandbox API and web UI
+        shell: pwsh
+        run: ./deploy/sandbox/deploy.ps1 -Environment "$env:AZURE_ENVIRONMENT" -ResourceGroup "$env:AZURE_RESOURCE_GROUP"
