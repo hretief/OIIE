@@ -12,7 +12,7 @@ build -> databases -> isbm -> providers -> engines -> sandbox
 
 | Job | What runs |
 | --- | --- |
-| `build` | `dotnet build` and `dotnet test` on the merge commit. Nothing deploys if this fails. |
+| `build` | `dotnet build` and `dotnet test` on the merge commit. Nothing deploys if this fails. Runs on **windows-latest** — see below. |
 | `databases` | `{Provider}/deploy/provision-databases.ps1` for CIR, CMS, ENG, MMS, REG-LOCATION. Creates any missing `acme-db-*`; skips those that exist. |
 | `isbm` | `ISBMProvider/deploy/deploy-functionapp.ps1` |
 | `providers` | `{Provider}/deploy/deploy-functionapp.ps1` for CIR, CMS, ENG, MMS, RDL, REG-LOCATION |
@@ -23,6 +23,22 @@ The workflow calls the existing scripts rather than reimplementing them. The
 ordering is not cosmetic: providers throw if their database is missing, engines
 throw if their peer provider is missing, and the CIR and the sandbox read
 function keys from apps deployed earlier in the chain.
+
+### Why the build job runs on Windows
+
+`EngProvider.E2E.Tests` creates a real database per run through
+`(localdb)\MSSQLLocalDB` with integrated security (`EngHostFixture.cs`). LocalDB
+is a Windows-only component, so on `ubuntu-latest` all fourteen of its tests
+fail with `PlatformNotSupportedException` before reaching an assertion. The 150
+tests in `Oiie.Sandbox.Tests` are unaffected and pass on either platform.
+
+Only the `build` job needs Windows. Every deploying job runs on `ubuntu-latest`.
+
+To move it back to Linux, `EngHostFixture` would need to take its connection
+string from the environment instead of hard-coding LocalDB, after which the job
+can use a SQL Server service container. That is the better end state — until it
+happens, this suite only runs where a Windows host is available, which is why it
+went unnoticed that it had never run in CI at all.
 
 ## One-time setup
 

@@ -14,7 +14,10 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Windows because EngProvider.E2E.Tests drives a real database through
+    # '(localdb)\MSSQLLocalDB', and LocalDB is Windows-only -- on ubuntu all
+    # fourteen of its tests fail with PlatformNotSupportedException.
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -29,6 +32,15 @@ jobs:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
           restore-keys: nuget-${{ runner.os }}-
+
+      # The instance exists on the image but is not guaranteed to be running,
+      # and a stopped instance fails the same way a missing one does.
+      - name: Start SQL Server LocalDB
+        shell: pwsh
+        run: |
+          SqlLocalDB info
+          SqlLocalDB start MSSQLLocalDB
+          SqlLocalDB info MSSQLLocalDB
 
       - name: Restore
         run: dotnet restore OpenOM.slnx
