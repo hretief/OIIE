@@ -105,6 +105,10 @@ param(
     # when the assignment is unchanged, which a Contributor-only identity such
     # as CI cannot do. Needed once per new environment, by a principal with
     # User Access Administrator.
+    # Create the App Service plan. Off by default: re-declaring an existing
+    # plan rewrites its SKU, reverting manual scaling. New environments only.
+    [switch]$CreatePlan,
+
     [switch]$AssignRoles
 )
 
@@ -235,6 +239,7 @@ if (-not $SkipInfrastructure) {
         "isbmBaseUrl=$isbmBaseUrl",
         "isbmApiKey=$isbmKey",
         "planSku=$PlanSku",
+        "createPlan=$($CreatePlan.IsPresent.ToString().ToLowerInvariant())",
         "adminKey=$adminKey",
         "allowedCorsOrigins=$corsJson",
         "assignRoles=$($AssignRoles.IsPresent.ToString().ToLowerInvariant())",

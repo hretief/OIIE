@@ -28,6 +28,9 @@ param adminKey string = ''
 @description('App Service plan SKU. B1 is the smallest that supports Always On.')
 param planSku string = 'B1'
 
+@description('Create the App Service plan. Off by default: re-declaring an existing plan rewrites its SKU, undoing any manual scaling. Turn on only when standing up a new environment.')
+param createPlan bool = false
+
 @description('''
 Extra browser origins allowed to call the API. The React Workflow Orchestration
 app is served from its own origin, so without this its calls fail preflight.
@@ -99,7 +102,9 @@ resource insights 'Microsoft.Insights/components@2020-02-02' = {
 // rather than as the leftover it replaced.
 // ---------------------------------------------------------------------------
 
-resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
+// This template must not own the plan's size. Declaring it unconditionally
+// re-asserts 'sku' on every deployment, which silently reverts manual scaling.
+resource planNew 'Microsoft.Web/serverfarms@2023-12-01' = if (createPlan) {
   name: planName
   location: location
   sku: {
@@ -110,6 +115,12 @@ resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
     reserved: true
   }
 }
+
+resource planExisting 'Microsoft.Web/serverfarms@2023-12-01' existing = if (!createPlan) {
+  name: planName
+}
+
+var planId = createPlan ? planNew.id : planExisting.id
 
 // Settings both sites need. Held in one place because a value that drifts
 // between them -- a different database, a different personality path -- produces
@@ -152,7 +163,7 @@ resource apiApp 'Microsoft.Web/sites@2023-12-01' = {
     type: 'SystemAssigned'
   }
   properties: {
-    serverFarmId: plan.id
+    serverFarmId: planId
     httpsOnly: true
     siteConfig: {
       linuxFxVersion: 'DOTNETCORE|10.0'

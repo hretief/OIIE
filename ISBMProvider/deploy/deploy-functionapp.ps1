@@ -62,6 +62,11 @@ param(
     # every deployment even when the assignment is unchanged, which a
     # Contributor-only identity such as CI cannot do. Needed once per new
     # environment, by a principal with User Access Administrator.
+    # Create the shared App Service plan. Off by default: the plan is shared by
+    # every provider and engine, and re-declaring it rewrites its SKU, which
+    # silently reverts manual scaling. Only needed for a new environment.
+    [switch]$CreatePlan,
+
     [switch]$AssignRoles
 )
 
@@ -121,6 +126,7 @@ if (-not $SkipInfrastructure) {
             serviceBusNameOverride=$sbName `
             keyVaultNameOverride=$keyVaultName `
             planSku=$PlanSku `
+            createPlan=$($CreatePlan.IsPresent.ToString().ToLowerInvariant()) `
             securityLevel=$SecurityLevel `
             skipSql=true `
             assignRoles=$($AssignRoles.IsPresent.ToString().ToLowerInvariant()) `

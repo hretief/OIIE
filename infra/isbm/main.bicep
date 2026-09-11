@@ -59,6 +59,9 @@ param functionAppOs string = 'windows'
 ])
 param planSku string = 'B1'
 
+@description('Create the App Service plan. Off by default: the plan is shared by every provider and engine in the environment, and re-declaring it rewrites its SKU, undoing any manual scaling. Turn on only when standing up a new environment.')
+param createPlan bool = false
+
 @description('Keep the host warm. Unavailable on Y1, so it is forced off there.')
 param alwaysOn bool = true
 
@@ -295,14 +298,26 @@ var kvUri = createKeyVault ? keyVaultNew.properties.vaultUri : keyVaultExisting.
 // ============================================================================
 
 var planTier = planSku == 'Y1' ? 'Dynamic' : (startsWith(planSku, 'EP') ? 'ElasticPremium' : 'Basic')
+var planName = empty(planNameOverride) ? '${baseName}-plan-${suffix}' : planNameOverride
 
-resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
-  name: empty(planNameOverride) ? '${baseName}-plan-${suffix}' : planNameOverride
+// The plan is shared by every provider and engine in the environment, so this
+// template must not own its size. Declaring it unconditionally re-asserts
+// 'sku' on each deployment, which silently downgraded a hand-scaled B3 back to
+// the B1 default and then failed to publish onto the plan it had just shrunk.
+// Only create it when absent; otherwise reference it and leave the SKU alone.
+resource planNew 'Microsoft.Web/serverfarms@2023-12-01' = if (createPlan) {
+  name: planName
   location: location
   sku: { name: planSku, tier: planTier }
-  kind: functionAppOs == 'linux' ? 'functionapp' : 'functionapp'
+  kind: 'functionapp'
   properties: { reserved: functionAppOs == 'linux' }
 }
+
+resource planExisting 'Microsoft.Web/serverfarms@2023-12-01' existing = if (!createPlan) {
+  name: planName
+}
+
+var planId = createPlan ? planNew.id : planExisting.id
 
 resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   name: funcAppName
@@ -310,7 +325,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   kind: functionAppOs == 'linux' ? 'functionapp,linux' : 'functionapp'
   identity: { type: 'SystemAssigned' }
   properties: {
-    serverFarmId: plan.id
+    serverFarmId: planId
     httpsOnly: true
     siteConfig: {
       linuxFxVersion: functionAppOs == 'linux' ? 'DOTNET-ISOLATED|10.0' : null

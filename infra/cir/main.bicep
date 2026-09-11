@@ -94,6 +94,9 @@ param isbmTopic string = 'ws-CIR'
 ])
 param planSku string = 'B1'
 
+@description('Create the App Service plan. Off by default: re-declaring an existing plan rewrites its SKU, undoing any manual scaling. Turn on only when standing up a new environment.')
+param createPlan bool = false
+
 @description('Keep the host warm. Unavailable on Y1, so it is forced off there.')
 param alwaysOn bool = true
 
@@ -281,7 +284,9 @@ module sqlSecret 'modules/sqlsecret.bicep' = if (useSqlAuth) {
 // time rather than at run time.
 var planTier = planSku == 'Y1' ? 'Dynamic' : (startsWith(planSku, 'EP') ? 'ElasticPremium' : 'Basic')
 
-resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
+// This template must not own the plan's size. Declaring it unconditionally
+// re-asserts 'sku' on every deployment, which silently reverts manual scaling.
+resource planNew 'Microsoft.Web/serverfarms@2023-12-01' = if (createPlan) {
   name: planName
   location: location
   tags: tags
@@ -295,6 +300,12 @@ resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   }
 }
 
+resource planExisting 'Microsoft.Web/serverfarms@2023-12-01' existing = if (!createPlan) {
+  name: planName
+}
+
+var planId = createPlan ? planNew.id : planExisting.id
+
 resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   name: functionAppName
   location: location
@@ -307,7 +318,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
     }
   }
   properties: {
-    serverFarmId: plan.id
+    serverFarmId: planId
     httpsOnly: true
     keyVaultReferenceIdentity: identity.id
     siteConfig: {

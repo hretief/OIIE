@@ -192,6 +192,31 @@ Two things follow:
 
 ## What CD still does not do
 
+**The App Service plan.** `acme-plan-dev` is shared by every provider and engine
+in the environment — twelve apps at the time of writing, all with `alwaysOn`.
+The templates will only create it when passed `createPlan=true`, and the deploy
+scripts only do that when given `-CreatePlan`. CD never does.
+
+This is not a preference. The templates previously declared the plan
+unconditionally with `sku: { name: planSku }`, defaulting to `B1`, so every
+deployment re-asserted the SKU and silently downgraded the plan. A hand-scaled
+B3 was reverted to B1 by a pipeline run, which then failed to publish onto the
+plan it had just shrunk — the deployment endpoint returned 503 because one B1
+core cannot absorb a publish while eleven always-on siblings are resident. The
+plan write and the failed publish are 100 seconds apart in the activity log.
+
+Referencing the plan as `existing` emits no ARM write at all, so CI can no
+longer change its size. Scale it deliberately, in the portal or with:
+
+```powershell
+az appservice plan update -g <rg> -n acme-plan-dev --sku B3
+```
+
+Pass `-CreatePlan` only when standing up a new environment. If you add more apps
+to the shared plan, size it for the total; deploys are where undersizing shows
+first, as intermittent 503s from the SCM endpoint rather than as an obvious
+capacity error.
+
 **RBAC role assignments.** Each function app and the sandbox web app reach
 storage, Key Vault and Service Bus as their own managed identity, which requires
 role assignments on those resources. The Bicep templates can create them, but
