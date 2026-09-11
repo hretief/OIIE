@@ -41,6 +41,9 @@
 
 .EXAMPLE
     ./deploy-functionapp.ps1 -Environment prod -WhatIf
+
+.EXAMPLE
+    ./deploy-functionapp.ps1 -Environment dev -SkipSqlGrant
 #>
 
 [CmdletBinding(SupportsShouldProcess)]
@@ -59,18 +62,26 @@ param(
     [string]$PlanSku = 'B1',
 
     # Skip the code publish and only ensure the infrastructure exists.
-    [switch]$InfraOnly
+    [switch]$InfraOnly,
+
+    # Skip creating the SQL user for the managed identity and print the
+    # statements instead. The grant needs an Entra admin on the SQL server and
+    # the SqlServer module, neither of which a deployment identity has, so
+    # unattended runs pass this and the grant stays a documented manual step.
+    [switch]$SkipSqlGrant
 )
 
 $ErrorActionPreference = 'Stop'
 
 # Invoke-Sqlcmd creates the SQL user below. Failing here beats failing after
 # the infrastructure has already been created.
-if (-not (Get-Command Invoke-Sqlcmd -ErrorAction SilentlyContinue)) {
-    Import-Module SqlServer -ErrorAction SilentlyContinue
-}
-if (-not (Get-Command Invoke-Sqlcmd -ErrorAction SilentlyContinue)) {
-    throw 'Invoke-Sqlcmd is not available. Run: Install-Module SqlServer -Scope CurrentUser'
+if (-not $SkipSqlGrant) {
+    if (-not (Get-Command Invoke-Sqlcmd -ErrorAction SilentlyContinue)) {
+        Import-Module SqlServer -ErrorAction SilentlyContinue
+    }
+    if (-not (Get-Command Invoke-Sqlcmd -ErrorAction SilentlyContinue)) {
+        throw 'Invoke-Sqlcmd is not available. Run: Install-Module SqlServer -Scope CurrentUser'
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -352,7 +363,16 @@ elseif ($PSCmdlet.ShouldProcess($appName, 'Publish code')) {
 # this wrong; here the app authenticates as $identityName via AZURE_CLIENT_ID,
 # so a user created for [$appName] would never be matched.
 # ---------------------------------------------------------------------------
-if ($PSCmdlet.ShouldProcess($databaseName, "Grant SQL access to $identityName")) {
+if ($SkipSqlGrant) {
+    Write-Host ''
+    Write-Host 'SkipSqlGrant specified. Run this yourself as an Entra admin:' -ForegroundColor Yellow
+    Write-Host "  CREATE USER [$identityName] FROM EXTERNAL PROVIDER;"
+    Write-Host "  ALTER ROLE db_datareader ADD MEMBER [$identityName];"
+    Write-Host "  ALTER ROLE db_datawriter ADD MEMBER [$identityName];"
+    Write-Host "  ALTER ROLE db_ddladmin  ADD MEMBER [$identityName];"
+    Write-Host ''
+}
+elseif ($PSCmdlet.ShouldProcess($databaseName, "Grant SQL access to $identityName")) {
     Write-Host 'Granting the identity access to SQL...' -ForegroundColor Cyan
 
     $sidBytes = ([guid]$identityClientId).ToByteArray()

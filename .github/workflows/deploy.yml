@@ -164,9 +164,11 @@ jobs:
   # here where it is not across tiers.
   #
   # -SkipSqlGrant is passed where the script offers it: the grant needs an AAD
-  # token for database.windows.net and a login that is a SQL AD admin, which the
-  # deployment identity is not. The grant remains the documented manual step in
-  # each provider's README.
+  # token for database.windows.net, a login that is a SQL AD admin, and the
+  # SqlServer PowerShell module, none of which the deployment identity or a
+  # hosted runner has. The grant remains the documented manual step in each
+  # provider's README. CmsProvider has no switch because it never attempts the
+  # grant; it only prints it.
   # ---------------------------------------------------------------------------
   providers:
     runs-on: ubuntu-latest
@@ -175,12 +177,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # IsbmBaseUrl is mandatory on the CIR script. Without it the job hangs
+          # on a parameter prompt and then fails, which is what it did before.
           - project: CirProvider
-            args: ''
+            args: '-IsbmBaseUrl "https://acme-api-isbm-$env:AZURE_ENVIRONMENT.azurewebsites.net/api"'
           - project: CmsProvider
             args: ''
           - project: EngProvider
-            args: ''
+            args: '-SkipSqlGrant'
           - project: MmsProvider
             args: '-SkipSqlGrant'
           - project: RdlProvider
