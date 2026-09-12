@@ -13,7 +13,7 @@ build -> databases -> isbm -> providers -> engines -> sandbox
 | Job | What runs |
 | --- | --- |
 | `build` | `dotnet build` and `dotnet test` on the merge commit. Nothing deploys if this fails. Runs on **windows-latest** — see below. |
-| `databases` | `{Provider}/deploy/provision-databases.ps1` for CIR, CMS, ENG, MMS, REG-LOCATION. Creates any missing `acme-db-*`; skips those that exist. |
+| `databases` | `{Provider}/deploy/provision-databases.ps1` for CIR, CMS, ENG, MMS, REG-LOCATION. Creates any missing `acme-db-*-dev`; skips those that exist. Dev only — see below. |
 | `isbm` | `ISBMProvider/deploy/deploy-functionapp.ps1` |
 | `providers` | `{Provider}/deploy/deploy-functionapp.ps1` for CIR, CMS, ENG, MMS, RDL, REG-LOCATION |
 | `engines` | `deploy/engines/deploy-engine.ps1 -Engine all` |
@@ -23,6 +23,26 @@ The workflow calls the existing scripts rather than reimplementing them. The
 ordering is not cosmetic: providers throw if their database is missing, engines
 throw if their peer provider is missing, and the CIR and the sandbox read
 function keys from apps deployed earlier in the chain.
+
+### Provisioning only ever creates dev
+
+Each `provision-databases.ps1` takes `-Environment`, validated to `dev`, `prod`
+or `all` and defaulting to `dev`. The workflow passes `$env:AZURE_ENVIRONMENT`,
+which is `dev`, so a push never creates a prod database.
+
+This is deliberate. The scripts previously hardcoded both environments, so every
+unattended run created the five `acme-db-*-prod` databases as a side effect of
+standing up dev. Nobody had asked for them and they sat empty; they were deleted
+on 2026-09-11 once the default was fixed.
+
+Creating prod is a manual act:
+
+```powershell
+./CirProvider/deploy/provision-databases.ps1 -Environment prod
+```
+
+`MmsProvider` and `RegLocationProvider` also still accept an explicit
+`-Databases` list, which overrides `-Environment` when given.
 
 ### Why the build job runs on Windows
 

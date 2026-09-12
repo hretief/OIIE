@@ -4,6 +4,87 @@ Pending work carried between sessions. Decisions belong in
 [decision-register.md](decision-register.md); this file is only for things not
 yet done.
 
+## ISBM and CIR cannot be deployed standalone, and still lean on `mndot`
+
+**Status:** not started. Raised 2026-09-12 after an audit for Azure resources not
+named `acme-*` turned up two separate problems that share one fix.
+
+Nothing is broken today. Both systems run, and the shared resources they borrow
+are real and working. This is about being able to stand either system up on its
+own — for a second environment, a clean subscription, or a hand-off to someone
+who does not have `HilmarRetiefRG`.
+
+### The `mndot` resources
+
+`mndot` is a Key Vault, a storage account and a Service Bus namespace left from
+an unrelated project. The sandbox took a dependency on them and never let go:
+
+- `infra/sandbox/main.bicep` defaults `keyVaultName` to `'mndot'`.
+- `deploy/sandbox/deploy.ps1` and `deploy/sandbox/provision.ps1` default
+  `-KeyVault` to `mndot`.
+- `Oiie.Sandbox.Api/appsettings.json` points `Storage__BlobServiceUri` at
+  `https://mndot.blob.core.windows.net`, and both `appsettings.Development.json`
+  and `SimHost/appsettings.Development.json` point `KeyVault__Uri` at
+  `https://mndot.vault.azure.net/`.
+- `tools/generate-bruno.ps1` and `testing/test-sandbox.ps1` read the sandbox
+  admin key from `--vault-name mndot`.
+
+The defaults in shipped `appsettings.json` matter most: a fresh checkout reads
+secrets from a vault named after someone else's project, and nothing in the name
+says it belongs to this solution. `deploy/sandbox/deploy.ps1` already carries a
+comment noting that `mndotsandbox` "outlived its retirement", which is the same
+observation from the other side.
+
+Also stale, and cheap to take at the same time: the `isbm` bicep header cites
+`mndotdev`, `mndotst` and `mndot-sql` in its example invocations, and
+`testing/test-sandbox.ps1` and `testing/test-isbm-roundtrip.ps1` still default
+`-IsbmApp`/`-CirApp` to the superseded `isbm-func-44p2f3n6dv7p4` and
+`cir-func-44p2f3n6` apps. `deploy/engines/deploy-engine.ps1` explicitly notes it
+targets `acme-api-isbm-dev` and *not* the older `isbm-func-*` app, so those test
+defaults point at the wrong thing.
+
+### Neither system owns its own infrastructure
+
+`infra/cir/main.bicep` and `infra/isbm/main.bicep` both default `createPlan` to
+`false` and expect to be handed an existing plan, and ISBM additionally takes
+`existingServiceBusName`, `existingStorageAccountName`, `existingSqlServerName`,
+`existingKeyVaultName` and `existingAppInsightsName`. CIR can create its own SQL
+server via `sqlServerMode`, but in practice runs against the shared
+`acme-sql-server`. The result is that a deploy of either one assumes a populated
+resource group rather than describing what it needs.
+
+Both should be able to deploy standalone, each owning its own App Service plan,
+Key Vault, user-assigned managed identity, storage account and SQL server, with
+the existing `existing*` parameters kept as the opt-in path for sharing. That
+ordering matters: sharing stays possible, but it becomes something you ask for
+rather than something you inherit.
+
+### The naming falls out of the same change
+
+`baseName` still defaults to `'cir'` and `'isbm'`, and the names are built with
+`uniqueString(resourceGroup().id)`. That is what produced `cir-kv-44p2f3n6`,
+`cir-ai-44p2f3n6`, `cir-id-44p2f3n6`, `cir-law-44p2f3n6`, `cirst44p2f3n6`,
+`isbm-ai-44p2f3n6dv7p4`, `isbm-la-44p2f3n6dv7p4` and `storage44p2f3n6dv7p4` —
+so this is a live inconsistency, not just legacy naming. A deploy today would
+still create non-`acme` names. Moving to the `acme-*` convention renames
+resources on the next deploy, so it wants to land with the standalone work
+rather than as a separate pass.
+
+Two sandbox observability sets also exist under both schemes:
+`appi-acme-sandbox-dev` / `log-acme-sandbox-dev` alongside
+`appi-oiie-sandbox-{dev,demo}` / `log-oiie-sandbox-{dev,demo}`. The `oiie-*`
+pair is stale once the rename settles.
+
+### Sequencing
+
+Do the standalone work first and the renaming with it, then retire the `mndot`
+dependencies once the sandbox has its own vault and storage to point at.
+Retiring `mndot` first would just move the sandbox onto another borrowed
+resource. Note that `HilmarRetiefRG` is shared with unrelated work — the `hr-*`
+apps, `PingWebhook*`, `iTwinEventListener`, `mndot-vnet` and the auto-generated
+`hilmarretiefrg****` storage accounts are not ours — so nothing here should be
+deleted on the assumption that everything in the group belongs to this solution.
+
 ## Our TaxonomySet BODs diverge from the official MIMOSA schemas
 
 **Status:** not started. Raised 2026-09-10 after the official `*Taxonom*.xsd`
