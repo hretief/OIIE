@@ -1,0 +1,14 @@
+# MmsEngine / failures.yaml — §6
+#
+# Everything NOT listed here is transient, including every condition nobody
+# thought to declare. That default is the inverse of the natural implementation
+# and it is deliberate: Rejected is terminal and never retried.
+#
+# Classification is by status / type / error number ONLY. A rule keyed on
+# message text is rejected at load — message text is locale-dependent and
+# changes between provider versions.
+terminal:
+  - http: 400        # malformed request; replay will not help
+  - http: 409        # conflict on a unique key we should have matched on
+  - http: 422
+  - sqlError: 547    # FK violation — the referenced row genuinely is not there

@@ -1,0 +1,20 @@
+# MmsEngine / SyncSegments — DR-033. Two CIR lookups, declared here so the
+# engine can batch them before the (pure) transform runs.
+resolutions:
+
+  # MMS's table name IS its IdInSource for the RDL class. Dispatch resolves the
+  # table from CIR rather than from a local dictionary; InboundRdlTableMap is
+  # the seed that registers the class on first contact, not the lookup.
+  - key: targetTable
+    source: cir
+    category: RDL-CLASS
+    cirIdFrom: //Segment/Type/UUID
+    onMiss: skip-item        # DR-030: no fallback. An unknown class would mean
+                             # choosing a table, and writing a light unit into an
+                             # arbitrary one is corruption, not degradation.
+
+  - key: ownerId
+    source: cir
+    category: ITWIN-SITE
+    cirIdFrom: //Segment/RegistrationSite/UUID
+    onMiss: skip-item

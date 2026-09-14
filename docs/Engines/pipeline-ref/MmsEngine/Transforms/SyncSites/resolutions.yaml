@@ -1,0 +1,3 @@
+# MmsEngine / SyncSites — §5. The simplest possible leg: no lookups at all.
+# The site's own UUID is the key; nothing needs resolving through CIR.
+resolutions: []

@@ -1,0 +1,17 @@
+# MmsEngine / bindings.yaml — §4.4
+#
+# A PARTICIPANT artifact, versioned and deployed with MmsEngine. If this file
+# ever moves into shared engine configuration, a change to MMS's schema becomes
+# a change to orchestration — the exact leak WriteToDataHub(json, storedProcName)
+# created in the prior generation.
+resources:
+
+  LIGHT_SYSTEM_INVENTORY:
+    upsert: { method: POST, path: /light-systems,                   matchOn: EXT_ASSET_ID }
+    read:   { method: GET,  path: /light-systems/{EXT_ASSET_ID} }
+    delete: { method: DELETE, path: /light-systems/{EXT_ASSET_ID} }
+
+  LIGHT_UNIT_INVENTORY:
+    upsert: { method: POST, path: /light-units,                     matchOn: EXT_ASSET_ID }
+    read:   { method: GET,  path: /light-units/{EXT_ASSET_ID} }
+    delete: { method: DELETE, path: /light-units/{EXT_ASSET_ID} }
