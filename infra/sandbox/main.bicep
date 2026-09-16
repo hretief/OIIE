@@ -5,8 +5,8 @@ param environmentName string = 'demo'
 @description('Location for new resources. Defaults to the resource group.')
 param location string = resourceGroup().location
 
-@description('Existing Key Vault holding SQL passwords and ISBM tokens.')
-param keyVaultName string = 'mndot'
+@description('Optional existing Key Vault. Leave empty unless secrets are genuinely held there -- the sandbox reads every value it needs from app settings, and a vault name that no longer resolves aborts startup before the host is built.')
+param keyVaultName string = ''
 
 @description('Existing storage account for BOD payload bodies.')
 param storageAccountName string
@@ -143,13 +143,21 @@ var sharedAppSettings = [
   { name: 'Sandbox__PersonalitiesPath', value: 'PersonalityPacks' }
   { name: 'Sandbox__SchemasPath', value: 'Schemas' }
 
-  { name: 'KeyVault__Uri', value: 'https://${keyVaultName}.vault.azure.net/' }
-
   { name: 'Storage__BlobServiceUri', value: 'https://${storageAccountName}.blob.core.windows.net' }
   { name: 'Storage__PayloadContainer', value: 'sandbox-payloads' }
   { name: 'Storage__Prefix', value: environmentName }
 
   { name: 'Isbm__ApiKey', value: isbmApiKey }
+]
+
+// Emitted only when a vault is actually configured. The app treats an empty
+// KeyVault:Uri as 'no vault' and skips the provider, but a name that does not
+// resolve is fatal: AddAzureKeyVault retries, throws, and the host aborts before
+// it is built, so the site returns 503 with the cause visible only in the
+// container log. That is what a deleted vault did to this app, and an
+// unconditional setting is what made a vault nobody read able to do it.
+var keyVaultAppSettings = empty(keyVaultName) ? [] : [
+  { name: 'KeyVault__Uri', value: 'https://${keyVaultName}.vault.azure.net/' }
 ]
 
 resource apiApp 'Microsoft.Web/sites@2023-12-01' = {
@@ -198,7 +206,7 @@ resource apiApp 'Microsoft.Web/sites@2023-12-01' = {
         supportCredentials: false
       }
 
-      appSettings: concat(sharedAppSettings, [
+      appSettings: concat(sharedAppSettings, keyVaultAppSettings, [
         // Without this the admin endpoints -- reset, channel deletion, schema drop --
         // are callable by anyone who finds the URL.
         { name: 'Sandbox__AdminKey', value: adminKey }
@@ -221,7 +229,7 @@ resource apiApp 'Microsoft.Web/sites@2023-12-01' = {
 // application bug rather than a missing role.
 // ---------------------------------------------------------------------------
 
-resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = if (!empty(keyVaultName)) {
   name: keyVaultName
 }
 
@@ -230,7 +238,7 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
 }
 
 // Key Vault Secrets User
-resource apiKeyVaultGrant 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignRoles) {
+resource apiKeyVaultGrant 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignRoles && !empty(keyVaultName)) {
   scope: keyVault
   name: guid(keyVault.id, apiApp.id, '4633458b-17de-408a-b874-0445c86b69e6')
   properties: {

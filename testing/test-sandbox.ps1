@@ -42,7 +42,7 @@ param(
 
     # Required against a deployed instance, where admin endpoints are gated.
     # Retrieve with:
-    #   az keyvault secret show --vault-name mndot --name sandbox-admin-key-demo --query value -o tsv
+    #   az webapp config appsettings list -g HilmarRetiefRG -n acme-api-sandbox-dev --query "[?name=='Sandbox__AdminKey'].value | [0]" -o tsv
     [string] $AdminKey,
 
     [switch] $Detailed

@@ -1,4 +1,6 @@
+using Azure;
 using Azure.Core;
+using Azure.Identity;
 using Azure.Storage.Blobs;
 using Oiie.Ccom;
 using Oiie.Isbm.Client;
@@ -35,9 +37,31 @@ public static class SandboxCoreRegistration
     {
         var keyVaultUri = configuration.Build()["KeyVault:Uri"];
 
-        if (!string.IsNullOrWhiteSpace(keyVaultUri))
+        if (string.IsNullOrWhiteSpace(keyVaultUri))
+        {
+            return configuration;
+        }
+
+        // Optional rather than required. Every value the sandbox reads is an app
+        // setting; the vault is a convenience, and nothing here fails for want of
+        // a secret that is only ever in one.
+        //
+        // Left unguarded this is fatal: AddAzureKeyVault resolves eagerly, and a
+        // vault that has been deleted or renamed makes the provider retry, throw,
+        // and abort the host before it is built. The site then returns 503 with
+        // the cause visible only in the container log. That is what a vault named
+        // outside the acme-* convention did here once it was swept up by a
+        // cleanup -- an optional configuration source took the whole app down.
+        try
         {
             configuration.AddAzureKeyVault(new Uri(keyVaultUri), credential);
+        }
+        catch (Exception ex) when (ex is RequestFailedException or AggregateException or AuthenticationFailedException)
+        {
+            // Console because configuration is built before logging exists.
+            Console.Error.WriteLine(
+                $"Key Vault '{keyVaultUri}' is configured but unreachable, so its secrets " +
+                $"are unavailable; continuing with app settings only. {ex.Message}");
         }
 
         return configuration;

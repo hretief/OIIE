@@ -2456,6 +2456,80 @@ not anyone reset anything. MMS's table-dispatch cache should carry a TTL alongsi
 that reason; the same applies to the other two engines' caches and is worth doing when one is next
 touched.
 
+---
+
+## DR-034 — An optional dependency must fail optionally, and a resource off-convention is a resource nobody owns
+
+**Status:** Decided
+**Date:** 2026-09-16
+
+**Context:** `acme-api-sandbox-dev` returned 503 on every request. The other fourteen deployed apps
+were healthy. The site reported `State: Running` throughout, because that is the control-plane state
+of the site, not of the process inside it. The container log showed the real cause:
+
+```
+Unhandled exception. System.AggregateException: Retry failed after 4 tries.
+  (Name or service not known (mndot.vault.azure.net:443))
+Container exited with exit code 134 during startup after 25.9s.
+```
+
+The `mndot` Key Vault had been soft-deleted the previous day during a resource cleanup.
+
+### Why the vault was deleted
+
+Every resource in this estate is named `acme-*`: `acme-api-*`, `acme-engn-*`, `acme-plan-*`,
+`acme-kv-isbm-dev`, `acmestoragedev01`. `mndot` predates that convention and was never renamed. A
+cleanup that worked by name pattern did not recognise it as part of the solution, and removed it.
+
+The naming convention is not cosmetic. It is the mechanism by which a resource is identifiable as
+belonging to the system, and a resource that does not follow it is invisible to every operation that
+works by pattern — including the ones that delete.
+
+### Why a deleted vault took down the whole app
+
+`AddSandboxKeyVault` resolved the vault eagerly during configuration building. The provider retried
+four times, threw, and aborted the host before it was built, so the failure happened before logging
+existed and surfaced only as a 503 and an exit code.
+
+The disproportion is the point: **the sandbox read no secret from that vault.** Every value it
+consumes — `Isbm:ApiKey`, `Providers__*__Key`, `Sandbox__AdminKey`, `Storage:BlobServiceUri` — is a
+plain app setting. An optional configuration source that nothing depended on was able to take down
+the entire application, because "optional" was expressed as "skip if the setting is empty" and not
+as "tolerate if the source is unreachable".
+
+### Decision
+
+**A dependency that is optional in principle must be optional in failure.** `AddSandboxKeyVault` now
+catches `RequestFailedException`, `AggregateException` and `AuthenticationFailedException`, writes a
+warning to stderr, and continues with app settings alone. A vault that is configured and reachable
+still contributes its secrets; a vault that has been deleted or renamed degrades to the behaviour of
+no vault at all.
+
+**Nothing defaults to a vault.** `infra/sandbox/main.bicep`, `deploy/sandbox/deploy.ps1` and
+`deploy/sandbox/provision.ps1` all defaulted `keyVaultName` to `mndot`, so the next deployment would
+have restored the 503 regardless of the runtime fix. All three now default to empty, the bicep emits
+`KeyVault__Uri` and the Key Vault Secrets User role assignment only when a vault is named, and
+`deploy.ps1` generates an admin key per deployment when none is given.
+
+**The vault stays deleted.** It is recoverable until 2026-12-14, and recovering it would have
+restored service in one command. It was not worth it: the dependency was vestigial, and restoring it
+would have preserved the coupling that caused the outage.
+
+### What this says about the estate
+
+`cir-kv-44p2f3n6` carries the same exposure — it does not match the convention, and the next cleanup
+by pattern will not recognise it either. Recorded in `docs/open-items.md` rather than fixed here,
+because renaming a vault means recreating it and re-granting access.
+
+### What made this expensive to find
+
+`State: Running` on all fifteen apps. The control plane reports whether the site is meant to be
+running, not whether the process inside it survived startup. Probing HTTP status distinguished the
+one broken app from the fourteen healthy ones in a single pass; the portal's own status column would
+not have. The general rule from DR-031 holds here too: **check the thing itself, not a cache or a
+proxy for it.**
+
+
 
 
 

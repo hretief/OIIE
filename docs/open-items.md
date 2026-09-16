@@ -6,42 +6,57 @@ yet done.
 
 ## ISBM and CIR cannot be deployed standalone, and still lean on `mndot`
 
-**Status:** not started. Raised 2026-09-12 after an audit for Azure resources not
-named `acme-*` turned up two separate problems that share one fix.
+**Status:** partially done. Raised 2026-09-12 after an audit for Azure resources not
+named `acme-*` turned up two separate problems that share one fix. **Updated
+2026-09-16: the sandbox half is done, because `mndot` was deleted and took the
+sandbox down with it — see DR-034.**
 
-Nothing is broken today. Both systems run, and the shared resources they borrow
-are real and working. This is about being able to stand either system up on its
-own — for a second environment, a clean subscription, or a hand-off to someone
-who does not have `HilmarRetiefRG`.
+The prediction in this item was right, and arrived sooner than the sequencing
+below assumed. `mndot` was soft-deleted during a cleanup on 2026-09-15. Because
+it does not match `acme-*`, a cleanup by name pattern did not recognise it as
+part of the solution. `acme-api-sandbox-dev` then returned 503 on every request:
+`AddSandboxKeyVault` resolved the vault eagerly, the provider retried four times
+and threw, and the host aborted before it was built (exit code 134).
 
-### The `mndot` resources
+### What has been fixed
 
-`mndot` is a Key Vault, a storage account and a Service Bus namespace left from
-an unrelated project. The sandbox took a dependency on them and never let go:
-
-- `infra/sandbox/main.bicep` defaults `keyVaultName` to `'mndot'`.
-- `deploy/sandbox/deploy.ps1` and `deploy/sandbox/provision.ps1` default
-  `-KeyVault` to `mndot`.
+- `AddSandboxKeyVault` now tolerates an unreachable vault instead of aborting the
+  host. An optional configuration source can no longer take the app down.
+- `infra/sandbox/main.bicep`, `deploy/sandbox/deploy.ps1` and
+  `deploy/sandbox/provision.ps1` default `keyVaultName`/`-KeyVault` to empty. The
+  bicep emits `KeyVault__Uri` and the Key Vault Secrets User grant only when a
+  vault is named; `deploy.ps1` generates an admin key per deployment when none is.
 - `Oiie.Sandbox.Api/appsettings.json` points `Storage__BlobServiceUri` at
-  `https://mndot.blob.core.windows.net`, and both `appsettings.Development.json`
-  and `SimHost/appsettings.Development.json` point `KeyVault__Uri` at
-  `https://mndot.vault.azure.net/`.
-- `tools/generate-bruno.ps1` and `testing/test-sandbox.ps1` read the sandbox
-  admin key from `--vault-name mndot`.
+  `acmestoragedev01`; `appsettings.Development.json` has an empty `KeyVault:Uri`.
+- `WorkflowOrchestration/src/api.ts` no longer tells the operator to fetch the
+  admin key from a vault that does not exist.
+- `deploy/sandbox/NAMING.md` records why there is no Key Vault in the estate.
 
-The defaults in shipped `appsettings.json` matter most: a fresh checkout reads
-secrets from a vault named after someone else's project, and nothing in the name
-says it belongs to this solution. `deploy/sandbox/deploy.ps1` already carries a
-comment noting that `mndotsandbox` "outlived its retirement", which is the same
-observation from the other side.
+The vault remains soft-deleted and recoverable until 2026-12-14. It was not
+recovered deliberately: the sandbox read no secret from it, so restoring it would
+have preserved the coupling that caused the outage.
 
-Also stale, and cheap to take at the same time: the `isbm` bicep header cites
-`mndotdev`, `mndotst` and `mndot-sql` in its example invocations, and
-`testing/test-sandbox.ps1` and `testing/test-isbm-roundtrip.ps1` still default
-`-IsbmApp`/`-CirApp` to the superseded `isbm-func-44p2f3n6dv7p4` and
-`cir-func-44p2f3n6` apps. `deploy/engines/deploy-engine.ps1` explicitly notes it
-targets `acme-api-isbm-dev` and *not* the older `isbm-func-*` app, so those test
-defaults point at the wrong thing.
+### What is still outstanding
+
+- `tools/generate-bruno.ps1` and `testing/test-sandbox.ps1` still read the admin
+  key from `--vault-name mndot`. These will fail until repointed.
+- `SimHost/appsettings.Development.json` may still carry the `mndot` vault URI.
+- The `isbm` bicep header still cites `mndotdev`, `mndotst` and `mndot-sql` in its
+  example invocations.
+- `testing/test-sandbox.ps1` and `testing/test-isbm-roundtrip.ps1` still default
+  `-IsbmApp`/`-CirApp` to the superseded `isbm-func-44p2f3n6dv7p4` and
+  `cir-func-44p2f3n6` apps. `deploy/engines/deploy-engine.ps1` explicitly notes it
+  targets `acme-api-isbm-dev` and *not* the older `isbm-func-*` app, so those test
+  defaults point at the wrong thing.
+- **`cir-kv-44p2f3n6` carries exactly the same exposure.** It does not match
+  `acme-*`, so the next cleanup by pattern will not recognise it either. Unlike
+  `mndot`, CIR may genuinely hold secrets there — check before assuming it is as
+  disposable as the sandbox's vault was. Verified live (not deleted), and no
+  deployed app setting or `@Microsoft.KeyVault(...)` reference points at it. Its
+  secret inventory is still unknown, so the open question is migrate-vs-retire,
+  not recovery. Note that a vault cannot be renamed: the name is its DNS
+  hostname and part of its resource ID, so moving to `acme-*` means create,
+  copy secrets, re-grant RBAC, retire.
 
 ### Neither system owns its own infrastructure
 
@@ -77,13 +92,18 @@ pair is stale once the rename settles.
 
 ### Sequencing
 
-Do the standalone work first and the renaming with it, then retire the `mndot`
-dependencies once the sandbox has its own vault and storage to point at.
-Retiring `mndot` first would just move the sandbox onto another borrowed
-resource. Note that `HilmarRetiefRG` is shared with unrelated work — the `hr-*`
-apps, `PingWebhook*`, `iTwinEventListener`, `mndot-vnet` and the auto-generated
+The original plan was to do the standalone work first and retire `mndot` after,
+on the grounds that retiring it first would just move the sandbox onto another
+borrowed resource. The deletion overtook that: the sandbox now depends on no
+vault at all, which is better than either option. The remaining work is the
+standalone deployment and the `acme-*` renaming for ISBM and CIR.
+
+Note that `HilmarRetiefRG` is shared with unrelated work — the `hr-*` apps,
+`PingWebhook*`, `iTwinEventListener`, `mndot-vnet` and the auto-generated
 `hilmarretiefrg****` storage accounts are not ours — so nothing here should be
 deleted on the assumption that everything in the group belongs to this solution.
+**The converse now also holds: a resource of ours that is not named `acme-*` will
+not be recognised as ours by anyone cleaning up by pattern.**
 
 ## Our TaxonomySet BODs diverge from the official MIMOSA schemas
 

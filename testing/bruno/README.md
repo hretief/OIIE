@@ -67,8 +67,8 @@ The sandbox is an App Service, not a Function App: its routes are not under
 `/api`, and it authenticates with a header set once on the collection:
 
 ```powershell
-az keyvault secret show --vault-name mndot --name sandbox-admin-key-dev `
-  --query value -o tsv
+az webapp config appsettings list -g HilmarRetiefRG -n acme-api-sandbox-dev `
+  --query "[?name=='Sandbox__AdminKey'].value | [0]" -o tsv
 ```
 
 ## What a generated request does and does not give you

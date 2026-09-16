@@ -262,7 +262,8 @@ async function unwrap<T>(response: Response): Promise<T> {
 let askForKey: () => string | null = () =>
   window.prompt(
     'This action needs the sandbox admin key.\n\n' +
-    'az keyvault secret show --vault-name mndot --name sandbox-admin-key-dev --query value -o tsv',
+    'It is the Sandbox__AdminKey app setting on the sandbox site, ' +
+    'or the value reported by the deploy script.',
   )
 
 export function setAdminKeyPrompt(prompt: () => string | null): void {

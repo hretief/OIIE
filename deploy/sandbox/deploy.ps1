@@ -52,7 +52,16 @@ param(
     [string]$StorageAccount = 'acmestoragedev01',
 
     [string]$ResourceGroup = 'HilmarRetiefRG',
-    [string]$KeyVault = 'mndot',
+
+    # Optional, and empty by default. The vault is used here only to persist the
+    # admin key between deployments; the deployed app reads none of its settings
+    # from it. The previous default named 'mndot', which predates the acme-*
+    # convention, so a cleanup by name pattern deleted it and every subsequent
+    # start of the sandbox aborted on a vault that no longer resolved.
+    #
+    # Leave empty to generate a fresh admin key per deployment. Pass a vault to
+    # keep the key stable across them.
+    [string]$KeyVault = '',
     [string]$SqlServer = 'acme-sql-server',
     [string]$SubscriptionId,
 
@@ -188,25 +197,39 @@ if ($SubscriptionId) {
 # workstation is fine; unprotected on a public URL is a destructive API anyone
 # can call. Reused across deployments so existing scripts keep working.
 $adminSecret = "sandbox-admin-key-$Environment"
-$adminKey = & az keyvault secret show --vault-name $KeyVault --name $adminSecret `
-    --query value -o tsv 2>$null
 
-if ($LASTEXITCODE -ne 0 -or -not $adminKey) {
+function New-AdminKey {
     $alphabet = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
     $bytes = [byte[]]::new(32)
     [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-    $adminKey = -join ($bytes | ForEach-Object { $alphabet[$_ % $alphabet.Length] })
+    -join ($bytes | ForEach-Object { $alphabet[$_ % $alphabet.Length] })
+}
 
-    Invoke-Az @(
-        'keyvault', 'secret', 'set',
-        '--vault-name', $KeyVault, '--name', $adminSecret, "--value=$adminKey", '--output', 'none'
-    ) -Because 'Storing the admin key'
-
-    Write-Host "  admin key created: $adminSecret"
+if ([string]::IsNullOrWhiteSpace($KeyVault)) {
+    # No vault, so the key cannot persist between deployments. Generated fresh
+    # and written to app settings by the template, which means any script
+    # holding the previous key must be updated -- the reason to pass -KeyVault.
+    $adminKey = New-AdminKey
+    Write-Host '  admin key generated (no -KeyVault given; it will change on each deploy)'
 }
 else {
-    $adminKey = ($adminKey | Select-Object -First 1).Trim()
-    Write-Host "  admin key reused: $adminSecret"
+    $adminKey = & az keyvault secret show --vault-name $KeyVault --name $adminSecret `
+        --query value -o tsv 2>$null
+
+    if ($LASTEXITCODE -ne 0 -or -not $adminKey) {
+        $adminKey = New-AdminKey
+
+        Invoke-Az @(
+            'keyvault', 'secret', 'set',
+            '--vault-name', $KeyVault, '--name', $adminSecret, "--value=$adminKey", '--output', 'none'
+        ) -Because 'Storing the admin key'
+
+        Write-Host "  admin key created: $adminSecret"
+    }
+    else {
+        $adminKey = ($adminKey | Select-Object -First 1).Trim()
+        Write-Host "  admin key reused: $adminSecret"
+    }
 }
 
 
@@ -659,8 +682,14 @@ if (-not $health.adminKeyRequired) {
 
 Write-Host ''
 Write-Host 'Next:'
-Write-Host "  `$key = az keyvault secret show --vault-name $KeyVault --name sandbox-admin-key-$Environment --query value -o tsv"
-Write-Host "  .\Testing\test-sandbox.ps1 -SandboxUrl $apiUrl -AdminKey `$key"
+
+if ([string]::IsNullOrWhiteSpace($KeyVault)) {
+    Write-Host "  .\Testing\test-sandbox.ps1 -SandboxUrl $apiUrl -AdminKey '$adminKey'"
+}
+else {
+    Write-Host "  `$key = az keyvault secret show --vault-name $KeyVault --name sandbox-admin-key-$Environment --query value -o tsv"
+    Write-Host "  .\Testing\test-sandbox.ps1 -SandboxUrl $apiUrl -AdminKey `$key"
+}
 Write-Host ''
 Write-Host 'A deployed app is addressable, so ISBM NotifyListener callbacks become'
 Write-Host 'testable for the first time — Isbm__ListenerBaseUrl is already set.'

@@ -35,14 +35,23 @@ Existing shared resources, referenced rather than created:
 |---|---|
 | Resource group | `HilmarRetiefRG` |
 | SQL server | `acme-sql-server.database.windows.net` |
-| Key Vault | `mndot` |
 | App Service plan | `acme-plan-{env}` |
 | Storage account | `acmestoragedev01` |
 
-The SQL server and Key Vault do not match `acme-*-dev`. Both are shared with
-resources outside this solution, and neither can be renamed in place, so they
-are deliberately out of scope. The SQL server is listed because the provider
-apps live on it; the sandbox itself never connects to it.
+The SQL server does not match `acme-*-dev`. It is shared with resources outside
+this solution and cannot be renamed in place, so it is deliberately out of
+scope. It is listed because the provider apps live on it; the sandbox itself
+never connects to it.
+
+There is no Key Vault in this list. There was one, named `mndot`, and its name
+is why it is gone: a cleanup by the `acme-*` pattern did not match it, deleted
+it, and every subsequent start of the sandbox aborted on a vault that no longer
+resolved. The app read no secret from it, so the dependency was never worth the
+failure. `-KeyVault` is now optional and empty by default.
+
+The lesson generalises: a resource that does not follow the convention is a
+resource the next cleanup will not recognise as ours. `acme-kv-isbm-dev` follows
+it; `cir-kv-44p2f3n6` does not, and carries the same exposure.
 
 ## Key Vault secrets
 

@@ -30,7 +30,11 @@ param(
 
     [string]$SubscriptionId,
     [string]$ResourceGroup = 'HilmarRetiefRG',
-    [string]$KeyVault = 'mndot',
+
+    # Optional. The sandbox reads every setting it needs from app settings, so a
+    # vault is only useful when a secret is genuinely held in one. Naming a vault
+    # that does not resolve is fatal at startup, not ignored.
+    [string]$KeyVault = '',
     [string]$StorageAccount,
 
     [switch]$SkipStorage
@@ -117,8 +121,15 @@ if (-not $SkipStorage) {
 Write-Host "`nDone.`n"
 Write-Host "Add to appsettings.Development.json:"
 Write-Host ""
+
+# The KeyVault line is emitted only when a vault was given. Suggesting one
+# unconditionally is how a stale vault name spreads into developer settings,
+# where it fails the same way it fails in Azure: the host aborts at startup.
+if (-not [string]::IsNullOrWhiteSpace($KeyVault)) {
+    Write-Host "  `"KeyVault`": { `"Uri`": `"https://$KeyVault.vault.azure.net/`" },"
+}
+
 Write-Host @"
-  "KeyVault": { "Uri": "https://$KeyVault.vault.azure.net/" },
   "Storage": { "Prefix": "$blobPrefix" },
   "Sandbox": { "Environment": "$Environment" }
 "@
