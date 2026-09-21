@@ -1,0 +1,246 @@
+@startuml Greenfield_Infrastructure_Bootstrap
+
+title Greenfield Infrastructure Bootstrap\nFacility iTwin → Project iTwin → First SyncSegments\nAutomated Channel and Subscription Provisioning
+
+skinparam backgroundColor white
+skinparam participant {
+    FontSize 11
+}
+skinparam sequenceGroupBorderColor #888888
+
+actor "Project\nManager" as PM
+participant "iTwin\nPlatform" as ITWIN
+participant "ENG\nEngine" as ENG_E
+participant "ISBM\nProvider" as ISBM
+participant "REG-LOCATION\nEngine" as REG_E
+participant "MMS\nEngine" as MMS_E
+participant "CMS\nEngine" as CMS_E
+
+note over ISBM
+  **Pre-existing at deployment time:**
+  /mndot/enterprise/sites/publication
+  /mndot/enterprise/cir/request
+end note
+
+== System Startup: Engines Subscribe to Enterprise Channels ==
+
+ENG_E -> ISBM: OpenPublicationSession\n  /mndot/enterprise/sites/publication
+ISBM --> ENG_E: pub-eng-sites
+
+REG_E -> ISBM: OpenSubscriptionSession\n  /mndot/enterprise/sites/publication\n  topics: ["oiie/ccom:SyncSites"]\n  listenerUrl: https://reg-engine/api
+ISBM --> REG_E: sub-reg-sites
+
+note over ENG_E, CMS_E
+  At this point only two enterprise channels exist.
+  No per-iTwin channels. No per-iTwin subscriptions.
+  MMS and CMS have nothing to subscribe to yet.
+end note
+
+== Step 1: Project Manager Creates Facility iTwin ==
+
+PM -> ITWIN: Create iTwin\n  class: Thing, subClass: Asset\n  type: Highway\n  name: "US Route 202"
+
+ITWIN -> ITWIN: Assign iTwinId:\n  **aaa-111-...**
+
+ITWIN -> ENG_E: iTwins.iTwinCreated.v1\n  iTwinId: aaa-111-...\n  class: Thing, subClass: Asset\n  parentId: (none)
+
+activate ENG_E
+ENG_E -> ITWIN: GET /iTwins/aaa-111-...
+ITWIN --> ENG_E: { type: "Highway",\n  displayName: "US Route 202", ... }
+
+ENG_E -> ENG_E: Compile SyncSites BOD\n  Site.UUID = aaa-111-...\n  Site.Type = "Highway"\n  ParentSite = (none)
+
+ENG_E -> ISBM: PostPublication (pub-eng-sites)\n  topic: oiie/ccom:SyncSites\n  body: SyncSites (facility)
+ISBM --> ENG_E: msg-001
+deactivate ENG_E
+
+ISBM -> REG_E: **webhook** /notifications/{sub-reg-sites}/msg-001
+activate REG_E
+
+REG_E -> ISBM: ReadPublication (sub-reg-sites)
+ISBM --> REG_E: SyncSites BOD (aaa-111-..., Thing/Asset)
+
+REG_E -> REG_E: Create Scope, Item, Serial,\nSystems Structure\n(see SyncSites Add workflow)
+
+group Bootstrap per-iTwin channels for facility aaa-111-...
+    REG_E -> ISBM: CreateChannel\n  /mndot/aaa-111-.../engineering/publication
+    REG_E -> ISBM: CreateChannel\n  /mndot/aaa-111-.../asset-config/publication
+    REG_E -> ISBM: CreateChannel\n  /mndot/aaa-111-.../maintenance/publication
+    REG_E -> ISBM: CreateChannel\n  /mndot/aaa-111-.../maintenance/request
+    REG_E -> ISBM: CreateChannel\n  /mndot/aaa-111-.../condition/publication
+end
+
+group Open subscriptions on new facility channels
+    REG_E -> ISBM: OpenSubscriptionSession\n  /mndot/aaa-111-.../engineering/publication\n  topics: ["oiie/ccom:SyncSegments"]\n  listenerUrl: https://reg-engine/api
+    ISBM --> REG_E: sub-reg-eng-facility
+end
+
+group Notify downstream engines: "new facility, subscribe now"
+    note over REG_E
+      REG-LOCATION Engine publishes a
+      SyncSites to asset-config so MMS
+      and CMS know to subscribe.
+    end note
+
+    REG_E -> ISBM: OpenPublicationSession\n  /mndot/aaa-111-.../asset-config/publication
+    ISBM --> REG_E: pub-reg-ac-facility
+
+    MMS_E -> ISBM: OpenSubscriptionSession\n  /mndot/aaa-111-.../asset-config/publication\n  topics: ["oiie/ccom:SyncSegments"]\n  listenerUrl: https://mms-engine/api
+    ISBM --> MMS_E: sub-mms-facility
+
+    CMS_E -> ISBM: OpenSubscriptionSession\n  /mndot/aaa-111-.../asset-config/publication\n  topics: ["oiie/ccom:SyncSegments"]\n  listenerUrl: https://cms-engine/api
+    ISBM --> CMS_E: sub-cms-facility
+end
+
+REG_E -> ISBM: RemovePublication (sub-reg-sites)
+deactivate REG_E
+
+note over ISBM
+  **Infrastructure after Step 1:**
+  Enterprise channels (pre-existing):
+    /mndot/enterprise/sites/publication
+    /mndot/enterprise/cir/request
+
+  Facility channels (just created):
+    /mndot/aaa-111-.../engineering/publication      ← REG-LOCATION subscribed
+    /mndot/aaa-111-.../asset-config/publication     ← MMS + CMS subscribed
+    /mndot/aaa-111-.../maintenance/publication
+    /mndot/aaa-111-.../maintenance/request
+    /mndot/aaa-111-.../condition/publication
+
+  No iModel exists yet. No segments flowing.
+  The facility is an empty shell with plumbing ready.
+end note
+
+|||
+
+== Step 2: Project Manager Creates Project iTwin (Under Facility) ==
+
+PM -> ITWIN: Create iTwin\n  class: Endeavor, subClass: Project\n  type: Highway\n  name: "Bridge 9340 Rehab"\n  parent: aaa-111-...
+
+ITWIN -> ITWIN: Assign iTwinId:\n  **bbb-222-...**
+
+ITWIN -> ENG_E: iTwins.iTwinCreated.v1\n  iTwinId: bbb-222-...\n  class: Endeavor, subClass: Project\n  parentId: **aaa-111-...**
+
+activate ENG_E
+ENG_E -> ITWIN: GET /iTwins/bbb-222-...
+ITWIN --> ENG_E: { type: "Highway",\n  displayName: "Bridge 9340 Rehab", ... }
+
+ENG_E -> ENG_E: Compile SyncSites BOD\n  Site.UUID = bbb-222-...\n  Site.Type = "Highway"\n  Parent context: aaa-111-...\n  (carried in ApplicationArea\n   or CIR ParentEntityID)
+
+ENG_E -> ISBM: PostPublication (pub-eng-sites)\n  topic: oiie/ccom:SyncSites\n  body: SyncSites (project, parent=aaa-111-...)
+ISBM --> ENG_E: msg-002
+deactivate ENG_E
+
+ISBM -> REG_E: **webhook** /notifications/{sub-reg-sites}/msg-002
+activate REG_E
+
+REG_E -> ISBM: ReadPublication (sub-reg-sites)
+ISBM --> REG_E: SyncSites BOD (bbb-222-..., Endeavor/Project, parent=aaa-111-...)
+
+REG_E -> REG_E: Create project Scope\n  (child of facility scope aaa-111-...)\nCreate Item, Serial,\nSystems Structure
+
+group Bootstrap per-iTwin channels for project bbb-222-...
+    REG_E -> ISBM: CreateChannel\n  /mndot/bbb-222-.../engineering/publication
+    REG_E -> ISBM: CreateChannel\n  /mndot/bbb-222-.../construction/publication
+end
+
+group Open subscriptions on new project channels
+    REG_E -> ISBM: OpenSubscriptionSession\n  /mndot/bbb-222-.../engineering/publication\n  topics: ["oiie/ccom:SyncSegments"]\n  listenerUrl: https://reg-engine/api
+    ISBM --> REG_E: sub-reg-eng-project
+
+    note over REG_E
+      REG-LOCATION Engine now subscribes to
+      engineering channels on BOTH iTwins:
+        sub-reg-eng-facility (aaa-111-...)
+        sub-reg-eng-project  (bbb-222-...)
+      It will process segments from each
+      into the correct scope.
+    end note
+end
+
+REG_E -> ISBM: RemovePublication (sub-reg-sites)
+deactivate REG_E
+
+note over ISBM
+  **Infrastructure after Step 2:**
+  Enterprise channels:
+    /mndot/enterprise/sites/publication
+    /mndot/enterprise/cir/request
+
+  Facility channels (aaa-111-...):
+    /mndot/aaa-111-.../engineering/publication      ← REG-LOCATION subscribed
+    /mndot/aaa-111-.../asset-config/publication     ← MMS + CMS subscribed
+    /mndot/aaa-111-.../maintenance/publication
+    /mndot/aaa-111-.../maintenance/request
+    /mndot/aaa-111-.../condition/publication
+
+  Project channels (bbb-222-...):
+    /mndot/bbb-222-.../engineering/publication      ← REG-LOCATION subscribed
+    /mndot/bbb-222-.../construction/publication
+
+  Still no iModel. Still no segments.
+  Both iTwins have their plumbing. REG-LOCATION
+  Engine is listening on both engineering channels.
+end note
+
+|||
+
+== Step 3: Designer Creates iModel and Publishes First Segments ==
+
+PM -> ITWIN: Create iModel in project bbb-222-...\n  name: "Bridge 9340 Structural"
+
+note over ITWIN
+  Designer opens iModel in MicroStation,
+  creates engineering elements,
+  commits a Named Version.
+end note
+
+ITWIN -> ENG_E: Named Version event\n  iModelId: im-9340-struct\n  iTwinId: bbb-222-...
+
+activate ENG_E
+ENG_E -> ENG_E: Query iModel for segments\nin this Named Version:\n  TIC-106 (FedGuid: 550e8400-...)\n  FV-201  (FedGuid: 661f9511-...)
+
+ENG_E -> ENG_E: Compile SyncSegments BOD
+
+ENG_E -> ISBM: OpenPublicationSession\n  /mndot/bbb-222-.../engineering/publication
+ISBM --> ENG_E: pub-eng-project
+
+ENG_E -> ISBM: PostPublication (pub-eng-project)\n  topic: oiie/ccom:SyncSegments\n  body: <SyncSegments>\n    TIC-106 (FedGuid: 550e8400-...)\n    FV-201  (FedGuid: 661f9511-...)\n  </SyncSegments>
+ISBM --> ENG_E: msg-003
+deactivate ENG_E
+
+ISBM -> REG_E: **webhook** /notifications/{sub-reg-eng-project}/msg-003
+activate REG_E
+
+REG_E -> ISBM: ReadPublication (sub-reg-eng-project)
+ISBM --> REG_E: SyncSegments BOD
+
+REG_E -> REG_E: Persist segments in\n**project scope** (bbb-222-...)\n  TIC-106 → pending approval\n  FV-201  → pending approval
+
+REG_E -> ISBM: RemovePublication (sub-reg-eng-project)
+deactivate REG_E
+
+note over PM, CMS_E
+  **Infrastructure complete. First segments received.**
+
+  The entire chain — from "PM creates facility" to
+  "first engineering segments land in REG-LOCATION" —
+  required no human intervention beyond creating
+  the iTwins and designing in MicroStation.
+
+  Everything else was automatic:
+  ✓ SyncSites events detected and processed
+  ✓ Channels created for both iTwins
+  ✓ Subscriptions opened dynamically
+  ✓ SyncSegments published and received
+  ✓ Segments persisted in the correct project scope
+
+  Segments sit pending approval.
+  When a human approves them and commissioning occurs,
+  they will flow from the project scope to the facility
+  scope and out to MMS and CMS via
+  /mndot/aaa-111-.../asset-config/publication
+end note
+
+@enduml

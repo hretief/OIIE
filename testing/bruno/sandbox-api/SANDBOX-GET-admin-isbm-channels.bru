@@ -10,6 +10,10 @@ get {
   auth: none
 }
 
+headers {
+  x-sandbox-admin-key: {{adminKey}}
+}
+
 docs {
   GET /admin/isbm/channels
   Source: SandboxAdminEndpoints.cs
