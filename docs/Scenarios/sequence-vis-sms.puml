@@ -1,0 +1,172 @@
+@startuml motorway-lane-addition-e2e
+' =============================================================================
+'  END-TO-END WORKFLOW — NEW COMPONENTS IN A TRANSPORTATION PROJECT
+'  Use case: adding a lane to a motorway section
+'  Merges: OIIE event-based interoperability (ISO 18101 / MIMOSA CCOM, ISBM)
+'          + worksite machine automation (ISO/TS 15143-4 SMS <-> VIS)
+'  Identifiers shown are illustrative.
+' =============================================================================
+
+!theme plain
+skinparam defaultFontName "Segoe UI"
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam roundCorner 8
+skinparam maxMessageSize 260
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam ParticipantPadding 12
+skinparam BoxPadding 8
+skinparam sequenceGroupBorderColor #7A7A7A
+skinparam sequenceDividerBackgroundColor #1F3A5F
+skinparam sequenceDividerFontColor #FFFFFF
+skinparam sequenceDividerFontStyle bold
+skinparam sequenceDividerFontSize 13
+skinparam noteBorderColor #B0B0B0
+skinparam noteBackgroundColor #FFFDF2
+skinparam ArrowColor #333333
+skinparam LifeLineBorderColor #9A9A9A
+
+title <size:20><b>END-TO-END WORKFLOW: NEW COMPONENTS IN A TRANSPORTATION PROJECT</b></size>\n<size:14>Motorway lane addition — from design change to identified, built and in-service assets</size>\n<size:11><i>OIIE event-based interoperability (ISO 18101 · MIMOSA CCOM · ISBM)  +  worksite automation (ISO/TS 15143-4 SMS ↔ VIS)</i></size>
+
+autonumber "<b>00"
+
+box "① DESIGN & ENGINEERING" #E8F0FB
+  actor       "Road\nDesigner"                     as DES
+  participant "Design Authoring\n/ Design Model\n(CDE, ISO 19650)" as CAD
+  participant "Engineering\nData Provider\n(baseline + events)" as ENG
+end box
+
+box "② OIIE INTEROPERABILITY BACKBONE" #EAF6EC
+  participant "Tag Register\n(identity authority\nREG-LOCATION)"   as TAG
+  queue       "ISBM\nService Bus\n(pub/sub channels)"              as ISBM
+  participant "Asset Register\n/ EAM (O&M)\nREG-ASSET"            as EAM
+end box
+
+box "③ WORKSITE AUTOMATION (ISO/TS 15143-4)" #FDF1E3
+  participant "SMS\nSite Management\nSystem"                       as SMS
+  participant "VIS\nVendor Integration\nSystem"                    as VIS
+  participant "Machines &\nField Crews\n(grade control, paving,\ninstallers)" as MCH
+end box
+
+box "④ OPERATIONS" #F3ECF9
+  participant "Traffic Mgmt\n/ ITS Control"                        as ITS
+end box
+
+legend top right
+  <b>Identity lifecycle of each new component</b>
+  |= Stage |= Status in Tag Register |
+  | Phase 2 | <color:#8A6D00>RESERVED</color> |
+  | Phase 3 | <color:#1F5FA8>DESIGN-RELEASED</color> |
+  | Phase 5 | <color:#B05A00>UNDER CONSTRUCTION → AS-BUILT</color> |
+  | Phase 6 | <color:#2E7D32>IN SERVICE</color> |
+  ----
+  <b>New components in this change</b>
+  • 1 road section (new <b>segmentId</b>, supersedes old section)
+  • n street lights (functional positions)
+  • m traffic lights / signal heads (functional positions)
+  ----
+  <i>Tag = identity of the functional position (CCOM Segment).</i>
+  <i>Physical units get their own Asset UUID at installation.</i>
+endlegend
+
+' -----------------------------------------------------------------------------
+== PHASE 1 · DESIGN CHANGE — "Add lane 3 to motorway section" ==
+' -----------------------------------------------------------------------------
+DES -> CAD : Model additional lane on\nexisting road section (WIP)
+DES -> CAD : Place new street lights and\ntraffic lights along new lane
+CAD -> ENG : Changed / new design elements\n(geometry + attributes, no identity yet)
+note right of ENG
+  Every <b>new</b> functional object must obtain its
+  identity from the Tag Register — the design tool
+  never invents IDs locally.
+end note
+
+' -----------------------------------------------------------------------------
+== PHASE 2 · IDENTITY ASSIGNMENT — request IDs from the Tag Register ==
+' -----------------------------------------------------------------------------
+group #FFF7D6 Road section — new segmentId
+  ENG -> TAG : RequestIdentity(class = RoadSection,\nparent = Motorway N1, rule = segment naming)
+  TAG -> TAG : Validate naming rule,\ncheck uniqueness, allocate
+  TAG --> ENG : segmentId = <b>N1-RS-0427-B</b>\nUUID = 7f3c…e1  · status <color:#8A6D00>RESERVED</color>
+  ENG -> TAG : Link: N1-RS-0427-B <b>supersedes</b> N1-RS-0427-A
+end
+
+group #FFF7D6 Street lights & traffic lights — tags per position
+  loop for each new light position in the design
+    ENG -> TAG : RequestIdentity(class = StreetLight | TrafficSignal,\nparent = N1-RS-0427-B, chainage)
+    alt tag already reserved for this position (re-issue)
+      TAG --> ENG : return existing tag + UUID
+    else new position
+      TAG --> ENG : tag = <b>N1-RS-0427-B.SL-014</b> / <b>.TS-003</b>\nUUID · status <color:#8A6D00>RESERVED</color>
+    end
+  end
+end
+ENG -> CAD : Write identities back onto design elements
+DES -> CAD : Check & approve design (status S → A)
+
+' -----------------------------------------------------------------------------
+== PHASE 3 · DESIGN RELEASE — baseline triggers OIIE events ==
+' -----------------------------------------------------------------------------
+DES -> ENG : Declare baseline\n(Named Version "IFC-Lane3-Rev A")
+ENG -> ENG : Collect all elements changed\nsince previous baseline
+ENG -> TAG : Set status <color:#1F5FA8>DESIGN-RELEASED</color>\nfor all tags in baseline
+ENG -> ISBM : Publish <b>SyncSegments</b> BOD (CCOM)\nroad section + light positions,\nsupersession link, design attributes
+ENG -> ISBM : Publish <b>SyncRequirements</b> BOD\n(lighting class, signal specs)
+
+par OIIE subscribers receive the same event
+  ISBM -> EAM : SyncSegments / SyncRequirements
+  EAM -> EAM : Create planned functional\nlocations under N1 hierarchy
+else
+  ISBM -> SMS : SyncSegments + design model reference
+  note right of SMS
+    <b>Bridging gap:</b> ISO/TS 15143-4 leaves
+    design-software → SMS transfer out of scope.
+    The OIIE event fills it — SMS receives an
+    identified, baselined design, not a loose file.
+  end note
+end
+
+' -----------------------------------------------------------------------------
+== PHASE 4 · WORKSITE PREPARATION — SMS ⇄ VIS (ISO/TS 15143-4 project data) ==
+' -----------------------------------------------------------------------------
+SMS -> SMS : Build common design model\n(surfaces, alignments, lane 3)\nkeyed by segmentId N1-RS-0427-B
+SMS -> VIS : PUT project data / task execution\n(server-to-server API)
+VIS -> MCH : Push design + tasks to machine\ncontrol (vendor-specific, out of 15143-4 scope)
+
+' -----------------------------------------------------------------------------
+== PHASE 5 · CONSTRUCTION & INSTALLATION — as-built flows back with the same IDs ==
+' -----------------------------------------------------------------------------
+group #FDF1E3 Earthworks, grading, paving — new lane
+  MCH -> VIS : Machine positions, passes,\ncompaction, layer surfaces
+  VIS -> SMS : Production + as-built data\n(ISO/TS 15143-4 API)
+  SMS -> SMS : Compare as-built vs design\nper segmentId (tolerance check)
+  SMS -> ISBM : Publish <b>SyncSegments</b> update\n(N1-RS-0427-B: progress, as-built geometry)
+  ISBM -> TAG : Status <color:#B05A00>UNDER CONSTRUCTION → AS-BUILT</color>
+end
+
+group #FDF1E3 Street lights & traffic lights — physical units installed on tagged positions
+  loop for each installed unit
+    MCH -> SMS : Installed: serial no., make/model,\nat tag N1-RS-0427-B.SL-014
+    SMS -> ISBM : Publish <b>SyncAssets</b> (new Asset UUID)\n+ installation event: Asset → Segment(tag)
+    ISBM -> EAM : SyncAssets + install event
+    EAM -> EAM : Register physical asset,\ninstall on functional location
+  end
+end
+
+' -----------------------------------------------------------------------------
+== PHASE 6 · HANDOVER & OPERATION — identified assets go live ==
+' -----------------------------------------------------------------------------
+ENG -> ENG : As-built baseline\n(Named Version "AB-Lane3")
+ENG -> ISBM : Publish <b>SyncSegments</b> (as-built, final)
+ISBM -> EAM : Handover: segments + assets
+EAM -> TAG : Commission → status <color:#2E7D32>IN SERVICE</color>\nretire superseded N1-RS-0427-A
+ISBM -> ITS : Traffic lights TS-xxx and lane 3\navailable for control
+ITS -> ITS : Commission signal plans,\nopen lane to traffic
+
+note across
+  <b>One identity, end to end:</b>  segmentId <b>N1-RS-0427-B</b> and light tags <b>SL-0xx / TS-0xx</b> are issued once by the Tag Register (Phase 2),
+  travel unchanged through design baseline (3), worksite automation (4–5) and handover (6) — every system references the same identity, carried by OIIE events over ISBM.
+end note
+
+@enduml
