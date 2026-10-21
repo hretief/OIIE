@@ -302,6 +302,26 @@ Queries are POST because their inputs are five-part composite keys and regex
 filters. The spec's own `SourceID` examples contain spaces and `#`, so nothing
 composite goes in a path.
 
+### REST-only destination-category equivalence
+
+`POST /api/equivalent-entries` accepts optional `destinationCategoryId` and
+`destinationCategorySourceId` fields on each request. Both must be non-empty
+when either is supplied (otherwise HTTP 400). Without them, insertion uses the
+anchor category, preserving standard ws-CIR behavior. With them, insertion uses
+the destination category in the **same registry**. A missing destination is
+created only if `AllowNewCategories` is enabled; the anchor must already exist.
+Lookup, CIRID merge, optional category creation and insertion share one transaction.
+An existing anchor CIRID always wins, including when the new entry supplies a
+different CIRID. A duplicate native key still returns HTTP 409, not automatic
+idempotent success; clients must verify the existing identity.
+
+MMS uses this to link a `FunctionalLocation/REG-LOCATION` anchor to an
+`ASSET/MMS` entry without changing either participant's category convention.
+The anonymous health response advertises `destinationCategoryEquivalence=true`
+so clients can detect older servers before sending fields they would ignore.
+The ws-CIR BOD XML schema and reader are unchanged; this extension is REST-only.
+See [equivalent-entries.http](../../CirProvider/equivalent-entries.http).
+
 ---
 
 ## Design decisions

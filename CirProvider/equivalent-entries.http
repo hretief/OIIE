@@ -1,0 +1,61 @@
+@baseUrl = http://localhost:7072/api
+@functionKey =
+
+### Check extension support before sending destination fields
+GET {{baseUrl}}/health
+
+### Cross-category alias: the REG-LOCATION anchor must already exist
+POST {{baseUrl}}/equivalent-entries
+x-functions-key: {{functionKey}}
+Content-Type: application/json
+
+[
+  {
+    "registryId": "acme",
+    "categoryId": "FunctionalLocation",
+    "categorySourceId": "REG-LOCATION",
+    "existingIdInSource": "7",
+    "existingSourceId": "REG-LOCATION",
+    "destinationCategoryId": "ASSET",
+    "destinationCategorySourceId": "MMS",
+    "entry": {
+      "idInSource": "101",
+      "sourceId": "MMS",
+      "cirid": "01a15da2-874c-7a25-8205-3763f5796e75",
+      "name": "WW01"
+    }
+  }
+]
+
+### Legacy same-category behavior: omit both destination fields
+POST {{baseUrl}}/equivalent-entries
+x-functions-key: {{functionKey}}
+Content-Type: application/json
+
+[
+  {
+    "registryId": "acme",
+    "categoryId": "FunctionalLocation",
+    "categorySourceId": "REG-LOCATION",
+    "existingIdInSource": "7",
+    "existingSourceId": "REG-LOCATION",
+    "entry": { "idInSource": "example-alias", "sourceId": "EXAMPLE" }
+  }
+]
+
+### Invalid partial destination (HTTP 400)
+POST {{baseUrl}}/equivalent-entries
+x-functions-key: {{functionKey}}
+Content-Type: application/json
+
+[
+  {
+    "registryId": "acme",
+    "categoryId": "FunctionalLocation",
+    "categorySourceId": "REG-LOCATION",
+    "existingIdInSource": "7",
+    "existingSourceId": "REG-LOCATION",
+    "destinationCategoryId": "ASSET",
+    "entry": { "idInSource": "101", "sourceId": "MMS" }
+  }
+]

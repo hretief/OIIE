@@ -130,6 +130,13 @@ public sealed class EngEngineClient(
         Trimmed(configuration["Sandbox:MmsProviderBaseUrl"])
         ?? Trimmed(configuration["Providers:Mms:BaseUrl"]);
 
+    private readonly string? _mmsEngineBaseUrl =
+        Trimmed(configuration["Sandbox:MmsEngineBaseUrl"]);
+
+    private readonly string? _mmsEngineKey =
+        Trimmed(configuration["Sandbox:MmsEngineKey"])
+        ?? Trimmed(configuration["Sandbox:EngFunctionsKey"]);
+
     private readonly string? _cmsBaseUrl =
         Trimmed(configuration["Sandbox:CmsProviderBaseUrl"])
         ?? Trimmed(configuration["Providers:Cms:BaseUrl"]);
@@ -270,6 +277,7 @@ public sealed class EngEngineClient(
             ("REG-LOCATION provider", _regLocationBaseUrl is null ? null : $"{_regLocationBaseUrl}/reglocation/reset", _regLocationKey, "Sandbox:RegLocationProviderBaseUrl or Providers:RegLocation:BaseUrl"),
             ("REG-LOCATION engine", _regLocationEngineBaseUrl is null ? null : $"{_regLocationEngineBaseUrl}/engine/reset", _regLocationEngineKey, "Sandbox:RegLocationEngineBaseUrl"),
             ("MMS provider", _mmsBaseUrl is null ? null : $"{_mmsBaseUrl}/mms/reset", _mmsKey, "Sandbox:MmsProviderBaseUrl or Providers:Mms:BaseUrl"),
+            ("MMS engine", _mmsEngineBaseUrl is null ? null : $"{_mmsEngineBaseUrl}/engine/reset", _mmsEngineKey, "Sandbox:MmsEngineBaseUrl"),
             ("CMS provider", _cmsBaseUrl is null ? null : $"{_cmsBaseUrl}/cms/reset", _cmsKey, "Sandbox:CmsProviderBaseUrl or Providers:Cms:BaseUrl"),
         };
 

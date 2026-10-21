@@ -81,9 +81,24 @@ public sealed class SiteIngestionService(
     /// than competing for them.
     /// </summary>
     private string? _sessionId;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+
+    public async Task ResetAsync(CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct);
+        try { _sessionId = null; }
+        finally { _gate.Release(); }
+    }
 
 
     public async Task<SiteIngestionReport> DrainAsync(CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct);
+        try { return await DrainCoreAsync(ct); }
+        finally { _gate.Release(); }
+    }
+
+    private async Task<SiteIngestionReport> DrainCoreAsync(CancellationToken ct)
     {
         var report = new SiteIngestionReport();
 

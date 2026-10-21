@@ -104,5 +104,8 @@ builder.Services.AddSingleton<IncomingSiteMapper>();
 // and the broker's record of what this consumer has already read would be
 // discarded along with it.
 builder.Services.AddSingleton<SiteIngestionService>();
+builder.Services.AddSingleton<IncomingSegmentMapper>();
+builder.Services.AddSingleton<SegmentIdentityService>();
+builder.Services.AddSingleton<SegmentIngestionService>();
 
 builder.Build().Run();

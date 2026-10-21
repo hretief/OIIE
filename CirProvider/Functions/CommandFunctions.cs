@@ -32,6 +32,7 @@ public sealed class CommandFunctions(ICirStore store, ILogger<CommandFunctions> 
             status = sql ? "healthy" : "degraded",
             spec = "ws-CIR 1.0",
             binding = "REST",
+            destinationCategoryEquivalence = true,
             sql,
             error,
             utc = DateTimeOffset.UtcNow
@@ -61,7 +62,7 @@ public sealed class CommandFunctions(ICirStore store, ILogger<CommandFunctions> 
         return new NoContentResult();
     }
 
-    /// <summary>ws-CIR §3.1.2 CreateEquivalentEntries.</summary>
+    /// <summary>ws-CIR §3.1.2 CreateEquivalentEntries, with optional REST destination-category fields.</summary>
     [Function("CreateEquivalentEntries")]
     public async Task<IActionResult> CreateEquivalentEntries(
         [HttpTrigger(AuthorizationLevel.Function, "post", Route = "equivalent-entries")] HttpRequest req,

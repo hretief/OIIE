@@ -33,6 +33,9 @@ internal sealed class FakeIsbmBroker : IIsbmClient
     /// <summary>Topics each publication was posted under, for assertions.</summary>
     public List<IReadOnlyList<string>> PostedTopics { get; } = [];
     public List<IReadOnlyList<string>> SubscribedTopics { get; } = [];
+    public List<string?> SubscriberIds { get; } = [];
+    public List<string> SubscriptionSessions { get; } = [];
+    public bool FailNextSubscriptionRead { get; set; }
     public string? FailPublicationChannel { get; set; }
 
     public IReadOnlyList<IsbmMessage> MessagesOn(string channelUri) =>
@@ -75,8 +78,10 @@ internal sealed class FakeIsbmBroker : IIsbmClient
     {
         SubscriptionChannels.Add(channelUri);
         SubscribedTopics.Add(topics);
+        SubscriberIds.Add(subscriberId);
 
         var sessionId = $"sub-{Guid.NewGuid():N}";
+        SubscriptionSessions.Add(sessionId);
         _sessionChannels[sessionId] = channelUri;
 
         return Task.FromResult(sessionId);
@@ -84,6 +89,11 @@ internal sealed class FakeIsbmBroker : IIsbmClient
 
     public Task<IsbmMessage?> ReadPublicationAsync(string sessionId, CancellationToken ct = default)
     {
+        if (FailNextSubscriptionRead)
+        {
+            FailNextSubscriptionRead = false;
+            throw new IsbmException("Subscription expired.", System.Net.HttpStatusCode.Gone, "Session");
+        }
         var channelUri = _sessionChannels[sessionId];
 
         // Head of the queue without removing it, matching the real broker: the

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace MmsEngine.Infrastructure.Cir;
 
@@ -24,7 +25,8 @@ public sealed record CirEntry(
     string? SourceOwnerId,
     string? Name,
     CirLocalizedText? Description,
-    IReadOnlyList<CirProperty> Properties);
+    IReadOnlyList<CirProperty> Properties,
+    bool? Inactive = null);
 
 public sealed record CirCategory(
     string Id,
@@ -38,6 +40,22 @@ public sealed record CirRegistry(
     IReadOnlyList<CirCategory> Categories);
 
 public sealed record CreateRegistryRequest(IReadOnlyList<CirRegistry> Registry, bool CreateCirid);
+
+/// <summary>An active entry together with the category that qualifies its native key.</summary>
+public sealed record LocatedCirEntry(string CategoryId, string CategorySourceId, CirEntry Entry);
+
+/// <summary>A cross-category REST equivalence assertion anchored on an existing entry.</summary>
+public sealed record EquivalentEntryRequest(
+    string ExistingIdInSource,
+    string ExistingSourceId,
+    string RegistryId,
+    string CategoryId,
+    string CategorySourceId,
+    CirEntry Entry,
+    string DestinationCategoryId,
+    string DestinationCategorySourceId);
+
+internal sealed record CirQueryResponse(IReadOnlyList<CirRegistry>? Registry);
 
 /// <summary>
 /// The shape CIR answers GetEntriesByCIRID with: a registry graph wrapped in a
@@ -74,11 +92,111 @@ public interface ICirClient
     /// instead of creating a second one.
     /// </summary>
     Task<string?> FindIdInSourceAsync(Guid cirid, string sourceId, CancellationToken ct);
+
+    /// <summary>Finds active entries using an exact registry/category and optional entry identifiers.</summary>
+    Task<IReadOnlyList<LocatedCirEntry>> FindEntriesAsync(
+        string registryId, string categoryId, Guid? cirid, string? sourceId,
+        string? idInSource, CancellationToken ct);
+
+    /// <summary>Creates one equivalent entry; a conflicting registration is an error.</summary>
+    Task CreateEquivalentEntryAsync(EquivalentEntryRequest request, CancellationToken ct);
+
+    /// <summary>Registers one class mapping, tolerating only an identical existing identity.</summary>
+    Task EnsureEntryAsync(string registryId, string categoryId, string categorySourceId,
+        CirEntry entry, CancellationToken ct);
 }
 
 public sealed class CirRestClient(HttpClient http) : ICirClient
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    public async Task<IReadOnlyList<LocatedCirEntry>> FindEntriesAsync(
+        string registryId, string categoryId, Guid? cirid, string? sourceId,
+        string? idInSource, CancellationToken ct)
+    {
+        var filter = new
+        {
+            registryFilter = new { id = Regex.Escape(registryId) },
+            categoryFilter = new { id = Regex.Escape(categoryId) },
+            entryFilter = new
+            {
+                cirid,
+                sourceId = sourceId is null ? null : Regex.Escape(sourceId),
+                idInSource = idInSource is null ? null : Regex.Escape(idInSource),
+                inactive = false
+            }
+        };
+        using var response = await http.PostAsJsonAsync(
+            "queries/registry", new { filter = new[] { filter } }, Json, ct);
+        await RequireSuccessAsync(response, "querying qualified entries", ct);
+        var result = await response.Content.ReadFromJsonAsync<CirQueryResponse>(Json, ct);
+        if (result?.Registry is null)
+            throw new CirClientException("CIR returned an invalid registry query response.");
+
+        return result.Registry.Where(r => r.Id == registryId)
+            .SelectMany(r => r.Categories)
+            .Where(c => c.Id == categoryId)
+            .SelectMany(c => c.Entries
+                .Where(e => e.Inactive != true
+                    && (cirid is null || e.Cirid == cirid)
+                    && (sourceId is null || e.SourceId == sourceId)
+                    && (idInSource is null || e.IdInSource == idInSource))
+                .Select(e => new LocatedCirEntry(c.Id, c.SourceId, e)))
+            .ToArray();
+    }
+
+    public async Task EnsureEntryAsync(string registryId, string categoryId,
+        string categorySourceId, CirEntry entry, CancellationToken ct)
+    {
+        var request = new CreateRegistryRequest(
+            [new(registryId, [], [new(categoryId, categorySourceId, [], [entry])])], false);
+        using var response = await http.PostAsJsonAsync("registries", request, Json, ct);
+        if (response.StatusCode != HttpStatusCode.Conflict)
+        {
+            await RequireSuccessAsync(response, "registering a class mapping", ct);
+            return;
+        }
+
+        var existing = await FindEntriesAsync(registryId, categoryId, null,
+            entry.SourceId, entry.IdInSource, ct);
+        if (existing.Count != 1 || existing[0].CategorySourceId != categorySourceId
+            || existing[0].Entry.Cirid != entry.Cirid)
+        {
+            throw new CirClientException(
+                $"CIR has a conflicting mapping for {categoryId}/{entry.SourceId}/{entry.IdInSource}.");
+        }
+    }
+
+    public async Task CreateEquivalentEntryAsync(EquivalentEntryRequest request, CancellationToken ct)
+    {
+        var health = await http.GetFromJsonAsync<JsonElement>("health", Json, ct);
+        if (!health.TryGetProperty("destinationCategoryEquivalence", out var supported)
+            || supported.ValueKind != JsonValueKind.True)
+        {
+            throw new CirClientException(
+                "CIR must be upgraded to support destination-category equivalence before MMS write-back.");
+        }
+
+        using var response = await http.PostAsJsonAsync("equivalent-entries", new[] { request }, Json, ct);
+        if (response.StatusCode == HttpStatusCode.Conflict)
+        {
+            var existing = await FindEntriesAsync(request.RegistryId, request.DestinationCategoryId,
+                null, request.Entry.SourceId, request.Entry.IdInSource, ct);
+            if (existing.Count == 1
+                && existing[0].CategorySourceId == request.DestinationCategorySourceId
+                && existing[0].Entry.Cirid == request.Entry.Cirid)
+                return;
+        }
+        await RequireSuccessAsync(response, "creating an equivalent entry", ct);
+    }
+
+    private static async Task RequireSuccessAsync(
+        HttpResponseMessage response, string operation, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode) return;
+        var body = await response.Content.ReadAsStringAsync(ct);
+        throw new CirClientException($"CIR returned {(int)response.StatusCode} {operation}: {body}");
+    }
 
     public async Task<int> RegisterEntriesAsync(CreateRegistryRequest request, CancellationToken ct)
     {

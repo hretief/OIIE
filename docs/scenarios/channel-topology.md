@@ -71,6 +71,10 @@ REG-LOCATION's approval publisher currently derives its two destinations from
 `RegLocationEngineOptions`, rather than looking them up over HTTP. Its defaults
 are pinned against the SC02 YAML by a regression test. Changing these routes
 requires keeping the publisher settings and topology declaration aligned.
+MMS's first segment leg likewise discovers matching per-site operations channels
+from ISBM and uses its configured SC02 topics, rather than the topology client's
+first subscription match (which would select the legacy sites channel).
+Regression tests pin its defaults to the approval publisher's operations route.
 
 | Situation | Channel used |
 |---|---|
@@ -139,9 +143,9 @@ scope and `Type.UUID` resolved through CIR for its approved `ClassId`. Missing
 or ambiguous class mappings leave the approval pending publication. Proposal
 ingestion remains independent of this outbound requirement.
 
-MMS and CMS have standalone providers and engines. MMS segment ingestion is
-still outstanding; declaring its route does not implement a subscriber. Its
-durable subscription must be established before approvals are published.
+MMS and CMS have standalone providers and engines. MMS's first segment subscriber
+is implemented locally for streetlights. Its durable subscription must be
+established before approvals are published.
 Do not regard SC02's sender-side completion rule as proof of MMS persistence.
 
 ### REG-LOCATION rollout and replay
@@ -168,6 +172,52 @@ Do not regard SC02's sender-side completion rule as proof of MMS persistence.
   set `MaxTagsPerSweep` high enough to cover the candidate set: the existing
   sweep caps candidates before filtering already-published revisions, so
   repeated sweeps alone do not page through a larger registry.
+
+### MMS rollout and replay
+
+1. Deploy CIR first. `GET /api/health` must advertise
+   `destinationCategoryEquivalence: true`. MMS refuses cross-category commands
+   against older CIR code. No schema migration is required; the new REST fields
+   select a destination category inside the existing transaction.
+2. Deploy MMS engine with both flat schedule settings:
+   `MmsEngineSitesIngestSchedule=0 */2 * * * *` and
+   `MmsEngineSegmentsIngestSchedule=30 */2 * * * *`.
+   Code defaults leave `SegmentsIngestEnabled=false`; checked-in local/deploy
+   settings opt in with `MmsEngine__SegmentsIngestEnabled=true`. MMS/CIR URLs,
+   keys and `RegisterInCir=true` are required for the segment leg.
+   Leave `MmsEngine__SegmentsTopics__*` unset to use the single code default;
+   array overrides append to the initialized defaults rather than replacing them.
+3. After per-site channels exist, call MMS `POST /api/engine/bootstrap`.
+   Confirm `subscriptionsReady == sitesDiscovered` and `failed == 0`.
+   This opens stable `MMS:segments:{site-guid}` subscriptions to
+   `/{enterprise}/{site-guid}/operations/publication` with
+   `oiie:sc02/ccom:SyncSegments`, without consuming or replaying anything.
+   It works while ingestion is disabled, and reopens through stable subscriber
+   IDs instead of trusting cached session handles.
+   Repeat after adding sites and after broker/channel resets, before approval.
+   The timer also discovers and subscribes new sites, but publications sent
+   before their first durable subscription are not recoverable from that queue.
+4. Ensure MMS's site ingestion has registered the site's `OWNER_ID` in
+   `ITWIN-SITE/MMS`, and REG-LOCATION's instance registration exists in
+   `FunctionalLocation/REG-LOCATION`. Missing entries produce visible deferrals.
+   Repair or republish the missing upstream identity; do not invent an MMS anchor.
+5. For earlier approvals such as WW01, explicitly reset **REG-LOCATION engine
+   tracking**, then sweep, as above. Do not reset either provider database.
+   This replays all selected approved candidates, not just WW01, and can
+   redeliver to ENG too. No replay happens automatically on MMS deployment.
+6. Call MMS `POST /api/engine/ingest-segments` or wait for its timer. Inspect
+   `messagesAcknowledged`, `unitsUpserted`, `assetsRegistered`, `deferred`,
+   `failed` and `notes`. A row written before a CIR outage may count as upserted
+   without the message being acknowledged; retry safely upserts the same UUID.
+   Verify `GET /api/lightunits` on MMS Provider and CIR's `ASSET/MMS` mapping,
+   not the currently mock-backed MMS operator view.
+
+`POST /api/engine/reset` on MMS clears only local segment/site session handles.
+It does not delete durable backlog, reset provider data or replay approvals.
+Sandbox day zero now calls it using `Sandbox:MmsEngineBaseUrl` and
+`Sandbox:MmsEngineKey`; the sandbox deploy script configures these independently
+of MMS Provider's URL/key. Class and site resolutions have no long-lived cache.
+See [engine.http](../../MmsEngine/engine.http) for manual requests.
 
 The `/OIIE-SANDBOX/Enterprise/Site/OandM` URI is literal rather than derived. It
 predates the convention and is provisioned on the broker in that exact form.

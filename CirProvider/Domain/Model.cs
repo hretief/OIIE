@@ -153,6 +153,34 @@ public sealed record EquivalentEntryRequest
     public required string CategoryId { get; init; }
     public required string CategorySourceId { get; init; }
     public required Entry Entry { get; init; }
+
+    /// <summary>
+    /// Optional REST extension: destination category for the new entry.
+    /// Both destination fields must be supplied together. Omitted, the entry
+    /// joins the existing category as in the standard ws-CIR operation.
+    /// </summary>
+    public string? DestinationCategoryId { get; init; }
+
+    /// <summary>The registrar of the optional destination category.</summary>
+    public string? DestinationCategorySourceId { get; init; }
+
+    public CategoryIdentifier Destination()
+    {
+        if ((DestinationCategoryId is not null || DestinationCategorySourceId is not null)
+            && (string.IsNullOrWhiteSpace(DestinationCategoryId)
+                || string.IsNullOrWhiteSpace(DestinationCategorySourceId)))
+        {
+            throw new System.Text.Json.JsonException(
+                "DestinationCategoryId and DestinationCategorySourceId must both be non-empty when supplied.");
+        }
+
+        return new CategoryIdentifier
+        {
+            RegistryId = RegistryId,
+            CategoryId = DestinationCategoryId ?? CategoryId,
+            CategorySourceId = DestinationCategorySourceId ?? CategorySourceId
+        };
+    }
 }
 
 public sealed record UpdateEntryCiridRequest

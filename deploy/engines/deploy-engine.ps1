@@ -128,12 +128,16 @@ $engines = @{
         PeerApi = 'mms'
         Extra   = @{
             'SitesIngestEnabled'   = 'true'
+            'SegmentsIngestEnabled' = 'true'
             'MaxMessagesPerPoll'   = '25'
             'SourceId'             = 'MMS'
             'LogicalId'            = 'MMS'
             'RegisterInCir'        = 'true'
         }
-        Schedules = @{ 'MmsEngineSitesIngestSchedule' = '0 */2 * * * *' }
+        Schedules = @{
+            'MmsEngineSitesIngestSchedule' = '0 */2 * * * *'
+            'MmsEngineSegmentsIngestSchedule' = '30 */2 * * * *'
+        }
     }
     eng = @{
         System  = 'eng'

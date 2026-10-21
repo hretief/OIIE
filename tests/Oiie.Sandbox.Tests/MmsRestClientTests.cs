@@ -160,6 +160,35 @@ public class MmsRestClientTests
             new MmsRestClient(http).UpsertLightUnitsAsync([Unit()], cancellation.Token));
     }
 
+    [Theory]
+    [InlineData("wrong-key")]
+    [InlineData("duplicate")]
+    [InlineData("duplicate-native-id")]
+    [InlineData("zero-id")]
+    [InlineData("wrong-rejection")]
+    public async Task Complete_counts_do_not_mask_invalid_identity_correlations(string invalid)
+    {
+        var first = Unit();
+        var second = Unit();
+        var result = invalid switch
+        {
+            "wrong-key" => new LightUnitUpsertResult(
+                [new(1, Guid.NewGuid(), true), new(2, second.ExtAssetId, true)], []),
+            "duplicate" => new LightUnitUpsertResult(
+                [new(1, first.ExtAssetId, true), new(2, first.ExtAssetId, true)], []),
+            "duplicate-native-id" => new LightUnitUpsertResult(
+                [new(1, first.ExtAssetId, true), new(1, second.ExtAssetId, true)], []),
+            "zero-id" => new LightUnitUpsertResult(
+                [new(0, first.ExtAssetId, true), new(2, second.ExtAssetId, true)], []),
+            _ => new LightUnitUpsertResult([new(1, first.ExtAssetId, true)],
+                [new(Guid.NewGuid().ToString(), "Rejected", false)])
+        };
+        using var http = Http((_, _) => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(result) }));
+        await Assert.ThrowsAsync<MmsClientException>(() =>
+            new MmsRestClient(http).UpsertLightUnitsAsync([first, second], CancellationToken.None));
+    }
+
     private static LightUnitUpsert Unit() =>
         new(Guid.NewGuid(), "SL-001", null, null, null, null, null);
 

@@ -94,6 +94,8 @@ param(
     # engine that republishes nothing.
     [string]$RegLocationEngineApp = 'acme-engn-reglocation-dev',
 
+    [string]$MmsEngineApp = 'acme-engn-mms-dev',
+
     # Only read when -CreatePlan is passed; an existing plan keeps its own size.
     [ValidateSet('B1', 'B2', 'B3', 'P0v3', 'P1v3')]
     [string]$PlanSku,
@@ -401,15 +403,15 @@ function Set-EngBootstrapSettings {
 
 Set-EngBootstrapSettings -ProviderApp $EngApp -EngineApp $EngEngineApp
 
-# The REG-LOCATION engine is reached only by day zero, so it needs a base URL
-# and a key of its own rather than the ENG pair above.
-function Set-RegLocationEngineSettings {
+# Each ingestion engine has its own host key. Day zero must clear its sessions.
+function Set-IngestionEngineSettings {
     param(
-        [Parameter(Mandatory)][string]$EngineApp
+        [Parameter(Mandatory)][string]$EngineApp,
+        [Parameter(Mandatory)][string]$System
     )
 
     if ([string]::IsNullOrWhiteSpace($EngineApp)) {
-        Write-Host '  REG-LOCATION engine: not configured, day zero will report it as unreset'
+        Write-Host "  $System engine: not configured, day zero will report it as unreset"
         return
     }
 
@@ -417,7 +419,7 @@ function Set-RegLocationEngineSettings {
         --query functionKeys.default -o tsv 2>$null
 
     if ($LASTEXITCODE -ne 0 -or -not $engineKey) {
-        Write-Warning "  REG-LOCATION engine: could not read a function key for '$EngineApp'."
+        Write-Warning "  $System engine: could not read a function key for '$EngineApp'."
         return
     }
 
@@ -426,15 +428,16 @@ function Set-RegLocationEngineSettings {
         '--resource-group', $ResourceGroup,
         '--name', $apiAppName,
         '--settings',
-        "Sandbox__RegLocationEngineBaseUrl=https://$EngineApp.azurewebsites.net/api",
-        "Sandbox__RegLocationEngineKey=$engineKey",
+        "Sandbox__${System}EngineBaseUrl=https://$EngineApp.azurewebsites.net/api",
+        "Sandbox__${System}EngineKey=$engineKey",
         '-o', 'none'
-    ) -Because 'REG-LOCATION engine settings'
+    ) -Because "$System engine settings"
 
-    Write-Host "  REG-LOCATION engine: $EngineApp"
+    Write-Host "  $System engine: $EngineApp"
 }
 
-Set-RegLocationEngineSettings -EngineApp $RegLocationEngineApp
+Set-IngestionEngineSettings -EngineApp $RegLocationEngineApp -System 'RegLocation'
+Set-IngestionEngineSettings -EngineApp $MmsEngineApp -System 'Mms'
 
 # --- Build and deploy ------------------------------------------------------
 

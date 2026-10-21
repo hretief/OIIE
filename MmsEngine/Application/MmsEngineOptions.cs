@@ -3,11 +3,8 @@ namespace MmsEngine.Application;
 /// <summary>
 /// Configuration for the MMS integration engine.
 ///
-/// Narrower than RegLocationEngineOptions because this engine has one leg. MMS
-/// publishes nothing and proposes nothing about sites: it is told what plants
-/// exist and records them so work can later be raised against them. There is no
-/// outbound channel, no sweep schedule and no approval gate, so none of that
-/// appears here.
+/// MMS consumes sites and approved segments. It has no approval gate and
+/// publishes no BODs; its native identifiers are written back into CIR.
 /// </summary>
 public sealed class MmsEngineOptions
 {
@@ -84,6 +81,24 @@ public sealed class MmsEngineOptions
     /// through in bounded batches rather than in one unbounded run.
     /// </summary>
     public int MaxMessagesPerPoll { get; set; } = 25;
+
+    /// <summary>Consumes approved SC02 locations. Opt in after CIR and subscriptions are ready.</summary>
+    public bool SegmentsIngestEnabled { get; set; }
+
+    /// <summary>The approved-segment topic, distinct from ENG's design proposal topic.</summary>
+    public string[] SegmentsTopics { get; set; } = ["oiie:sc02/ccom:SyncSegments"];
+
+    /// <summary>Approved publications must identify this logical sender.</summary>
+    public string ApprovedLogicalId { get; set; } = "REG-LOCATION";
+
+    /// <summary>Native source of the approved location's CIR anchor.</summary>
+    public string ApprovedSourceId { get; set; } = "REG-LOCATION";
+
+    /// <summary>Optional single-site restriction for focused ingestion.</summary>
+    public Guid ITwinFederationId { get; set; }
+
+    public string SegmentsChannelUriFor(Guid site) =>
+        $"/{Enterprise}/{site:D}/operations/publication";
 
     // ---- Downstream: CIR --------------------------------------------------
 

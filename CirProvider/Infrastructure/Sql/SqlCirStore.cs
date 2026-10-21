@@ -102,13 +102,16 @@ public sealed class SqlCirStore(IOptions<CirOptions> options, ILogger<SqlCirStor
     {
         if (requests is null || requests.Count == 0) return;
 
+        var destinations = requests.Select(r => r.Destination()).ToArray();
         await using var cn = await OpenAsync(ct);
         await using var tx = (SqlTransaction)await cn.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
 
         try
         {
-            foreach (var request in requests)
+            for (var index = 0; index < requests.Count; index++)
             {
+                var request = requests[index];
+                var destination = destinations[index];
                 var registryKey = await ResolveRegistryKeyAsync(cn, tx, request.RegistryId, ct)
                     ?? throw new CirFaultException(CirFaultCode.RegistryNotFoundFault,
                         $"Registry '{request.RegistryId}' was not found.");
@@ -125,7 +128,28 @@ public sealed class SqlCirStore(IOptions<CirOptions> options, ILogger<SqlCirStor
 
                 var cirid = await MergeCiridAsync(cn, tx, existing, request.Entry.Cirid, ct);
 
-                var newEntryKey = await InsertEntryAsync(cn, tx, categoryKey, request.Entry, cirid, ct);
+                var destinationKey = categoryKey;
+                if (destination.CategoryId != request.CategoryId
+                    || destination.CategorySourceId != request.CategorySourceId)
+                {
+                    var resolved = await ResolveCategoryKeyAsync(cn, tx, registryKey,
+                        destination.CategoryId, destination.CategorySourceId, ct);
+                    if (resolved is null)
+                    {
+                        if (!_options.AllowNewCategories)
+                            throw new CirFaultException(CirFaultCode.CreateCategoryFault,
+                                $"Server is not configured to create destination category '{destination.CategoryId}'/'{destination.CategorySourceId}'.");
+
+                        resolved = await InsertCategoryAsync(cn, tx, registryKey, new Category
+                        {
+                            Id = destination.CategoryId,
+                            SourceId = destination.CategorySourceId
+                        }, ct);
+                    }
+                    destinationKey = resolved.Value;
+                }
+
+                var newEntryKey = await InsertEntryAsync(cn, tx, destinationKey, request.Entry, cirid, ct);
 
                 foreach (var property in request.Entry.Properties)
                     await InsertPropertyAsync(cn, tx, newEntryKey, property, ct);

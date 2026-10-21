@@ -10,12 +10,12 @@ namespace MmsEngine.Functions;
 /// <summary>
 /// The MMS engine's HTTP and timer surface.
 ///
-/// One leg only: MMS consumes sites and publishes nothing about them. There is
-/// no sweep and no approval endpoint here because there is nothing for MMS to
-/// propose -- a maintenance system is told what plants exist.
+/// MMS consumes sites and approved segments. No approval endpoint is exposed:
+/// REG-LOCATION owns that decision.
 /// </summary>
 public sealed class MmsEngineFunctions(
     SiteIngestionService siteIngestion,
+    SegmentIngestionService segmentIngestion,
     IOptions<MmsEngineOptions> options,
     ILogger<MmsEngineFunctions> logger)
 {
@@ -51,6 +51,43 @@ public sealed class MmsEngineFunctions(
         CancellationToken ct)
         => new OkObjectResult(await siteIngestion.DrainAsync(ct));
 
+    /// <summary>Reads approved segments from per-site operations channels.</summary>
+    [Function("MmsEngineIngestSegments")]
+    public async Task MmsEngineIngestSegments(
+        [TimerTrigger("%MmsEngineSegmentsIngestSchedule%")] TimerInfo timer, CancellationToken ct)
+    {
+        if (!_options.SegmentsIngestEnabled) return;
+        var report = await segmentIngestion.DrainAsync(ct);
+        if (report.Failed > 0 || report.Deferred > 0)
+            logger.LogWarning("MMS segment drain retained publications: {Failed} failures, {Deferred} deferrals.",
+                report.Failed, report.Deferred);
+    }
+
+    /// <summary>Polls approved segments now; the report distinguishes writes from acknowledgements.</summary>
+    [Function("MmsEngineIngestSegmentsNow")]
+    public async Task<IActionResult> MmsEngineIngestSegmentsNow(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "engine/ingest-segments")] HttpRequest req,
+        CancellationToken ct) =>
+        new OkObjectResult(await segmentIngestion.DrainAsync(ct));
+
+    /// <summary>Opens durable operations subscribers without consuming or replaying publications.</summary>
+    [Function("MmsEngineBootstrap")]
+    public async Task<IActionResult> MmsEngineBootstrap(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "engine/bootstrap")] HttpRequest req,
+        CancellationToken ct) =>
+        new OkObjectResult(await segmentIngestion.BootstrapAsync(ct));
+
+    /// <summary>Clears local session handles; does not remove durable backlog or reset MMS/CIR data.</summary>
+    [Function("MmsEngineReset")]
+    public async Task<IActionResult> MmsEngineReset(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "engine/reset")] HttpRequest req,
+        CancellationToken ct)
+    {
+        await segmentIngestion.ResetAsync(ct);
+        await siteIngestion.ResetAsync(ct);
+        return new OkObjectResult(new { reset = true });
+    }
+
     /// <summary>
     /// Configuration and readiness, without exposing any key.
     /// </summary>
@@ -62,6 +99,13 @@ public sealed class MmsEngineFunctions(
             sitesIngestEnabled = _options.SitesIngestEnabled,
             sitesChannelUri = _options.SitesChannelUri,
             sitesTopics = _options.SitesTopics,
+            segmentsIngestEnabled = _options.SegmentsIngestEnabled,
+            segmentsTopics = _options.SegmentsTopics,
+            segmentsChannelTemplate = $"/{_options.Enterprise}/{{site}}/operations/publication",
+            approvedLogicalId = _options.ApprovedLogicalId,
+            approvedSourceId = _options.ApprovedSourceId,
+            segmentSubscriptions = segmentIngestion.SubscriptionCount,
+            iTwinFederationId = _options.ITwinFederationId,
             enterprise = _options.Enterprise,
             sourceId = _options.SourceId,
             mmsConfigured = !string.IsNullOrWhiteSpace(_options.MmsBaseUrl),

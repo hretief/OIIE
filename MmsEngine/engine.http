@@ -1,0 +1,22 @@
+@baseUrl = http://localhost:7071/api
+@functionKey =
+
+### Configuration and local subscription count
+GET {{baseUrl}}/engine/status
+x-functions-key: {{functionKey}}
+
+### Establish operations subscribers BEFORE approval or deliberate replay
+POST {{baseUrl}}/engine/bootstrap
+x-functions-key: {{functionKey}}
+
+### Ingest sites (OWNER_ID registrations)
+POST {{baseUrl}}/engine/ingest-sites
+x-functions-key: {{functionKey}}
+
+### Ingest approved segments; inspect failed/deferred and messagesAcknowledged
+POST {{baseUrl}}/engine/ingest-segments
+x-functions-key: {{functionKey}}
+
+### Clear local handles only; does not reset data or delete subscriptions
+POST {{baseUrl}}/engine/reset
+x-functions-key: {{functionKey}}

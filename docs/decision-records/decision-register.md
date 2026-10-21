@@ -2351,7 +2351,7 @@ the same `CirId`, which is what makes them the same class:
 
 ```json
 {
-  "CategoryId": "RDL-CLASS", "CategorySourceId": "ENG",
+  "CategoryId": "RDL-CLASS", "CategorySourceId": "MMS",
   "Entry": { "IdInSource": "LIGHT_UNIT_INVENTORY", "SourceId": "MMS",
              "CirId": "9F2A4C60-6D31-4B8E-9A17-0C5B2E7D1A05", "Name": "LIGHT_UNIT_INVENTORY" }
 },
@@ -2405,8 +2405,8 @@ so it is worth getting right before the first row is written.
 `ITWIN-SITE` already federates sites and is what makes `OWNER_ID` resolve today, so no new category
 is needed for the site level. `ASSET` is new, and follows the same shape.
 
-The write-back uses **`CreateEquivalentEntries`** (§3.1.2), not `CreateRegistry`. The ENG entry
-already carries the CIRID, so the merge rule gives the existing CIRID precedence and the new MMS
+The write-back uses **`CreateEquivalentEntries`** (§3.1.2), not `CreateRegistry`. The REG-LOCATION
+`FunctionalLocation/REG-LOCATION` entry already carries the CIRID, so the merge rule gives the existing CIRID precedence and the new MMS
 entry adopts it — the federated identity cannot be displaced by a late registration. That is exactly
 the guarantee a write-back path wants, and the provider already implements it
 (`ProcessEquivalentEntries`).
@@ -2418,8 +2418,47 @@ stops there.
 
 `EXT_ASSET_ID` still drives the upsert, because it is the key the engine can supply on first contact
 and on every subsequent one. `LIGHT_UNIT_ID` is the identity CIR federates. They are different jobs
-and should not be collapsed. `EXT_ASSET_ID` is worth registering as its own `ASSET` entry with
-`SourceID = "MMS"`, since a participant may know the asset only by that.
+and should not be collapsed. A separate `EXT_ASSET_ID` alias is a possible follow-up;
+the first pass registers only the native `LIGHT_UNIT_ID`.
+
+### Implementation confirmation, 2026-10-21
+
+The mapping was reconfirmed before implementation:
+
+- `EXT_ASSET_ID = Segment.UUID`; `LIGHT_UNIT_NAME = Segment.ShortName`.
+- Dispatch queries active `RDL-CLASS` entries by `Segment.Type.UUID`, entry
+  source MMS and category registrar MMS. The local seed is used only after CIR
+  verifies that a peer holds the same governed UUID and class key. Registration
+  is read back before selecting the table. Only `LIGHT_UNIT_INVENTORY` has a writer.
+- `OWNER_ID` resolves through active `ITWIN-SITE/MMS` entries on
+  `RegistrationSite.UUID`. Missing class/site/REG-LOCATION anchor mappings defer
+  and retain the publication rather than guessing.
+- `LIGHT_SYSTEM_ID`, native class/status IDs and `MNDOT_ASSET_NUMBER` are null in
+  the request, preserving MMS-owned values on update. Type selects a table, not
+  a native MMS class-code row. `DATE_UPDATE` remains MMS transaction time.
+- `FullName` and `Description` have no destination in the light-unit contract.
+- A publication is acknowledged only after the MMS write and verified
+  `ASSET/MMS` native-key write-back. HTTP conflicts alone are not success.
+
+The standard equivalent-entry operation inserts into the anchor's category. To
+retain the existing split-by-registrar convention, the user approved optional
+REST-only `destinationCategoryId` and `destinationCategorySourceId` fields on
+`POST /equivalent-entries`. Both are required together; omission preserves the
+standard same-category behavior. The destination is in the same registry and
+is created only when `AllowNewCategories` permits it. The transaction and CIRID
+merge rule are unchanged. Standard ws-CIR XML schemas/readers are unchanged.
+The health response advertises `destinationCategoryEquivalence=true`; MMS checks
+that capability before sending the command so old servers cannot silently ignore
+the extension and register an asset in the wrong category.
+
+MMS's implementation does not keep long-lived class/site lookup caches. Its
+reset endpoint clears subscription handles; stable subscriber IDs preserve
+backlog unless the broker channel/subscription itself was deleted. Bootstrap
+must precede approval or deliberate replay.
+
+There is no source revision in the approved payload. Upserts are idempotent,
+but that is not protection against a delayed older approval overwriting a newer
+one. Revision-aware ordering is a separate exchange-contract follow-up.
 
 ### Categories are split by registrar, and that is the existing convention
 
@@ -2529,7 +2568,6 @@ running, not whether the process inside it survived startup. Probing HTTP status
 one broken app from the fourteen healthy ones in a single pass; the portal's own status column would
 not have. The general rule from DR-031 holds here too: **check the thing itself, not a cache or a
 proxy for it.**
-
 
 
 

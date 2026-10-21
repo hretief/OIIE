@@ -18,12 +18,11 @@ acme-api-mms-dev
 acme-api-mms-prod
 ```
 
-There is no `MmsEngine`. MMS deploys as a single Function App where CMS is
-split into engine and provider, and that asymmetry is deliberate — see
-[participant-abstraction-spec.md §5.2](../../docs/participant-abstraction-spec.md).
-Two participants built two different ways, both joining the same channel and
-neither requiring a change to the other, demonstrates more than two identical
-ones would. Do not add an engine here to make it match CMS.
+`MmsEngine` is a separate integration Function App (`acme-engn-mms-dev`).
+It consumes sites and approved streetlight segments, calling this provider over
+HTTP. Deploying the provider alone does not enable segment ingestion. See
+[MMS rollout and replay](../../docs/scenarios/channel-topology.md#mms-rollout-and-replay)
+for CIR, engine settings and subscription prerequisites.
 
 ## Deploying
 

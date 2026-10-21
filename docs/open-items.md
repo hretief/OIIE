@@ -1595,14 +1595,16 @@ not present on the broker when the first was identified. The `channelsRemoved`
 array in the day-zero response names them, so the next run that still warns will
 identify it.
 
-## MMS has no segment ingest leg
+## MMS approved-segment ingestion
 
-Raised 2026-09-11. **Provider/REST groundwork implemented 2026-10-21; segment
-ingestion remains outstanding.**
+Raised 2026-09-11. **Provider/REST groundwork and first-pass streetlight
+ingestion implemented and deployed to Azure dev 2026-10-21. Deliberate
+backfill, live ingestion verification and live MMS UI integration remain outstanding.**
 
-MMS consumes sites and writes them to `SETUP_OWNER`, which works. It has no
-equivalent of REG-LOCATION's segment leg, so approved locations never reach
-`LIGHT_UNIT_INVENTORY` and MMS registers no `RDL-CLASS` mirror in CIR.
+MMS consumes sites into `SETUP_OWNER`. The new segment leg consumes REG-LOCATION
+SC02 approvals into `LIGHT_UNIT_INVENTORY`, mirrors verified governed class
+identities into `RDL-CLASS/MMS`, and writes the MMS-assigned key into `ASSET/MMS`.
+The operator MMS view still uses mock data; persistence does not make that view live.
 
 Most of the groundwork is already laid, largely by DR-030:
 
@@ -1624,35 +1626,82 @@ Most of the groundwork is already laid, largely by DR-030:
   resolves the table from CIR on `Segment.Type.UUID`, because MMS's table name
   *is* its `IdInSource` for that class.
 
-The column mapping is settled in DR-033. What is missing is the engine's second
-leg:
+The DR-033 column mapping is implemented by:
 
 1. **Done 2026-10-21:** `MmsRestClient.UpsertLightUnitsAsync` and local wire
    contracts. Returns assigned MMS keys and partial rejections, raises HTTP
    failures, and rejects malformed/incomplete success responses. Provider upserts
    now accept a null `LightSystemId` and preserve existing grouping on update;
    explicit positive identifiers still assign/reassign a system.
-2. `MmsEngine/Application/IncomingSegmentMapper` — maps `SyncSegments` onto
+2. `MmsEngine/Application/IncomingSegmentMapper` maps `SyncSegments` onto
    `LightUnitUpsert`: `LIGHT_UNIT_NAME` from `Segment.ShortName`, `OWNER_ID`
    resolved from CIR on `Segment.RegistrationSite.UUID`, `LIGHT_SYSTEM_ID` left
    null per DR-032.
-3. `MmsEngine/Application/SegmentIngestionService` — parallels REG-LOCATION's,
-   plus the write-back below.
-4. `MmsEngine/Application/CirClassRegistrar` — seeds the `RDL-CLASS` entry whose
-   `IdInSource` is the table name, resolves dispatch from CIR, and exposes
-   `ClearCacheAsync` so it is cleared by the reset that drops CIR, per DR-031.
-5. **Register `LIGHT_UNIT_ID` back into CIR** against `Segment.UUID`, in an
+3. `MmsEngine/Application/SegmentIngestionService` discovers per-site operations
+   channels, opens stable subscribers, validates sender/action/site, and retains
+   publications on missing mappings, rejected writes or failed CIR write-back.
+   Other sites still drain when one is blocked.
+4. `MmsEngine/Application/SegmentIdentityService` seeds the verified `RDL-CLASS`
+   entry whose `IdInSource` is the table name, then reads dispatch back from CIR.
+   No class/site/asset lookup cache survives a poll; corrections and resets are
+   reconsidered without a TTL or explicit cache invalidation.
+5. **Registers `LIGHT_UNIT_ID` back into CIR** against `Segment.UUID`, in an
    `ASSET` category — not `RDL-CLASS`, which holds classes. MMS assigns the id
    by IDENTITY, so it is known only from the upsert response, and until CIR
    holds it MMS has a row no other participant can name. Use
-   `CreateEquivalentEntries`, whose merge rule lets the new entry adopt the
-   existing CIRID rather than displace it. This has no equivalent in
-   REG-LOCATION's leg.
-6. Wiring: `Program.cs`, an ingest and a reset endpoint on `MmsEngineFunctions`,
-   segments channel and topics on `MmsEngineOptions`, and the approved-locations
-   channel declared in `mms/personality.yaml` — declared there, per the CIR
-   publication channel item above, so day zero ensures it rather than orphaning
-   it.
+   `CreateEquivalentEntries` with the new optional REST destination-category
+   fields. The anchor is the existing `FunctionalLocation/REG-LOCATION` entry,
+   not an invented registration. CIR keeps the anchor's CIRID authoritative.
+   Duplicate responses require exact identity verification, and successful
+   creation is read back before acknowledgement. Upsert-on-`EXT_ASSET_ID` makes
+   retries after a failed write-back safe.
+6. Wiring: timer, manual ingest, subscription bootstrap, status and local-reset
+   endpoints; local/deploy settings; MMS engine reset in sandbox day zero.
+   Per-site operations channels are already declared by SC02, not by a literal
+   static personality URI. Bootstrap discovers these and opens the subscribers.
+
+See [MMS rollout and replay](scenarios/channel-topology.md#mms-rollout-and-replay)
+before deployment. Existing approvals, including WW01, need an explicit replay
+after subscriptions exist. No provider reset or approval replay was performed
+during deployment.
+
+Azure dev deployment verified 2026-10-21:
+
+- `acme-api-cir-dev`: deployment `756da6cd04e847e19f9f79e3f01427a2`.
+  Health returned HTTP 200 with SQL healthy and
+  `destinationCategoryEquivalence=true`. A partial-destination request returned
+  HTTP 400 before database access; this check made no writes.
+- `acme-engn-mms-dev`: deployment `feeebbcdfffc4271b16ccb11ab01d035`.
+  Both timers and all new HTTP functions are registered. Segment ingestion is
+  enabled with the new flat schedule. Bootstrap established all three discovered
+  site subscriptions with zero failures and zero messages consumed. Status
+  returned HTTP 200 with MMS/CIR configured and one SC02 segment topic.
+- `acme-api-sandbox-dev`: deployment `1541f33b-a260-4749-a229-f9036c7fdf32`.
+  MMS engine reset URL and its separate host key are configured. Participant
+  health and the UI returned HTTP 200. The new API assembly and preserved UI
+  index were verified by hash against the deployment package.
+
+The redundant `SegmentsTopics__0` override was removed from Azure and the
+checked-in local/deploy settings: configuration binding appends it to the
+initialized array, producing a duplicate topic. With no override, the code
+default supplies the single SC02 topic. No infrastructure or database schema
+changes were needed.
+
+New engine/CIR regression coverage is in
+[`MmsSegmentIngestionTests`](../tests/Oiie.Sandbox.Tests/MmsSegmentIngestionTests.cs),
+[`MmsCirRestClientTests`](../tests/Oiie.Sandbox.Tests/MmsCirRestClientTests.cs) and
+[`CirEquivalentEntryTests`](../tests/Oiie.Sandbox.Tests/CirEquivalentEntryTests.cs).
+The latter includes an optional real-SQL equivalence regression, skipped unless
+`OIIE_CIR_TEST_SQL_CONNECTION_STRING` names a dedicated schema-initialized CIR
+test database. It creates/deletes only its unique registry; it does not provision
+or reset a database.
+
+Local validation of the new leg and coupled routing regressions: **110 passed,
+2 skipped** (the optional CIR and MMS SQL tests, neither database configured for
+this run). MMS/CIR and sandbox API builds succeeded; deployment scripts passed
+PowerShell syntax checks. The only build warning was the existing `xUnit1031`
+in the SC01 end-to-end tests. Live ingestion and the CIR SQL extension still
+need validation against a deployed/test-database environment.
 
 Provider/REST validation is in
 [`MmsRestClientTests`](../tests/Oiie.Sandbox.Tests/MmsRestClientTests.cs) and
@@ -1683,10 +1732,10 @@ of the changed provider's HTTP endpoint.
 
 Originally estimated at 60-70% of the REG-LOCATION effort. DR-033 revises that
 upward, closer to parity: the leg is bidirectional rather than one-directional,
-and dispatch reads CIR rather than a local dictionary. The provider's
-nullable-parent contract and grouping-preserving SQL were corrected on
-2026-10-21; the remaining segment-ingestion work is in the engine and exchange
-contracts/routing.
+and dispatch reads CIR rather than a local dictionary. The provider's nullable-parent contract and grouping-preserving SQL were
+corrected on 2026-10-21; the first engine leg is now implemented locally.
+Generic table writers, source-revision ordering and live UI data are not part of
+this first pass.
 
 ### `LIGHT_SYSTEM_ID` is not the engine's to populate
 

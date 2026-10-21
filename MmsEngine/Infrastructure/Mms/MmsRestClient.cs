@@ -157,6 +157,19 @@ public sealed class MmsRestClient(HttpClient http) : IMmsClient
                 "MMS returned an incomplete light unit upsert response; each requested unit needs a result.");
         }
 
+        var expected = units.Select(u => u.ExtAssetId == Guid.Empty
+            ? u.LightUnitName : u.ExtAssetId.ToString()).ToHashSet(StringComparer.Ordinal);
+        var received = result.Units.Select(u => u.ExtAssetId.ToString())
+            .Concat(result.Rejections.Select(r =>
+                Guid.TryParse(r.Key, out var key) ? key.ToString() : r.Key)).ToArray();
+        if (expected.Count != units.Count || received.Distinct().Count() != received.Length
+            || !expected.SetEquals(received) || result.Units.Any(u => u.LightUnitId <= 0)
+            || result.Units.Select(u => u.LightUnitId).Distinct().Count() != result.Units.Count)
+        {
+            throw new MmsClientException(
+                "MMS returned mismatched, duplicate or invalid light unit identities.");
+        }
+
         return result;
     }
 

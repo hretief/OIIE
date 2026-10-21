@@ -12,10 +12,15 @@
     "MmsEngine__SourceId": "MMS",
     "MmsEngine__LogicalId": "MMS",
 
-    "//sites": "The only leg. Its channel is enterprise-level and not derived from an iTwin id, because SyncSites is the message that brings an iTwin context into being. This is the same channel CMS and REG-LOCATION read; each subscriber holds its own session.",
+    "//sites": "Enterprise-level SyncSites creates MMS owners before approved segments are filed.",
     "MmsEngine__SitesIngestEnabled": "true",
     "MmsEngine__SitesTopics__0": "oiie/ccom:SyncSites",
     "MmsEngine__MaxMessagesPerPoll": "25",
+
+    "//segments": "Bootstrap operations subscriptions before approval/replay. CIR destination-category equivalence support is required.",
+    "MmsEngine__SegmentsIngestEnabled": "true",
+    "MmsEngine__ApprovedLogicalId": "REG-LOCATION",
+    "MmsEngine__ApprovedSourceId": "REG-LOCATION",
 
     "//cir": "Registering the site's identity so other systems can resolve MMS's key space. Empty CirBaseUrl leaves the site written but unregistered.",
     "MmsEngine__RegisterInCir": "true",
@@ -25,6 +30,7 @@
     "Isbm__BaseUrl": "https://acme-api-isbm-dev.azurewebsites.net/api",
     "Isbm__ApiKey": "",
 
-    "MmsEngineSitesIngestSchedule": "0 */2 * * * *"
+    "MmsEngineSitesIngestSchedule": "0 */2 * * * *",
+    "MmsEngineSegmentsIngestSchedule": "30 */2 * * * *"
   }
 }
