@@ -194,6 +194,7 @@ $engines = @{
             'SitesIngestEnabled' = 'true'
             'Domain'             = 'operations'
             'InboundDomain'      = 'engineering'
+            'ReturnApprovalsToEngineering' = 'true'
             'SourceId'           = 'REG-LOCATION'
             'LogicalId'          = 'REG-LOCATION'
             # The inbound half of the class cross-reference. ENG registers that

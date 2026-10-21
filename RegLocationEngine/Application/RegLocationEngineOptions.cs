@@ -96,7 +96,13 @@ public sealed class RegLocationEngineOptions
     /// REG-LOCATION is an approved location, and a subscriber wanting only one of
     /// those could not otherwise tell them apart.
     /// </summary>
-    public string[] Topics { get; set; } = ["oiie:sc01/ccom:SyncSegments"];
+    public string[] Topics { get; set; } = ["oiie:sc02/ccom:SyncSegments"];
+
+    /// <summary>
+    /// Also returns approved segments to ENG on the engineering channel.
+    /// Both routes must succeed before the revision is recorded as published.
+    /// </summary>
+    public bool ReturnApprovalsToEngineering { get; set; } = true;
 
     /// <summary>
     /// Optional. Pins every outbound publication to one iTwin's channel; left
@@ -341,12 +347,12 @@ public sealed class RegLocationEngineOptions
     /// Whether an approved tag is registered in CIR as well as published.
     ///
     /// Separable from publication on purpose: registering an identity and
-    /// announcing a change are different acts, and a deployment without a CIR
-    /// yet should still be able to publish.
+    /// announcing a change are different acts. Class identity resolution still
+    /// requires CIR even when instance registration is disabled.
     /// </summary>
     public bool RegisterInCir { get; set; } = true;
 
-    // ---- Class cross-references in CIR (the inbound leg) -------------------
+    // ---- Class cross-references in CIR ------------------------------------
 
     /// <summary>
     /// Check, and if necessary create, the cross-reference between the governed
@@ -425,6 +431,16 @@ public sealed class RegLocationEngineOptions
         !string.IsNullOrWhiteSpace(ChannelUriOverride)
             ? ChannelUriOverride
             : $"/{Enterprise}/{iTwinFederationId:D}/{Domain}/publication";
+
+    /// <summary>Distinct outbound destinations for an approved location.</summary>
+    public IReadOnlyList<string> ApprovalChannelsFor(Guid site)
+    {
+        var routedSite = ITwinFederationId == Guid.Empty ? site : ITwinFederationId;
+        var operations = ChannelUriFor(routedSite);
+        return ReturnApprovalsToEngineering
+            ? new[] { operations, InboundChannelUriFor(routedSite) }.Distinct(StringComparer.Ordinal).ToArray()
+            : [operations];
+    }
 
     /// <summary>
     /// The channel this engine subscribes to for proposals from ENG. Same

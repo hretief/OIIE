@@ -1606,6 +1606,14 @@ equivalent of REG-LOCATION's segment leg, so approved locations never reach
 
 Most of the groundwork is already laid, largely by DR-030:
 
+- **REG-LOCATION sender support implemented 2026-10-21:** approved
+  `SyncSegments` now carries the governed class identity resolved from the
+  approved tag's current `ClassId` through CIR, plus its scope's registration
+  site UUID. Missing/ambiguous class mappings are reported and left unpublished.
+  SC02 declares an operations route to MMS alongside the engineering return to
+  ENG; the publisher sends the same content to both and records completion only
+  after both succeed. See [routing and replay](scenarios/channel-topology.md#reg-location-rollout-and-replay)
+  for configuration migration and replay of previously published approvals.
 - `MmsProvider` is complete. `POST /lightunits` reaches
   `SqlMmsAssetStore.UpsertLightUnitsAsync`, which upserts on `EXT_ASSET_ID` and
   follows the same partial-success and 503-on-all-transient convention as the

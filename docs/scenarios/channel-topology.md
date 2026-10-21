@@ -66,7 +66,11 @@ approve, which is a clearer signal than a refusal would be.
 
 ## Precedence
 
-Topology wins where it answers; local settings are the fallback.
+Topology wins where an engine consults it; local settings are the fallback.
+REG-LOCATION's approval publisher currently derives its two destinations from
+`RegLocationEngineOptions`, rather than looking them up over HTTP. Its defaults
+are pinned against the SC02 YAML by a regression test. Changing these routes
+requires keeping the publisher settings and topology declaration aligned.
 
 | Situation | Channel used |
 |---|---|
@@ -125,14 +129,45 @@ not describe what gets built, so publication is not what admits it to
 operations — approval is.
 
 **SC02 — stewardship approval.** REG-LOCATION republishes approved sites to
-`/OIIE-SANDBOX/Enterprise/Site/OandM` and approved segments back to the
-engineering channel. The same BOD travels again from a different sender with a
-different meaning, which is why the topic carries `sc02`.
+`/OIIE-SANDBOX/Enterprise/Site/OandM` and approved segments to **both**
+`/{enterprise}/{iTwinId}/engineering/publication` (ENG) and
+`/{enterprise}/{iTwinId}/operations/publication` (MMS). Both segment routes use
+`oiie:sc02/ccom:SyncSegments`, not SC01's proposal topic.
 
-MMS and CMS appear as SC02 subscribers but have no backing store yet. They are
-declared so the intended topology is stated and so the "nothing reached MMS"
-assertion means something: an absent subscriber and a subscriber that received
-nothing are different findings, and only the second is a test result.
+The REG-LOCATION publisher now includes `RegistrationSite.UUID` from the tag's
+scope and `Type.UUID` resolved through CIR for its approved `ClassId`. Missing
+or ambiguous class mappings leave the approval pending publication. Proposal
+ingestion remains independent of this outbound requirement.
+
+MMS and CMS have standalone providers and engines. MMS segment ingestion is
+still outstanding; declaring its route does not implement a subscriber. Its
+durable subscription must be established before approvals are published.
+Do not regard SC02's sender-side completion rule as proof of MMS persistence.
+
+### REG-LOCATION rollout and replay
+
+- `ReturnApprovalsToEngineering` defaults to `true`. Setting it to `false`
+  disables the configured engineering return route only.
+- Remove stale `RegLocationEngine__Topics__*` overrides containing SC01. With
+  no overrides the default is the SC02 segment topic. The checked-in local
+  settings intentionally omit the array override to avoid appending to defaults.
+- `ClassRegistryId` defaults to the enterprise. Class resolution uses that
+  registry, `RDL-CLASS`, and REG-LOCATION's source/local class ID. A steward's
+  class correction must already have a governed CIR cross-reference.
+- Site and class lookups are scoped to a single sweep/notification, so missing
+  mappings and rebuilt scopes are reconsidered on the next pass.
+- A revision is marked published only after both configured routes succeed.
+  Routes are attempted independently so an operations failure does not withhold
+  the engineering return. Retry can redeliver to the successful route; consumers
+  must upsert.
+- Existing published revisions are **not automatically replayed** by this
+  change. Once the receiving subscriptions are ready, explicitly call the
+  existing `POST /api/engine/reset` and then `POST /api/engine/sweep` to republish
+  approvals with the enriched payload. Engine reset clears publication tracking
+  and class-check caches; it does not reset provider data. For a larger backfill,
+  set `MaxTagsPerSweep` high enough to cover the candidate set: the existing
+  sweep caps candidates before filtering already-published revisions, so
+  repeated sweeps alone do not page through a larger registry.
 
 The `/OIIE-SANDBOX/Enterprise/Site/OandM` URI is literal rather than derived. It
 predates the convention and is provisioned on the broker in that exact form.

@@ -59,16 +59,6 @@ public sealed class RegLocationApprovalService(
     private readonly RegLocationEngineOptions _options = options.Value;
 
     /// <summary>
-    /// Scope id to site GUID, including scopes known to have none.
-    ///
-    /// A sweep publishes many tags from few sites, so this collapses what would
-    /// otherwise be one registry read per tag. Held for the lifetime of the
-    /// instance: a scope's site is assigned when the site is bootstrapped and
-    /// does not change afterwards.
-    /// </summary>
-    private readonly Dictionary<int, Guid?> _siteCache = [];
-
-    /// <summary>
     /// Handles one approval notification.
     ///
     /// The tag is read back rather than taken from the payload. The notification
@@ -178,7 +168,7 @@ public sealed class RegLocationApprovalService(
                 // one, and a proposed tag will be approved. Recording either now
                 // would mean the engine never looked at it again on the day it
                 // became publishable.
-                skipped.Add(detail.Object.Guid is null
+                skipped.Add(detail.Object.Guid is null || detail.Object.Guid == Guid.Empty
                     ? $"{detail.Tag.Code}: has no registry GUID."
                     : $"{detail.Tag.Code}: state is '{detail.Tag.State}', not approved.");
                 continue;
@@ -214,11 +204,13 @@ public sealed class RegLocationApprovalService(
         // publication naming every site would be delivered to whichever site's
         // subscribers happened to be on the configured channel, which is how
         // this leg previously depended on a pinned twin.
-        var bySite = new Dictionary<Guid, List<RegTagDetail>>();
+        var bySite = new Dictionary<Guid, List<ClassifiedRegTag>>();
+        var sites = new Dictionary<int, Guid?>();
+        var classes = new Dictionary<int, CirEntry?>();
 
         foreach (var detail in toPublish)
         {
-            var site = await ResolveSiteAsync(detail, ct);
+            var site = await ResolveSiteAsync(detail, sites, ct);
 
             if (site is null)
             {
@@ -232,45 +224,75 @@ public sealed class RegLocationApprovalService(
                 continue;
             }
 
+            CirEntry? classification;
+            try
+            {
+                if (!classes.TryGetValue(detail.Tag.ClassId, out classification))
+                {
+                    classification = await ResolveClassAsync(detail.Tag.ClassId, ct);
+                    classes[detail.Tag.ClassId] = classification;
+                }
+            }
+            catch (Exception ex) when (ex is CirClientException or HttpRequestException or InvalidOperationException)
+            {
+                logger.LogError(ex, "Resolving approved tag {TagId}'s class failed.", detail.Tag.TagId);
+                errors.Add($"{detail.Tag.Code}: {ex.Message}");
+                continue;
+            }
+
+            if (classification?.Cirid is not { } identity)
+            {
+                var reason = $"{detail.Tag.Code}: class '{detail.Tag.ClassId}' has no governed CIR mapping; approval remains unpublished.";
+                skipped.Add(reason);
+                logger.LogWarning("{Reason}", reason);
+                continue;
+            }
+
             if (!bySite.TryGetValue(site.Value, out var group))
             {
                 bySite[site.Value] = group = [];
             }
 
-            group.Add(detail);
+            group.Add(new ClassifiedRegTag(detail, identity, classification.Name));
         }
 
         foreach (var (site, tags) in bySite)
         {
             try
             {
-                var channelUri = _options.ChannelUriFor(site);
-
-                // Opened only once there is something to say. A pass that finds
-                // nothing should not establish a session against the broker to prove
-                // it.
-                var sessionId = await isbm.OpenPublicationSessionAsync(channelUri, ct);
-
                 var correlationId = Guid.NewGuid().ToString();
-                var content = builder.Build(tags, decidedBy, correlationId);
+                var content = builder.Build(tags, site, decidedBy, correlationId);
+                var allRoutesPublished = true;
 
-                var messageId = await isbm.PostPublicationAsync(
-                    sessionId,
-                    content,
-                    _options.Topics,
-                    ct: ct);
+                foreach (var channelUri in _options.ApprovalChannelsFor(site))
+                {
+                    try
+                    {
+                        var sessionId = await isbm.OpenPublicationSessionAsync(channelUri, ct);
+                        await isbm.PostPublicationAsync(sessionId, content, _options.Topics, ct: ct);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        allRoutesPublished = false;
+                        logger.LogError(ex, "Publishing approved tags on {ChannelUri} failed.", channelUri);
+                        errors.Add($"{channelUri}: {ex.Message}");
+                    }
+                }
+
+                if (!allRoutesPublished) continue;
 
                 publishedCount += tags.Count;
 
-                foreach (var detail in tags)
+                foreach (var tag in tags)
                 {
+                    var detail = tag.Detail;
                     published.Add(
                         RegLocationEngineState.KeyFor(detail.Object.Guid!.Value, detail.Tag.Revision));
                 }
 
                 logger.LogInformation(
-                    "Published {Count} approved tag(s) for site {Site} as {MessageId} [{CorrelationId}].",
-                    tags.Count, site, messageId, correlationId);
+                    "Published {Count} approved tag(s) for site {Site} on all approval routes [{CorrelationId}].",
+                    tags.Count, site, correlationId);
 
                 // Registration follows publication rather than preceding it. Both
                 // orders leave a window, and this is the better one: a tag on the
@@ -279,10 +301,10 @@ public sealed class RegLocationApprovalService(
                 // location nobody has been told about.
                 if (_options.RegisterInCir && !string.IsNullOrWhiteSpace(_options.CirBaseUrl))
                 {
-                    entriesRegistered += await RegisterAsync(tags, ct);
+                    entriesRegistered += await RegisterAsync(tags.Select(t => t.Detail).ToArray(), ct);
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // Only this site's tags are left unrecorded, so the next pass
                 // retries them. Publishing later is recoverable; recording a tag
@@ -330,17 +352,14 @@ public sealed class RegLocationApprovalService(
     /// of the tag, and a configured one goes stale the moment the registry is
     /// reset, which previously stopped this leg running at all.
     ///
-    /// The configured id still wins when set, so a deployment can be pinned to
-    /// one site deliberately.
+    /// A route override never changes the registration site carried in the payload.
     /// </summary>
-    private async Task<Guid?> ResolveSiteAsync(RegTagDetail detail, CancellationToken ct)
+    private async Task<Guid?> ResolveSiteAsync(
+        RegTagDetail detail, Dictionary<int, Guid?> sites, CancellationToken ct)
     {
-        if (_options.ITwinFederationId != Guid.Empty)
-            return _options.ITwinFederationId;
-
         var scopeId = detail.Object.ScopeId;
 
-        if (_siteCache.TryGetValue(scopeId, out var cached))
+        if (sites.TryGetValue(scopeId, out var cached))
             return cached;
 
         try
@@ -351,7 +370,7 @@ public sealed class RegLocationApprovalService(
             // up once per tag for every tag under it.
             var site = scope?.Guid is { } guid && guid != Guid.Empty ? guid : (Guid?)null;
 
-            _siteCache[scopeId] = site;
+            sites[scopeId] = site;
             return site;
         }
         catch (RegLocationClientException ex)
@@ -363,6 +382,47 @@ public sealed class RegLocationApprovalService(
 
             return null;
         }
+    }
+
+    private async Task<CirEntry?> ResolveClassAsync(int classId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_options.CirBaseUrl))
+            throw new InvalidOperationException("CIR must be configured to resolve approved segment classes.");
+
+        var registryId = string.IsNullOrWhiteSpace(_options.ClassRegistryId)
+            ? _options.Enterprise : _options.ClassRegistryId;
+        var id = classId.ToString();
+        var holdings = await cir.GetRegistryAsync(
+            [
+                new CirFilter
+                {
+                    RegistryFilter = new CirRegistryFilter { Id = registryId },
+                    CategoryFilter = new CirCategoryFilter
+                    {
+                        Id = _options.ClassCategoryId,
+                        SourceId = _options.SourceId
+                    },
+                    EntryFilter = new CirEntryFilter
+                    {
+                        IdInSource = id,
+                        SourceId = _options.SourceId,
+                        Inactive = false
+                    }
+                }
+            ], ct);
+
+        var entries = holdings.Where(r => r.Id == registryId)
+            .SelectMany(r => r.Categories)
+            .Where(c => c.Id == _options.ClassCategoryId && c.SourceId == _options.SourceId)
+            .SelectMany(c => c.Entries)
+            .Where(e => e.IdInSource == id && e.SourceId == _options.SourceId
+                && e.Cirid is { } identity && identity != Guid.Empty)
+            .ToList();
+
+        if (entries.Select(e => e.Cirid).Distinct().Count() > 1)
+            throw new InvalidOperationException($"REG-LOCATION class '{classId}' has ambiguous governed CIR identities.");
+
+        return entries.FirstOrDefault();
     }
 
     /// <summary>

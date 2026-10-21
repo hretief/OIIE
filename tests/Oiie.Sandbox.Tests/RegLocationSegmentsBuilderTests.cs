@@ -32,6 +32,7 @@ public class RegLocationSegmentsBuilderTests
     private const int ScopeId = 7;
     private static readonly Guid ITwinFederationId = Guid.Parse("22222222-2222-2222-2222-222222222222");
     private static readonly Guid RegistryGuid = Guid.Parse("550e8400-e29b-41d4-a716-446655440000");
+    private static readonly Guid ClassGuid = Guid.Parse("33333333-3333-3333-3333-333333333333");
 
     private static RegLocationSegmentsBuilder Builder() =>
         new(Options.Create(new RegLocationEngineOptions
@@ -65,7 +66,7 @@ public class RegLocationSegmentsBuilderTests
     [Fact]
     public void Segment_uuid_is_the_registry_guid_unaltered()
     {
-        var bod = Builder().Build([Federated()], "steward", "corr-1");
+        var bod = Build("steward", "corr-1");
 
         // The CIRID. Every participant registers its own key against this value,
         // so any transformation here silently splits one location into two -- and
@@ -76,7 +77,7 @@ public class RegLocationSegmentsBuilderTests
     [Fact]
     public void Segment_carries_the_registry_composite_key()
     {
-        var bod = Builder().Build([Federated()], "steward", "corr-2");
+        var bod = Build("steward", "corr-2");
 
         var segment = FirstSegment(bod);
 
@@ -89,7 +90,7 @@ public class RegLocationSegmentsBuilderTests
     [Fact]
     public void InfoSource_uuid_is_derived_from_the_scope_not_the_source_name_alone()
     {
-        var bod = Builder().Build([Federated()], "steward", "corr-3");
+        var bod = Build("steward", "corr-3");
 
         var infoSource = FirstSegment(bod).InfoSource;
 
@@ -104,7 +105,7 @@ public class RegLocationSegmentsBuilderTests
     [Fact]
     public void Approver_travels_as_the_sender_reference()
     {
-        var bod = Builder().Build([Federated()], "j.mokoena", "corr-4");
+        var bod = Build("j.mokoena", "corr-4");
 
         var envelope = BodEnvelope.Parse(bod.ToString());
 
@@ -112,6 +113,42 @@ public class RegLocationSegmentsBuilderTests
         // publication exists to let a receiver ask.
         Assert.Equal("j.mokoena", envelope.ApplicationArea?.Sender?.ReferenceID);
     }
+
+    private static System.Xml.Linq.XElement Build(string steward, string correlation) =>
+        Builder().Build([new(Federated(), ClassGuid, "rdl:Streetlight")],
+            ITwinFederationId, steward, correlation);
+
+    [Fact]
+    public void Governed_class_and_registration_site_survive_XML_round_trip()
+    {
+        var segment = FirstSegment(Build("steward", "classified"));
+
+        Assert.Equal(ITwinFederationId, segment.RegistrationSite?.UUID);
+        Assert.Equal(ClassGuid, segment.Type?.UUID);
+        Assert.Equal("rdl:Streetlight", segment.Type?.ShortName);
+        Assert.Equal("22", segment.Type?.IDInInfoSource);
+        Assert.Equal("REG-LOCATION", segment.Type?.InfoSource?.ShortName);
+    }
+
+    [Theory]
+    [InlineData("Proposed")]
+    [InlineData("Rejected")]
+    public void Builder_itself_refuses_unapproved_tags(string state) =>
+        Assert.Throws<InvalidOperationException>(() =>
+            Builder().Build([new(Federated(state), ClassGuid, "rdl:Streetlight")],
+                ITwinFederationId, "steward", "invalid"));
+
+    [Fact]
+    public void Builder_refuses_an_empty_class_identity() =>
+        Assert.Throws<InvalidOperationException>(() =>
+            Builder().Build([new(Federated(), Guid.Empty, null)],
+                ITwinFederationId, "steward", "invalid"));
+
+    [Fact]
+    public void Builder_refuses_an_empty_registration_site() =>
+        Assert.Throws<ArgumentException>(() =>
+            Builder().Build([new(Federated(), ClassGuid, null)],
+                Guid.Empty, "steward", "invalid"));
 
     [Fact]
     public void A_proposed_tag_is_not_publishable()
@@ -137,6 +174,10 @@ public class RegLocationSegmentsBuilderTests
         // one thing.
         Assert.False(RegLocationSegmentsBuilder.IsPublishable(Tag(guid: null)));
     }
+
+    [Fact]
+    public void An_empty_registry_guid_is_not_publishable() =>
+        Assert.False(RegLocationSegmentsBuilder.IsPublishable(Tag(guid: Guid.Empty)));
 
     [Fact]
     public void An_approved_federated_tag_is_publishable()

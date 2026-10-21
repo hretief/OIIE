@@ -268,6 +268,8 @@ public sealed class RegLocationEngineFunctions(
                 : _options.ChannelUriFor(_options.ITwinFederationId),
 
             topics = _options.Topics,
+            returnApprovalsToEngineering = _options.ReturnApprovalsToEngineering,
+            approvalChannels = sites.SelectMany(_options.ApprovalChannelsFor).Distinct().ToArray(),
 
             // Pinning, not identity: empty is the normal case and means the
             // engine follows whichever sites exist. A value here overrides that

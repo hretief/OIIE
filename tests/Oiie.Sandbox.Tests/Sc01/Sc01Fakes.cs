@@ -33,6 +33,7 @@ internal sealed class FakeIsbmBroker : IIsbmClient
     /// <summary>Topics each publication was posted under, for assertions.</summary>
     public List<IReadOnlyList<string>> PostedTopics { get; } = [];
     public List<IReadOnlyList<string>> SubscribedTopics { get; } = [];
+    public string? FailPublicationChannel { get; set; }
 
     public IReadOnlyList<IsbmMessage> MessagesOn(string channelUri) =>
         _channels.TryGetValue(channelUri, out var queue) ? queue : [];
@@ -52,6 +53,8 @@ internal sealed class FakeIsbmBroker : IIsbmClient
         DateTimeOffset? expiry = null, CancellationToken ct = default)
     {
         var channelUri = _sessionChannels[sessionId];
+        if (channelUri == FailPublicationChannel)
+            throw new HttpRequestException("Publication route unavailable.");
         var messageId = $"msg-{Guid.NewGuid():N}";
 
         PostedTopics.Add(topics);

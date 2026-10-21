@@ -9,7 +9,6 @@
     "RegLocationEngine__RegLocationApiKey": "",
     "RegLocationEngine__Enterprise": "acme",
     "RegLocationEngine__Domain": "operations",
-    "RegLocationEngine__Topics__0": "oiie:sc01/ccom:SyncSegments",
     "RegLocationEngine__SourceId": "REG-LOCATION",
     "RegLocationEngine__LogicalId": "REG-LOCATION",
 

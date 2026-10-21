@@ -7,6 +7,9 @@ using RegLocationEngine.Infrastructure.RegLocation;
 
 namespace RegLocationEngine.Application;
 
+/// <summary>An approved tag with the governed identity of its current registry class.</summary>
+public sealed record ClassifiedRegTag(RegTagDetail Detail, Guid ClassIdentity, string? ClassName);
+
 /// <summary>
 /// Turns approved REG-LOCATION tags into the BOD that carries them.
 ///
@@ -28,9 +31,9 @@ namespace RegLocationEngine.Application;
 /// with Segment.UUID -- the registry GUID, which is the CIRID -- they let a
 /// downstream system register REG-LOCATION's key against the federated identity.
 ///
-/// Nothing registry-internal beyond that travels: item_id, class_id and the
-/// object row's flags stop here. They are how this registry stores a tag, not
-/// what a tag is.
+/// The approved class travels as Type.UUID (governed CIR identity) together
+/// with Type.IDInInfoSource (local class_id). RegistrationSite identifies the
+/// scope's site. Item_id and object flags remain registry-internal.
 /// </summary>
 public sealed class RegLocationSegmentsBuilder(IOptions<RegLocationEngineOptions> options)
 {
@@ -46,10 +49,14 @@ public sealed class RegLocationSegmentsBuilder(IOptions<RegLocationEngineOptions
     /// sweep is the expected case, not the exceptional one.
     /// </summary>
     public XElement Build(
-        IReadOnlyList<RegTagDetail> tags,
+        IReadOnlyList<ClassifiedRegTag> tags,
+        Guid site,
         string decidedBy,
         string correlationId)
     {
+        if (site == Guid.Empty)
+            throw new ArgumentException("A registration site UUID is required.", nameof(site));
+
         var bod = new SyncSegments(ActionCodes.Replace);
 
         bod.ApplicationArea.BODID = correlationId;
@@ -68,7 +75,10 @@ public sealed class RegLocationSegmentsBuilder(IOptions<RegLocationEngineOptions
 
         foreach (var detail in tags)
         {
-            bod.With(BuildSegment(detail));
+            if (!IsPublishable(detail.Detail) || detail.ClassIdentity == Guid.Empty)
+                throw new InvalidOperationException("Only approved, federated, classified tags can be published.");
+
+            bod.With(BuildSegment(detail, site));
         }
 
         // The root element rather than the document: ISBM carries message content
@@ -94,11 +104,12 @@ public sealed class RegLocationSegmentsBuilder(IOptions<RegLocationEngineOptions
     /// the failure this engine exists to prevent.
     /// </summary>
     public static bool IsPublishable(RegTagDetail detail) =>
-        detail.Object.Guid is not null
+        detail.Object.Guid is { } guid && guid != Guid.Empty
         && string.Equals(detail.Tag.State, "Approved", StringComparison.OrdinalIgnoreCase);
 
-    private Segment BuildSegment(RegTagDetail detail)
+    private Segment BuildSegment(ClassifiedRegTag classified, Guid site)
     {
+        var detail = classified.Detail;
         var federationId = detail.Object.Guid
             ?? throw new InvalidOperationException(
                 $"Tag {detail.Tag.TagId} has no registry GUID and cannot be published.");
@@ -130,7 +141,19 @@ public sealed class RegLocationSegmentsBuilder(IOptions<RegLocationEngineOptions
 
             ShortName = detail.Tag.Code,
             FullName = detail.Tag.Name,
-            Description = detail.Tag.Name
+            Description = detail.Tag.Name,
+            RegistrationSite = new Site { UUID = site },
+            Type = new SegmentType
+            {
+                UUID = classified.ClassIdentity,
+                IDInInfoSource = detail.Tag.ClassId.ToString(),
+                ShortName = classified.ClassName,
+                InfoSource = new InfoSource
+                {
+                    UUID = CcomUuid.ForInfoSource(_options.SourceId),
+                    ShortName = _options.SourceId
+                }
+            }
         };
 
         return segment;

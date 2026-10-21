@@ -13,7 +13,8 @@ identifierStyle: surrogate
 # Neither leg is declared here, because neither is enterprise-level. The
 # subscriber leg is a per-iTwin engineering channel, discovered from the sites
 # the engine is following; the publisher leg is the matching per-iTwin
-# operations channel. Both are provisioned by ENG when the twin is created, so
+# operations channel, plus the engineering return of approved segments to ENG.
+# Both channels are provisioned by ENG when the twin is created, so
 # listing either here would ask day zero to rebuild a channel for a twin that no
 # longer exists.
 #

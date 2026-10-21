@@ -18,11 +18,9 @@ name: Stewardship approval and distribution
 scenario: 2
 useCase: UC01
 
-# Nothing downstream of REG-LOCATION is a working participant yet, so completion
-# is observed at the sender: the item leaving the stewardship queue as approved
-# is the furthest point that can currently be verified. When MMS gains a
-# backing store this should move to arrival there, which is a change to this
-# file and not to any code.
+# MMS has a backing store, but its segment ingestion leg is not implemented.
+# Completion therefore remains sender-side until persistence can be observed
+# at MMS; this rule is not proof of downstream delivery.
 completion:
   participant: reg-location
   contains: approved-locations
@@ -65,3 +63,12 @@ channels:
     topics:
       - oiie:sc02/ccom:SyncSegments
     description: Approved segments returned to the originating iTwin.
+
+  - uri: /{enterprise}/{iTwinId}/operations/publication
+    type: Publication
+    publisher: reg-location
+    subscribers:
+      - mms
+    topics:
+      - oiie:sc02/ccom:SyncSegments
+    description: Approved, classified locations for MMS light-unit ingestion.
