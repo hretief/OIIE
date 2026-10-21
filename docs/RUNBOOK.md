@@ -184,16 +184,17 @@ dev  : https://acme-api-mms-dev.azurewebsites.net
 prod : not yet deployed
 ```
 
-It is currently an exact replica of `CmsProvider` apart from the participant
-name — the two are expected to diverge, and nothing should be factored into a
-shared component on the strength of that resemblance. Like CMS it is fronted by
-a separate engine app, `MmsEngine` (`acme-engn-mms-dev`), which holds the ISBM
-session and reaches this API over HTTP; see
-[participant-abstraction-spec.md §5.2](participant-abstraction-spec.md).
+The provider uses the customer's schema in
+`acme-sql-server.database.windows.net / acme-db-mms-dev`: sites become
+`SETUP_OWNER` rows and approved streetlights become `LIGHT_UNIT_INVENTORY`
+rows. `MmsEngine` (`acme-engn-mms-dev`) holds the ISBM subscriptions and reaches
+this provider over HTTP; it never connects directly to SQL.
 
-`/api/health` is anonymous and reports the site count; every other route needs
-a function key. MMS does not mint identifiers, so `POST /api/sites` requires a
-caller-supplied `siteId` and rejects payloads without one.
+`/api/health` is anonymous; data routes require a function key. The engine uses
+`POST /api/owners` for sites and `POST /api/lightunits` for streetlights.
+Light-unit upserts match `EXT_ASSET_ID`, return the native `LIGHT_UNIT_ID`, and
+preserve MMS-owned grouping on updates. The engine registers that native key
+in CIR's `ASSET/MMS` category before acknowledging the publication.
 
 Deployment steps and traps are in
 [MmsProvider/deploy/README.md](../MmsProvider/deploy/README.md). The grant step
@@ -234,26 +235,45 @@ Deployment steps and traps are in
 
 ### MMS inventory panel
 
-Selecting the MMS persona shows what `LIGHT_SYSTEM_INVENTORY` actually holds for the
-selected iTwin, from `GET /admin/mms/locations?twin=…`. This is independent of the
-segment handover workflows: the rows exist whether or not anything was ever handed
-over, so an empty segment queue does not mean an empty repository.
+In SC01 or SC02, selecting MMS (displayed as **TAMS**) shows persisted
+`LIGHT_UNIT_INVENTORY` rows for the selected iTwin through
+`GET /admin/mms/lightunits?twin={uuid}`. This live panel replaced the mock
+MMS inbox on Azure dev on 2026-10-21. No manual Store Assets action is needed:
+the MMS engine automatically persists approved streetlights.
 
-The twin is resolved to an `OWNER_ID` through ws-CIR rather than matched on a column
-(DR-008, DR-009). Three distinct states are shown, and the difference matters:
+The Sandbox API resolves the UUID through CIR's active `ITWIN-SITE/MMS` entry
+to a native `OWNER_ID` and filters the provider's rows by that owner. Provider
+and CIR function keys stay server-side. Configure `Providers:Mms` and
+`Providers:Cir` with their base URLs and keys; missing configuration fails
+startup. The browser-facing inventory GET is a read-only admin-key exemption,
+consistent with the sandbox's other live panels, not production authorization.
+
+Distinct states are shown, and the difference matters:
 
 - **resolved with rows** — the normal case.
 - **resolved, no rows** — the owner exists but holds no inventory.
 - **unresolved** — no MMS owner is related to this twin in the registry. No rows are
   shown; falling back to unfiltered would leak one district's inventory to another.
-  Fix by relating the owner: `POST /admin/mms/owners/relate`.
+  Check site ingestion and its CIR registration rather than guessing a native key.
+- **error** — CIR/MMS is unavailable or returned invalid data. The API returns
+  HTTP 502; this is not displayed as a successful empty inventory.
 
-Only two seeded owners have inventory: `OWNER_ID` 2 (7200 - Metro Traffic, 9 rows) and
-`OWNER_ID` 8 (9600 - District 6, 4 rows). A twin mapped to any other owner correctly
-shows resolved-but-empty.
+A missing, empty or malformed twin parameter returns HTTP 400. There is no
+unscoped fallback. Switching twins immediately hides the previous site's rows.
+The UI refreshes every 10 seconds while MMS is open and also offers Refresh.
 
-Scoped reads take ~1.9s. That is a known ISBM round-trip cost, not a database problem
-— see DR-010 before attempting to optimise it.
+Dev MMS segment ingestion polls every 30 seconds (`*/30 * * * * *`).
+Site ingestion remains every two minutes (`0 */2 * * * *`); non-dev deployment
+defaults retain two-minute segment polling. Processing and UI refresh add to
+the polling wait, so this is not an end-to-end delivery deadline.
+
+For an Azure smoke test, select **9200 - District 2**, then **SC02 → TAMS**.
+XX01, XX02 and XX03 were verified in that site's live inventory on 2026-10-21;
+these are test records, not seeded requirements. Publish a new streetlight in
+an ENG Named Version, approve it in REG-LOCATION, and wait for ingestion.
+An approved REG row alone does not prove that MMS has persisted it.
+See [rollout and deliberate replay](scenarios/channel-topology.md#mms-rollout-and-replay)
+before backfilling approvals that predate the MMS subscription.
 
 ### CMS asset register panel
 
@@ -563,7 +583,9 @@ The leak worth guarding is promotion, which selects every unpublished tag it can
 see. Unscoped, it sweeps another plant's design into the release and publishes it.
 Bruno requests 27-28 assert exactly that.
 
-Only ENG is twin-scoped today. REG-LOCATION, MMS and CMS are not.
+ENG uses twin-scoped queries. REG-LOCATION's stewardship view resolves the twin
+to its registry scope; MMS's live SC01/SC02 inventory resolves it to `OWNER_ID`
+through CIR. Neither adds an ENG-style `ITwinId` column to MMS's customer schema.
 
 ## When something is wrong
 
@@ -572,7 +594,7 @@ Only ENG is twin-scoped today. REG-LOCATION, MMS and CMS are not.
 | 404 with `{"fault":...}` | Missing channel or session |
 | 404 with no body | No such route on this provider |
 | `DeserializationError` | The provider names the exact property and DTO. Copy member names from a verified route rather than from the specification |
-| Inbound message never arrives | The inbox polls every 3s. If nothing appears, check the subscriber binding exists in `personality.yaml` and that the channel was not recreated after the publication was posted |
+| Inbound message never arrives | Check the receiving engine's configured timer and enabled flag, not the old sandbox inbox pump. Dev MMS segments poll every 30s and the UI refreshes every 10s. Check the per-site subscription existed before publication and that its channel was not deleted |
 | `No handler registered` | Expected until a handler exists for that verb and noun. The message is archived, not dropped |
 | CIR call times out | Work in this order. **(1)** `GET /admin/cir/last?participantId=eng` — durable evidence of the last exchange, safe to call repeatedly. **(2)** `POST /admin/cir/await-response` — re-reads the still-open consumer session; if the response appears, the CIR did reply and only the wait window was short. **(3)** `POST {cir}/api/isbm/drain` — if that completes the exchange, the message path is fine and the CIR's `IsbmPoll` timer is not running: check the plan is `B1`+ with Always On and that App Insights shows `IsbmPoll` requests. **(4)** only then `GET /admin/cir/diagnose`, which *consumes* from the queue and destroys the evidence |
 | A consumer looks healthy but consumes nothing | Its session predates the last channel deletion. Channels take their sessions with them, and a poll loop that swallows session faults will not notice |
@@ -581,7 +603,7 @@ Only ENG is twin-scoped today. REG-LOCATION, MMS and CMS are not.
 | `NotValidated` | No XSD held for that namespace. `Schemas/ccom` is empty by design |
 | A tag is missing from `/admin/eng/tags` | Almost always the wrong twin, not a lost row. A request naming no twin reads ENG's default, so a tag created under `x-itwin-id` will not appear in it. `GET /admin/eng/twins` lists what exists |
 | Invalid column name `ITwinId` | The schema predates the twin columns. `/admin/reset` will not add them — use `/admin/reset/day-zero` |
-| An approved location reaches CMS but not MMS | Read the MMS message's `processingStatus` before anything else. **`Rejected`** is a verdict: the iTwin genuinely has no `OWNER_ID` related in ws-CIR, so relate it and resend. **`Failed`** means the registry could not be consulted and nothing was written -- the relation is probably fine and the message should be replayed, not re-sent by the publisher. Confirm with `GET /admin/cir/registry` |
+| An approved streetlight is missing in MMS | Check the selected twin and live inventory GET first. Inspect MMS engine status/logs and ingestion report `deferred`, `failed` and `notes`. Missing class, owner or REG anchor mappings retain the publication for retry; verify CIR `RDL-CLASS/MMS`, `ITWIN-SITE/MMS` and `FunctionalLocation/REG-LOCATION`. Check provider light units and `ASSET/MMS` write-back before considering deliberate replay |
 | `400 invalid redirect_uri` on sign-in | The site's origin is not registered as a redirect URI on the IMS client. Register `<origin>/signin-oidc` exactly, including scheme and path. Renaming the Azure site changes the origin and therefore breaks this |
 | Sign-in succeeds, then CORS on `ims.bentley.com/connect/token` | The origin is missing from the IMS client's **allowed CORS origins**, which is a separate list from the redirect URIs -- registering the redirect URI alone is not enough. The giveaway is `net::ERR_FAILED` reported next to status `200`: IMS answered, but without `Access-Control-Allow-Origin`, so the browser discarded the response. This is fixed only in the IMS client registration; no change to this solution can set that header |
 | `ContainerStartupFailure`, exit code 134, after recovering a Key Vault | `az keyvault recover` restores the secrets but **not** the role assignments on the vault. The app's managed identity silently loses `Key Vault Secrets User`, and because `AddSandboxKeyVault` runs before the host is built, the failure aborts the process rather than surfacing as a request error. Re-grant with `az role assignment create --assignee-object-id <webapp principalId> --assignee-principal-type ServicePrincipal --role "Key Vault Secrets User" --scope <vaultId>`. Restoring your own access is not enough -- check the app identity separately |

@@ -51,6 +51,13 @@ no manual Store Assets action in SC02's MMS panel. The panel refreshes every
 The API and UI must be deployed together; Azure dev received both on 2026-10-21,
 replacing the previous mock MMS view.
 
+Dev MMS ingestion polls every 30 seconds, independently of the UI refresh.
+Approvals are asynchronous: REG-LOCATION approval is not confirmation of an
+MMS write. For the verified Azure test site, select **9200 - District 2 → SC02
+→ TAMS**; XX01, XX02 and XX03 were present on 2026-10-21. No replay is needed
+for those records. See [MMS rollout and replay](../docs/scenarios/channel-topology.md#mms-rollout-and-replay)
+for older approvals that predate durable subscriptions.
+
 Real panels are labelled `LIVE` with the endpoint they call, and are kept in
 their own sections rather than folded into the mock inbox — mixing the two would
 make it impossible to tell on screen which rows the sandbox actually holds.
@@ -95,7 +102,7 @@ configure `Providers:Mms` and `Providers:Cir` with their base URLs and keys.
 src/
   api.ts     typed client: every call to the sandbox goes through here
   App.tsx    the whole app
+  MmsInventoryPanel.tsx  read-only live MMS table and loading/error/empty states
 ```
 
-One file, as generated. Worth splitting when the wired surface grows past the
-mock one.
+The main workspace remains in App.tsx; the live MMS panel is a separate component.

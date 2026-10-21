@@ -1,6 +1,8 @@
-# Workflow Orchestrator Demo Walkthrough (SC01)
+# Workflow Orchestrator Demo Walkthrough (SC01 and SC02)
 
-This is the SC01 walkthrough as the system actually behaves today.
+This walkthrough covers ENG authoring through REG-LOCATION stewardship and
+the first deployed MMS streetlight ingestion leg, verified on Azure dev
+2026-10-21.
 
 Each step separates what the system **does** from what an observer might
 reasonably assume it does. The gaps are called out inline rather than collected
@@ -44,7 +46,8 @@ This calls `POST /admin/reset/day-zero`, which empties:
    needed: the engine remembers what it has published by federation GUID and
    revision, so clearing the registry alone leaves an engine that declines to
    republish and a `publishedTags` count that survives day zero.
-6. **MMS provider tables** — via `mms/reset`, if configured.
+6. **MMS provider tables** — via `mms/reset`, if configured; the MMS engine's
+   `engine/reset` also clears its local site/segment subscription handles.
 7. **CMS provider tables** — via `cms/reset`, if configured.
 
 The response reports `providersReset` and an `actionRequired` list.
@@ -58,8 +61,9 @@ The response reports `providersReset` and an `actionRequired` list.
 > - The **CMS and MMS engines hold no durable state**, so there are no "CMS Engine
 >   tables" or "MMS Engine tables" to clear. Unlike ENG, neither keeps a
 >   watermark: their only state is an in-memory ISBM subscription session that
->   goes when the host restarts. Clearing the CMS and MMS **provider** tables, as
->   steps 6 and 7 do, is the whole of the reset for those two systems.
+>   goes when the host restarts. MMS's engine reset explicitly clears those
+>   handles after channel reset; it does not itself delete durable backlog,
+>   wipe provider data or replay approvals.
 >
 > The **CIR registry's own data is not cleared** by day zero. Entries registered
 > earlier keep their CIRIDs. Use `POST /admin/cir/registry/delete` for a true
@@ -169,6 +173,36 @@ registry content.
 
 ---
 
+## 7. Approve and verify in MMS
+
+1. In **SC02 → REG-LOCATION**, approve the proposed streetlight.
+2. REG-LOCATION resolves its governed class UUID and registration-site UUID,
+   then publishes the enriched `SyncSegments` on both the engineering return
+   route and the operations route. Completion requires both routes to succeed.
+3. MMS consumes from its durable per-site operations subscription. It resolves
+   the class through CIR to `LIGHT_UNIT_INVENTORY` and the site to `OWNER_ID`.
+   Missing mappings defer processing and retain the publication.
+4. The provider upserts by `EXT_ASSET_ID = Segment.UUID`. MMS writes the native
+   `LIGHT_UNIT_ID` into CIR's `ASSET/MMS`, retaining the original UUID, before
+   acknowledging the publication. Native light-system grouping stays MMS-owned.
+5. Select the same iTwin and **TAMS (MMS)** persona. The live inventory shows
+   MMS ID, name, federation UUID, owner, grouping and update time. There is no
+   manual Store Assets action.
+
+Dev ingestion checks every **30 seconds**; the open MMS screen refreshes every
+**10 seconds** and has a Refresh button. These are separate intervals, not an
+end-to-end deadline. Site ingestion remains every two minutes. As a reference,
+**9200 - District 2** held XX01, XX02 and XX03 during live verification.
+
+The panel reads `GET /admin/mms/lightunits?twin={uuid}` through the Sandbox API.
+Missing owner mapping, empty inventory and provider errors have distinct states;
+there is no unscoped fallback. Bootstrap subscriptions before publishing, and
+see [rollout and replay](../scenarios/channel-topology.md#mms-rollout-and-replay)
+before backfilling approvals that predate them. Do not reset or replay merely
+because an asynchronous approval has not appeared immediately.
+
+---
+
 ## Summary: implemented vs. assumed
 
 | Claim | Status |
@@ -185,3 +219,7 @@ registry content.
 | MMS/CMS site data seeded | **Removed** — a greenfield starts empty |
 | ENG publishes SyncSegments on named version | Implemented |
 | REG-LOCATION consumes SyncSegments into the provider | Implemented (via steward disposition) |
+| REG-LOCATION publishes approved SyncSegments to ENG and MMS | Deployed; governed class and registration-site UUIDs included |
+| MMS persists approved streetlights and federates native IDs | Deployed; `LIGHT_UNIT_INVENTORY` and CIR `ASSET/MMS` |
+| MMS SC01/SC02 inventory screen | Live, site-scoped provider data; deployed with Sandbox API/UI |
+| MMS dev segment polling | Every 30 seconds; screen refresh every 10 seconds |

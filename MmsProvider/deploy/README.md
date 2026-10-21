@@ -24,6 +24,19 @@ HTTP. Deploying the provider alone does not enable segment ingestion. See
 [MMS rollout and replay](../../docs/scenarios/channel-topology.md#mms-rollout-and-replay)
 for CIR, engine settings and subscription prerequisites.
 
+The streetlight leg and live Sandbox inventory UI are deployed on Azure dev
+as of 2026-10-21. The MMS database is
+`acme-sql-server.database.windows.net / acme-db-mms-dev`. Approved streetlights
+upsert `LIGHT_UNIT_INVENTORY` by `EXT_ASSET_ID`; the returned `LIGHT_UNIT_ID`
+is federated through CIR's `ASSET/MMS`. `LIGHT_SYSTEM_ID` may be null and is
+not assigned by this integration.
+
+The live UI uses Sandbox `GET /admin/mms/lightunits?twin={uuid}`, which resolves
+the CIR owner mapping and filters provider rows; it does not call this provider
+directly from the browser. Deploy the Sandbox API and built UI together.
+Dev segment polling is 30 seconds and site polling two minutes; neither
+interval is controlled by the provider.
+
 ## Deploying
 
 Order matters — the database must exist first.

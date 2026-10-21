@@ -93,6 +93,33 @@ start. Their channel is enterprise-level rather than iTwin-derived, which is the
 whole point of `SyncSites` — it is the message that brings an iTwin context into
 being, so it cannot require one to already exist.
 
+## MMS approved streetlights and polling
+
+The MMS engine now consumes SC02 approved streetlights as well as sites.
+Deploy the CIR provider with destination-category equivalence support first,
+then MMS with configured provider/CIR URLs and keys, `RegisterInCir=true`
+and `SegmentsIngestEnabled=true` (enabled by this script).
+
+| Setting | Dev | Other environments |
+|---|---|---|
+| `MmsEngineSegmentsIngestSchedule` | `*/30 * * * * *` (every 30 seconds) | `30 */2 * * * *` (every two minutes at second 30) |
+| `MmsEngineSitesIngestSchedule` | `0 */2 * * * *` | `0 */2 * * * *` |
+
+These flat timer settings are reapplied by the deployment script. Local MMS
+settings also use 30-second segment polling. Azure dev was updated and verified
+on 2026-10-21; the restart restored all three site subscriptions.
+
+Bootstrap durable per-site operations subscriptions **before** approvals are
+published. Missing mappings defer delivery; a successful write is acknowledged
+only after native-key registration in CIR's `ASSET/MMS`. Do not configure
+`MmsEngine__SegmentsTopics__*` when using the code default: array binding appends
+to initialized defaults and can duplicate the topic.
+
+See [MMS rollout and replay](../../docs/scenarios/channel-topology.md#mms-rollout-and-replay)
+for readiness checks and deliberate backfill. The live inventory screen is
+deployed separately with the Sandbox API and built WorkflowOrchestration UI;
+redeploying the engine alone does not update that screen.
+
 ## RDL ships enabled, unlike ENG and REG-LOCATION
 
 `Isbm__Enabled` is set `true` for RDL on first provision. The reasoning above

@@ -1915,8 +1915,11 @@ Consequences of writing them:
 - **The old ENG-vocabulary keys are retained** in `InboundClassMap` alongside the RDL key, so a
   publisher that has not moved over still lands somewhere sensible. They retire when the last one
   moves.
-- **MMS has no segments leg yet.** `InboundRdlTableMap` records the agreed mapping but nothing
-  consumes it; MmsEngine still ingests only sites. Unlike REG-LOCATION, MMS gets **no fallback** —
+- **At this decision's original implementation, MMS had no segments leg yet.**
+  Superseded by DR-033's implementation confirmation on 2026-10-21: approved
+  streetlights now reach MMS and the native asset identity is written back to CIR.
+  Originally, `InboundRdlTableMap` recorded the agreed mapping but nothing
+  consumed it and MmsEngine ingested only sites. Unlike REG-LOCATION, MMS gets **no fallback** —
   an unknown class there would mean choosing a table, and writing a light unit into an arbitrary
   one is corruption, not degradation.
 - **`rdl:TemperatureIndicatingController` remains deliberately absent.** The degradation fixture is
@@ -2568,6 +2571,4 @@ running, not whether the process inside it survived startup. Probing HTTP status
 one broken app from the fourteen healthy ones in a single pass; the portal's own status column would
 not have. The general rule from DR-031 holds here too: **check the thing itself, not a cache or a
 proxy for it.**
-
-
 

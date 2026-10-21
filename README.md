@@ -1,17 +1,20 @@
 # OIIE
 
-Monorepo for the OpenO&M interoperability stack: three independently deployable
-providers over a shared set of contracts and schemas.
+Monorepo for the OpenO&M interoperability stack: independently deployable
+providers and integration engines over shared contracts and schemas, with a
+Sandbox API and interactive workflow UI.
 
 | Deliverable | Project | What it is |
 |---|---|---|
 | **ISBM** | `ISBMProvider` | ws-ISBM Service Provider — channels, sessions, pub/sub and request/response over Service Bus |
 | **CIR** | `CirProvider` | ws-CIR registry — cross-system identity registration and equivalence resolution |
-| **Sandbox** | `SimHost` | Multi-participant simulator that exercises both providers end to end |
+| **Customer-system emulators** | `EngProvider`, `RegLocationProvider`, `MmsProvider`, `CmsProvider`, `RdlProvider` | Provider APIs over each system's own data |
+| **Integration engines** | `EngEngine`, `RegLocationEngine`, `MmsEngine`, `CmsEngine`, `RdlEngine` | Independent HTTP/ISBM integration hosts |
+| **Sandbox** | `Oiie.Sandbox.Api`, `WorkflowOrchestration` | Workflow API and React operator UI; scenario assertions run as tests |
 
-The flow under test is **Sandbox → CIR → ISBM**. A single solution means that
-whole path is visible at once; independent deployment is preserved through
-per-deliverable `infra/` and `deploy/`.
+The current live handover is **ENG → REG-LOCATION approval → MMS**, exchanging
+CCOM through ISBM and resolving identities through CIR. A single solution makes
+the whole path visible; providers and engines remain independently deployable.
 
 ## Layout
 
@@ -24,11 +27,10 @@ OIIE/
   Oiie.Ccom/                  CCOM domain model and BOD validation
   ISBMProvider/               ── deliverable 1
   CirProvider/                ── deliverable 2
-  Oiie.Sandbox.Core/          ── deliverable 3: the engine, shared by both hosts
+  Oiie.Sandbox.Core/          scenario and workflow services
     PersonalityPacks/         participant config and fixtures, linked into each host
     Scenarios/                scenario definitions
-  Oiie.Sandbox.Api/           the REST surface: /admin, /health, message pumps
-  SimHost/                    Blazor UI for running and inspecting scenarios
+  Oiie.Sandbox.Api/           the REST surface: /admin, /health, provider read-through
   WorkflowOrchestration/      React UI for driving the sandbox interactively
 
   schemas/{ccom,cir,oagis}    single source of truth for XSDs
@@ -42,34 +44,30 @@ OIIE/
 Flat, with no `src/` level — the convention the source repositories used.
 Grouping is handled by solution folders.
 
-The sandbox is three projects, not one. `Oiie.Sandbox.Core` holds the engine;
-`Oiie.Sandbox.Api` and `SimHost` are separate hosts over it, and only the API
-runs the message pumps. Two UIs are kept deliberately: SimHost drives end-to-end
-automated scenario runs, WorkflowOrchestration is for interactive use. See
-`docs/decision-records/2026-08-sandbox-host-split.md`.
+WorkflowOrchestration is the current UI and ships inside the Sandbox API's
+`wwwroot`; the earlier SimHost Blazor host has been removed. Message movement
+belongs to the standalone integration engines, not a Sandbox inbox pump.
 
 ## What the sandbox shows
 
-SimHost runs a scenario and then lets you check the claim. `/runs/{id}` opens
-four tabs: identity lineage, assertion results, message flow, and the rows each
-participant actually persisted. Every message in the flow links to a page
-showing the source record, the BOD XML, the resulting records and the provenance
-trail side by side. The participants page at `/` goes wider than a single run:
-each participant expands to show its whole schema, read as that participant's
-own SQL user.
+Author an ENG streetlight, publish an iModel Named Version, then approve the
+proposal in REG-LOCATION. MMS resolves the governed class and site through CIR,
+upserts `LIGHT_UNIT_INVENTORY`, and registers its assigned native key in
+`ASSET/MMS` under the same federation UUID before acknowledging the message.
+Missing mappings defer processing; the first pass does not invent native
+classifications or light-system grouping.
 
-The behaviour worth watching is what happens to a property value across three
-systems holding different reference data. ENG classifies a tag against
-`rdl:TemperatureIndicatingController` and authors a control action.
-REG-LOCATION lacks that leaf class, binds at `rdl:Instrument`, and records the
-classification as degraded — but it holds the property *definition*, so the value
-arrives mapped. MMS holds no reference data at all, so the same value is retained
-unmapped: stored, flagged, not discarded.
+The SC01/SC02 MMS persona (displayed as TAMS) shows persisted, site-scoped
+inventory, not seeded inbox rows. Dev ingestion polls every 30 seconds and the
+open screen refreshes every 10 seconds. The API/UI and ingestion leg were
+deployed and verified on Azure dev on 2026-10-21. Other workflow panels still
+include mock behavior; see [what is live](WorkflowOrchestration/README.md).
 
-That last part is the claim. A receiver that drops what it cannot classify makes
-federation all-or-nothing, and it is not: MMS keeps the value against the day
-someone gives it a definition. Holding a definition and holding the class that
-sanctions it are separate questions.
+Use the [demo walkthrough](docs/Demo/script.md), [runbook](docs/RUNBOOK.md) and
+[rollout/replay guide](docs/scenarios/channel-topology.md#mms-rollout-and-replay)
+for testing and operational details. Do not infer MMS persistence from
+REG-LOCATION approval alone, or replay historical approvals without checking
+subscription readiness.
 
 ## Documentation
 

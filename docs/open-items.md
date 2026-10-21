@@ -668,12 +668,17 @@ endpoint, so the deployment pattern is proven in this system.
 
 ### What is missing
 
-**The read surface has no contract at all.** `/admin/cms/customer-assets`,
+**Historical simulator read surface:** `/admin/cms/customer-assets`,
 `/admin/mms/locations`, `/admin/reg-location/stewardship` and `/admin/eng/tags`
 are four hand-written endpoints with four response shapes, four twin-scoping
 implementations and four filter conventions. The stewardship `?state=` gap
 existed precisely because nothing said a participant must expose its lifecycle
 states.
+
+The deployed SC01/SC02 MMS read path was replaced on 2026-10-21 by typed
+`GET /admin/mms/lightunits?twin={uuid}`, backed by MMS Provider and CIR.
+The older endpoints above describe the original simulator design, not the
+current MMS screen.
 
 Do **not** answer this with one `IListThings`. CMS holds assets, MMS holds light
 systems, ENG holds segments; a single typed list method either collapses to
@@ -731,8 +736,13 @@ boundary converts every design flaw into a distributed-systems problem.
 
 ## Endpoint-level tests for the MMS read path
 
-**Status:** not started. Agreed at the end of the 2026-08-14 session, deferred so
-the demo could be walked through first.
+**Status:** superseded for the live MMS view on 2026-10-21.
+`MmsInventorySourceTests` and `MmsInventoryEndpointTests` now cover owner scoping,
+missing/invalid/ambiguous mappings, provider failures, UTC timestamps, HTTP
+200/400/502 and the read-only admin-key exemption. The new endpoint is
+`/admin/mms/lightunits`; missing `twin` returns 400, not unscoped inventory.
+The original `/admin/mms/locations` findings and proposed tests below are
+historical and do not define the replacement endpoint's contract.
 
 The 88 tests in `tests/Oiie.Sandbox.Tests` are structural: they assert schema
 fidelity and identity semantics. That is the right thing for them to do, and it
@@ -766,7 +776,11 @@ unresolved.
 
 ## Latency of scoped MMS reads
 
-**Status:** diagnosed, not fixed. Deferred by the user on 2026-08-14 to be
+**Historical endpoint:** the live MMS UI now uses direct server-side CIR/MMS
+REST reads via `/admin/mms/lightunits`; the measurements below apply only to
+the retired simulator path and must not be used as current latency figures.
+
+**Original status:** diagnosed, not fixed. Deferred by the user on 2026-08-14 to be
 picked up later. Full evidence and ruled-out causes in DR-010.
 
 A scoped `/admin/mms/locations?twin=…` takes ~1.9s to return 9 rows; the same
@@ -1752,7 +1766,7 @@ of the changed provider's HTTP endpoint.
 Originally estimated at 60-70% of the REG-LOCATION effort. DR-033 revises that
 upward, closer to parity: the leg is bidirectional rather than one-directional,
 and dispatch reads CIR rather than a local dictionary. The provider's nullable-parent contract and grouping-preserving SQL were
-corrected on 2026-10-21; the first engine leg is now implemented locally.
+corrected on 2026-10-21; the first engine leg is deployed and verified on Azure dev.
 Generic table writers and source-revision ordering are not part of this first
 ingestion pass. Live UI data is implemented as the separate Sandbox API/UI
 follow-up described above.

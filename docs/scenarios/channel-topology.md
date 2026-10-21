@@ -144,7 +144,7 @@ or ambiguous class mappings leave the approval pending publication. Proposal
 ingestion remains independent of this outbound requirement.
 
 MMS and CMS have standalone providers and engines. MMS's first segment subscriber
-is implemented locally for streetlights. Its durable subscription must be
+is deployed and verified on Azure dev for streetlights. Its durable subscription must be
 established before approvals are published.
 Do not regard SC02's sender-side completion rule as proof of MMS persistence.
 
