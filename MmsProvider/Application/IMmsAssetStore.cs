@@ -215,20 +215,21 @@ public sealed record MmsLightUnit(
     DateTime? DateUpdate);
 
 /// <summary>
-/// A light unit a caller wants to exist, within a light system that must
-/// already have been upserted -- LIGHT_UNIT_INVENTORY.LIGHT_SYSTEM_ID has no
-/// NOT NULL constraint in the source schema, but a unit with no system is not
-/// a usable one, so this contract requires it.
+/// A light unit a caller wants to exist, matched by ExtAssetId.
+/// A null LightSystemId creates an ungrouped unit or preserves an existing
+/// assignment. A supplied identifier must be positive and name an existing
+/// light system; it assigns or reassigns the unit.
 /// </summary>
 public sealed record LightUnitUpsert(
     Guid ExtAssetId,
     string LightUnitName,
-    long LightSystemId,
+    long? LightSystemId,
     long? LightUnitClassCodeId,
     long? LightUnitStatusId,
     long? OwnerId,
     string? MndotAssetNumber);
 
+/// <summary>Persisted light units and item-level rejections from an upsert batch.</summary>
 public sealed record LightUnitUpsertResult(
     IReadOnlyList<UpsertedLightUnit> Units,
     IReadOnlyList<UpsertRejection> Rejections)
@@ -237,6 +238,7 @@ public sealed record LightUnitUpsertResult(
     public int Updated => Units.Count(u => !u.Created);
 }
 
+/// <summary>The MMS-assigned key and external identity of one persisted light unit.</summary>
 public sealed record UpsertedLightUnit(long LightUnitId, Guid ExtAssetId, bool Created);
 
 /// <summary>

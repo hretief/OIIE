@@ -2298,7 +2298,8 @@ a third row for the same class would indicate the cross-reference is not being c
 
 ## DR-032 — An engine writes a footprint row; the receiving system's own structure stays its own
 
-Decided 2026-09-11, while scoping the MMS segment ingest leg. Not yet implemented.
+Decided 2026-09-11, while scoping the MMS segment ingest leg. Provider and REST
+contract support implemented 2026-10-21; segment ingestion remains outstanding.
 
 `LIGHT_UNIT_INVENTORY.LIGHT_SYSTEM_ID` names a parent light system. Nothing in the sites leg
 establishes one, so the column initially looked like a modelling gap that had to be closed before an
@@ -2528,7 +2529,6 @@ running, not whether the process inside it survived startup. Probing HTTP status
 one broken app from the fourteen healthy ones in a single pass; the portal's own status column would
 not have. The general rule from DR-031 holds here too: **check the thing itself, not a cache or a
 proxy for it.**
-
 
 
 

@@ -20,6 +20,8 @@
     <ProjectReference Include="..\..\EngEngine\EngEngine.csproj" />
     <ProjectReference Include="..\..\RegLocationEngine\RegLocationEngine.csproj" />
     <ProjectReference Include="..\..\RdlEngine\RdlEngine.csproj" />
+    <ProjectReference Include="..\..\MmsEngine\MmsEngine.csproj" />
+    <ProjectReference Include="..\..\MmsProvider\MmsProvider.csproj" />
   </ItemGroup>
 
 </Project>

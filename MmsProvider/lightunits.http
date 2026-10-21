@@ -1,0 +1,40 @@
+@baseUrl = http://localhost:7071/api
+@functionKey =
+@extAssetId = 1eaee9ba-b3bd-45f4-a3ab-1a469cbed779
+
+### Create an ungrouped footprint, or update it without changing MMS grouping
+POST {{baseUrl}}/lightunits
+x-functions-key: {{functionKey}}
+Content-Type: application/json
+
+[
+  {
+    "extAssetId": "{{extAssetId}}",
+    "lightUnitName": "SL-REST-001",
+    "lightSystemId": null
+  }
+]
+
+### Read back the MMS-assigned ID and current grouping
+GET {{baseUrl}}/lightunits/by-ext/{{extAssetId}}
+x-functions-key: {{functionKey}}
+
+### Invalid system ID: 200 with an item-level permanent rejection
+POST {{baseUrl}}/lightunits
+x-functions-key: {{functionKey}}
+Content-Type: application/json
+
+[
+  {
+    "extAssetId": "{{extAssetId}}",
+    "lightUnitName": "SL-REST-001",
+    "lightSystemId": 0
+  }
+]
+
+### Empty batch: 400
+POST {{baseUrl}}/lightunits
+x-functions-key: {{functionKey}}
+Content-Type: application/json
+
+[]

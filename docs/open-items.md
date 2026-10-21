@@ -1597,8 +1597,8 @@ identify it.
 
 ## MMS has no segment ingest leg
 
-Raised 2026-09-11. **Not started.** Scoped, not implemented — recorded so the
-next session begins on implementation rather than rediscovery.
+Raised 2026-09-11. **Provider/REST groundwork implemented 2026-10-21; segment
+ingestion remains outstanding.**
 
 MMS consumes sites and writes them to `SETUP_OWNER`, which works. It has no
 equivalent of REG-LOCATION's segment leg, so approved locations never reach
@@ -1619,8 +1619,11 @@ Most of the groundwork is already laid, largely by DR-030:
 The column mapping is settled in DR-033. What is missing is the engine's second
 leg:
 
-1. `MmsRestClient.UpsertLightUnitsAsync` — mechanical, mirrors
-   `UpsertOwnersAsync`.
+1. **Done 2026-10-21:** `MmsRestClient.UpsertLightUnitsAsync` and local wire
+   contracts. Returns assigned MMS keys and partial rejections, raises HTTP
+   failures, and rejects malformed/incomplete success responses. Provider upserts
+   now accept a null `LightSystemId` and preserve existing grouping on update;
+   explicit positive identifiers still assign/reassign a system.
 2. `MmsEngine/Application/IncomingSegmentMapper` — maps `SyncSegments` onto
    `LightUnitUpsert`: `LIGHT_UNIT_NAME` from `Segment.ShortName`, `OWNER_ID`
    resolved from CIR on `Segment.RegistrationSite.UUID`, `LIGHT_SYSTEM_ID` left
@@ -1643,10 +1646,39 @@ leg:
    publication channel item above, so day zero ensures it rather than orphaning
    it.
 
+Provider/REST validation is in
+[`MmsRestClientTests`](../tests/Oiie.Sandbox.Tests/MmsRestClientTests.cs) and
+[`MmsLightUnitSqlTests`](../tests/Oiie.Sandbox.Tests/MmsLightUnitSqlTests.cs).
+Run with:
+
+```sh
+dotnet test tests/Oiie.Sandbox.Tests/Oiie.Sandbox.Tests.csproj --configuration Release --filter "FullyQualifiedName~MmsRestClientTests|FullyQualifiedName~MmsLightUnitSqlTests"
+```
+
+The SQL test is explicitly skipped unless `OIIE_MMS_TEST_SQL_CONNECTION_STRING`
+points to a database with the MMS schema and reference data already applied.
+Prefer a **dedicated test database**; shared dev requires explicit approval.
+It creates uniquely identified test rows and deletes only those rows afterwards;
+it does not reset or provision a database. Identity sequences still advance.
+Do not point it at production. The contract tests need no database.
+[`lightunits.http`](../MmsProvider/lightunits.http) provides manual HTTP examples.
+
+Verified 2026-10-21 with explicit approval against `acme-db-mms-dev` on
+`acme-sql-server.database.windows.net`, using Azure sign-in: **19 tests passed,
+none skipped** (18 REST contract cases and one SQL regression). The SQL test
+exercised ungrouped insertion, stable MMS identity, explicit assignment and
+reassignment, preservation of grouping on null updates, and rejection of
+non-positive system IDs. Test-row cleanup completed. The temporary single-IP
+firewall rule needed for this run was removed and its absence verified.
+This validates the local implementation against Azure SQL, not a deployment
+of the changed provider's HTTP endpoint.
+
 Originally estimated at 60-70% of the REG-LOCATION effort. DR-033 revises that
 upward, closer to parity: the leg is bidirectional rather than one-directional,
-and dispatch reads CIR rather than a local dictionary. The provider side is still
-complete, so the extra work is in the engine's application layer, not in SQL.
+and dispatch reads CIR rather than a local dictionary. The provider's
+nullable-parent contract and grouping-preserving SQL were corrected on
+2026-10-21; the remaining segment-ingestion work is in the engine and exchange
+contracts/routing.
 
 ### `LIGHT_SYSTEM_ID` is not the engine's to populate
 

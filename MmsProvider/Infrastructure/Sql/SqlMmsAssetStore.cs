@@ -288,7 +288,7 @@ public sealed class SqlMmsAssetStore(
                 {
                     rejections.Add(new UpsertRejection(
                         unit.ExtAssetId.ToString(),
-                        "LightSystemId is required: a unit must belong to a system already in MMS.",
+                        "LightSystemId must be positive when supplied; null leaves the grouping unchanged.",
                         false));
                     continue;
                 }
@@ -320,7 +320,7 @@ public sealed class SqlMmsAssetStore(
             """
             UPDATE dbo.LIGHT_UNIT_INVENTORY
             SET LIGHT_UNIT_NAME          = @name,
-                LIGHT_SYSTEM_ID          = @systemId,
+                LIGHT_SYSTEM_ID          = COALESCE(@systemId, LIGHT_SYSTEM_ID),
                 LIGHT_UNIT_CLASS_CODE_ID = COALESCE(@classCode, LIGHT_UNIT_CLASS_CODE_ID),
                 LIGHT_UNIT_STATUS_ID     = COALESCE(@statusId, LIGHT_UNIT_STATUS_ID),
                 OWNER_ID                 = COALESCE(@ownerId, OWNER_ID),
@@ -358,7 +358,8 @@ public sealed class SqlMmsAssetStore(
     {
         cmd.Parameters.AddWithValue("@ext", extAssetId);
         cmd.Parameters.AddWithValue("@name", unit.LightUnitName);
-        cmd.Parameters.AddWithValue("@systemId", unit.LightSystemId);
+        cmd.Parameters.Add("@systemId", System.Data.SqlDbType.BigInt).Value =
+            (object?)unit.LightSystemId ?? DBNull.Value;
         cmd.Parameters.AddWithValue("@classCode", (object?)unit.LightUnitClassCodeId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@statusId", (object?)unit.LightUnitStatusId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@ownerId", (object?)unit.OwnerId ?? DBNull.Value);

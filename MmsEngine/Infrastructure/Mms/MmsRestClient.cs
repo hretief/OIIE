@@ -30,6 +30,27 @@ public sealed record LightSystemUpsertResult(
     IReadOnlyList<UpsertedLightSystem> Systems,
     IReadOnlyList<UpsertRejection> Rejections);
 
+/// <summary>
+/// A light unit matched by ExtAssetId. Null LightSystemId leaves MMS-owned
+/// grouping untouched, including on later updates.
+/// </summary>
+public sealed record LightUnitUpsert(
+    Guid ExtAssetId,
+    string LightUnitName,
+    long? LightSystemId,
+    long? LightUnitClassCodeId,
+    long? LightUnitStatusId,
+    long? OwnerId,
+    string? MndotAssetNumber);
+
+/// <summary>The MMS-assigned key and external identity of one persisted light unit.</summary>
+public sealed record UpsertedLightUnit(long LightUnitId, Guid ExtAssetId, bool Created);
+
+/// <summary>Persisted light units and item-level rejections from an upsert batch.</summary>
+public sealed record LightUnitUpsertResult(
+    IReadOnlyList<UpsertedLightUnit> Units,
+    IReadOnlyList<UpsertRejection> Rejections);
+
 public sealed record MmsLookup(long Id, string Name, bool ActiveFlag);
 
 /// <summary>
@@ -48,7 +69,8 @@ public sealed record OwnerUpsertResult(
     IReadOnlyList<UpsertedOwner> Owners,
     IReadOnlyList<UpsertRejection> Rejections);
 
-public sealed class MmsClientException(string message) : Exception(message);
+public sealed class MmsClientException(string message, Exception? innerException = null)
+    : Exception(message, innerException);
 
 public interface IMmsClient
 {
@@ -60,6 +82,13 @@ public interface IMmsClient
     /// </summary>
     Task<LightSystemUpsertResult> UpsertLightSystemsAsync(
         IReadOnlyList<LightSystemUpsert> systems, CancellationToken ct);
+
+    /// <summary>
+    /// Creates or updates light units by ExtAssetId and returns their MMS keys.
+    /// Partial results retain item-level rejections; HTTP failures are raised.
+    /// </summary>
+    Task<LightUnitUpsertResult> UpsertLightUnitsAsync(
+        IReadOnlyList<LightUnitUpsert> units, CancellationToken ct);
 
     /// <summary>
     /// TAMS's light system class codes, for resolving the fallback this engine
@@ -86,6 +115,50 @@ public interface IMmsClient
 public sealed class MmsRestClient(HttpClient http) : IMmsClient
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    public async Task<LightUnitUpsertResult> UpsertLightUnitsAsync(
+        IReadOnlyList<LightUnitUpsert> units, CancellationToken ct)
+    {
+        if (units.Count == 0)
+        {
+            return new LightUnitUpsertResult([], []);
+        }
+
+        using var response = await http.PostAsJsonAsync("lightunits", units, Json, ct);
+
+        if (response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+        {
+            throw new MmsClientException(
+                "MMS reported every light unit in the batch as transiently rejected.");
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+
+            throw new MmsClientException(
+                $"MMS refused the light unit upsert ({(int)response.StatusCode}): {Excerpt(body)}");
+        }
+
+        LightUnitUpsertResult? result;
+        try
+        {
+            result = await response.Content.ReadFromJsonAsync<LightUnitUpsertResult>(Json, ct);
+        }
+        catch (JsonException ex)
+        {
+            throw new MmsClientException("MMS returned an invalid light unit upsert response.", ex);
+        }
+
+        if (result?.Units is null || result.Rejections is null
+            || result.Units.Count + result.Rejections.Count != units.Count)
+        {
+            throw new MmsClientException(
+                "MMS returned an incomplete light unit upsert response; each requested unit needs a result.");
+        }
+
+        return result;
+    }
 
     public async Task<LightSystemUpsertResult> UpsertLightSystemsAsync(
         IReadOnlyList<LightSystemUpsert> systems, CancellationToken ct)

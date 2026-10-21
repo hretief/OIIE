@@ -204,6 +204,8 @@ public sealed class MmsFunctions(IMmsAssetStore store, ILogger<MmsFunctions> log
 
     /// <summary>
     /// Creates or updates light units and returns the key TAMS assigned to each.
+    /// A missing or null LightSystemId permits an ungrouped insert and preserves
+    /// the current grouping on update. A positive identifier assigns a system.
     ///
     /// Returns 200 for a partial result rather than 207 or 400: the units that
     /// landed are genuinely in the database, and the rejections are named in the
