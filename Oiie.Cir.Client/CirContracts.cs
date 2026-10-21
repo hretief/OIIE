@@ -21,7 +21,8 @@ public sealed record CirEntry(
     string? SourceOwnerId,
     string? Name,
     CirLocalizedText? Description,
-    IReadOnlyList<CirProperty> Properties);
+    IReadOnlyList<CirProperty> Properties,
+    bool? Inactive = null);
 
 public sealed record CirCategory(
     string Id,

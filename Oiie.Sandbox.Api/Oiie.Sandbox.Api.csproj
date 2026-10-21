@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Oiie.Sandbox.Core\Oiie.Sandbox.Core.csproj" />
+    <ProjectReference Include="..\Oiie.Cir.Client\Oiie.Cir.Client.csproj" />
   </ItemGroup>
 
   <ItemGroup>

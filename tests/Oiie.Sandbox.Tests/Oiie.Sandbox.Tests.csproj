@@ -23,6 +23,7 @@
     <ProjectReference Include="..\..\MmsEngine\MmsEngine.csproj" />
     <ProjectReference Include="..\..\MmsProvider\MmsProvider.csproj" />
     <ProjectReference Include="..\..\CirProvider\CirProvider.csproj" />
+    <ProjectReference Include="..\..\Oiie.Sandbox.Api\Oiie.Sandbox.Api.csproj" />
   </ItemGroup>
 
 </Project>

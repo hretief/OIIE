@@ -618,6 +618,32 @@ export async function listStewardship(
   return response.items
 }
 
+/** A persisted light unit in the external MMS Provider, not a browser workflow row. */
+export interface MmsLightUnit {
+  lightUnitId: number
+  lightUnitName: string
+  lightSystemId: number | null
+  lightUnitClassCodeId: number | null
+  lightUnitStatusId: number | null
+  ownerId: number | null
+  extAssetId: string | null
+  mndotAssetNumber: string | null
+  dateUpdate: string | null
+}
+
+export interface MmsInventory {
+  iTwinId: string
+  ownerId: number | null
+  siteMapped: boolean
+  count: number
+  items: MmsLightUnit[]
+}
+
+/** Server-side CIR resolution prevents another site's assets appearing under this iTwin. */
+export function listMmsLightUnits(iTwinId: string, signal?: AbortSignal): Promise<MmsInventory> {
+  return request<MmsInventory>(`/admin/mms/lightunits?twin=${encodeURIComponent(iTwinId)}`, { signal })
+}
+
 /**
  * Approve proposals, either a chosen subset or the whole queue.
  *
@@ -672,4 +698,3 @@ export interface DayZeroResult {
 export function resetDayZero(): Promise<DayZeroResult> {
   return request<DayZeroResult>('/admin/reset/day-zero', { method: 'POST' })
 }
-

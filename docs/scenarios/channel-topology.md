@@ -181,7 +181,9 @@ Do not regard SC02's sender-side completion rule as proof of MMS persistence.
    select a destination category inside the existing transaction.
 2. Deploy MMS engine with both flat schedule settings:
    `MmsEngineSitesIngestSchedule=0 */2 * * * *` and
-   `MmsEngineSegmentsIngestSchedule=30 */2 * * * *`.
+   `MmsEngineSegmentsIngestSchedule=*/30 * * * * *` for dev/local testing
+   (every 30 seconds). Other deployment environments retain `30 */2 * * * *`
+   (every two minutes, at second 30). Site ingestion remains every two minutes.
    Code defaults leave `SegmentsIngestEnabled=false`; checked-in local/deploy
    settings opt in with `MmsEngine__SegmentsIngestEnabled=true`. MMS/CIR URLs,
    keys and `RegisterInCir=true` are required for the segment leg.
@@ -210,7 +212,10 @@ Do not regard SC02's sender-side completion rule as proof of MMS persistence.
    `failed` and `notes`. A row written before a CIR outage may count as upserted
    without the message being acknowledged; retry safely upserts the same UUID.
    Verify `GET /api/lightunits` on MMS Provider and CIR's `ASSET/MMS` mapping,
-   not the currently mock-backed MMS operator view.
+   or use the site-scoped live MMS panel (Sandbox API/UI deployed together on
+   Azure dev 2026-10-21):
+   select the matching iTwin in SC02's MMS/TAMS persona to inspect persisted
+   light units through `GET /admin/mms/lightunits?twin={uuid}`.
 
 `POST /api/engine/reset` on MMS clears only local segment/site session handles.
 It does not delete durable backlog, reset provider data or replay approvals.

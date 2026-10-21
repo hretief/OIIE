@@ -3,10 +3,8 @@ namespace Oiie.Sandbox.Api.Providers;
 /// <summary>
 /// Where the customer-system provider apps live, and the key to reach them.
 ///
-/// Bound from <c>Providers:Eng</c> and <c>Providers:RegLocation</c>. Both are
-/// optional: absent configuration is the signal to keep serving the affected
-/// panels from the sandbox's own participants, which is what a fresh clone with
-/// no Azure access does. See <see cref="IsConfigured"/>.
+/// Bound from <c>Providers</c>. Live panels require configured endpoints;
+/// they do not substitute sandbox or sample data when a provider is missing.
 ///
 /// The key is a plain setting rather than a managed identity because the
 /// provider apps use <c>AuthorizationLevel.Function</c>, which has no notion of
@@ -28,10 +26,7 @@ public sealed class ProviderEndpointOptions
     /// <summary>
     /// True when this provider can actually be called.
     ///
-    /// A base URL without a key is treated as unconfigured rather than as an
-    /// attempt worth making: every request would answer 401, and a panel of
-    /// authentication errors is a worse diagnostic than the sandbox data the
-    /// fallback shows.
+    /// A base URL without a key cannot authenticate to a provider.
     /// </summary>
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(Key);
@@ -40,12 +35,8 @@ public sealed class ProviderEndpointOptions
 /// <summary>
 /// The provider apps the sandbox reads through to.
 ///
-/// Only ENG and REG-LOCATION are bound here, because only those two back a
-/// panel. The configuration section is wider than this class: day zero also
-/// reads <c>Providers:Cir:BaseUrl</c>, <c>Providers:Mms:BaseUrl</c> and
-/// <c>Providers:Cms:BaseUrl</c> directly, so that one setting per provider
-/// serves both read-through and reset. Adding them as properties here would
-/// imply a panel reads them.
+/// ENG, REG-LOCATION and MMS back live panels. CIR resolves the MMS site's
+/// native owner key. Day zero uses the same provider settings for reset.
 /// </summary>
 public sealed class ProviderOptions
 {
@@ -54,4 +45,8 @@ public sealed class ProviderOptions
     public ProviderEndpointOptions Eng { get; set; } = new();
 
     public ProviderEndpointOptions RegLocation { get; set; } = new();
+
+    public ProviderEndpointOptions Mms { get; set; } = new();
+
+    public ProviderEndpointOptions Cir { get; set; } = new();
 }

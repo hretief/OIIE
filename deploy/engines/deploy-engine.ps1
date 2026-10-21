@@ -136,7 +136,7 @@ $engines = @{
         }
         Schedules = @{
             'MmsEngineSitesIngestSchedule' = '0 */2 * * * *'
-            'MmsEngineSegmentsIngestSchedule' = '30 */2 * * * *'
+            'MmsEngineSegmentsIngestSchedule' = $(if ($Environment -eq 'dev') { '*/30 * * * * *' } else { '30 */2 * * * *' })
         }
     }
     eng = @{

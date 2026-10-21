@@ -5,6 +5,7 @@ import * as auth from './auth'
 import type { CurrentUser } from './auth'
 import { applyTheme, initialTheme } from './theme'
 import type { Theme } from './theme'
+import MmsInventoryPanel from './MmsInventoryPanel'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -215,7 +216,7 @@ const SC02_STEPS: WorkflowStep[] = [
   { num: 1, persona: 'REG',         label: 'Review Proposals',      description: 'Segments proposed by BIC await a stewardship decision' },
   { num: 2, persona: 'REG',         label: 'Approve Segments',      description: 'Approve — mints location codes and releases to O&M',      action: 'APPROVE' },
   { num: 3, persona: 'MMS',         label: 'Receive Segments',      description: 'Approved locations arrive on the O&M channel' },
-  { num: 4, persona: 'MMS',         label: 'Store as Assets',       description: 'Commit locations as TAMS functional location records',     action: 'STORE ASSETS' },
+  { num: 4, persona: 'MMS',         label: 'Persist as Assets',      description: 'MMS Engine automatically persists approved streetlights; verify the live inventory below' },
   { num: 5, persona: 'GIS',         label: 'Receive Segments',      description: 'Approved locations arrive on the O&M channel' },
   { num: 6, persona: 'GIS',         label: 'Store as Features',     description: 'Commit locations as ESRI geospatial features',              action: 'STORE ASSETS' },
   { num: 7, persona: 'CMS', label: 'Receive Segments',      description: 'Segment data reaches CMS via the O&M events channel' },
@@ -2112,11 +2113,10 @@ function Workspace({ user }: { user: CurrentUser }) {
   // OIIE ecosystem can see. Named engSegments because `segments` above is the
   // seeded mock list and the two must not be confused.
   const [engSegments, setEngSegments] = useState<api.Tag[]>([])
-  // MMS and CMS are deliberately NOT backed by the sandbox. Like GIS, they run on
-  // the seeded arrays above and act only as the receiving end of a handover, so
-  // the panels stay meaningful without a participant service behind them.
-  // Reconnecting one means giving it a provider and a source, the way ENG and
-  // REG-LOCATION are wired -- not pointing it back at the sandbox's own tables.
+  const [mmsInventory, setMmsInventory] = useState<api.MmsInventory | null>(null)
+  const [mmsLoading, setMmsLoading] = useState(false)
+  const [mmsError, setMmsError] = useState<string | null>(null)
+  const mmsRequest = useRef<AbortController | null>(null)
   const [engLoading, setEngLoading] = useState(false)
   const [engError, setEngError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -2180,6 +2180,7 @@ function Workspace({ user }: { user: CurrentUser }) {
       await Promise.all([
         refreshSegments(),
         refreshStewardship(),
+        refreshMmsInventory(),
       ])
 
       // Local view state has no meaning against regenerated data.
@@ -2429,14 +2430,42 @@ function Workspace({ user }: { user: CurrentUser }) {
     setIModelId(iModels.length === 1 ? iModels[0].iModelId : null)
   }, [iModels, iModelId])
 
-  // ── MMS and CMS: not backed by the sandbox ─────────────────────────────────
-  //
-  // Both have no loader, by choice. Reading them back out of the sandbox meant
-  // maintaining participant tables for systems the sandbox does not own, which
-  // cost more than the panels returned. They behave as GIS does: a receiving
-  // inbox driven by the workflow steps over the seeded rows. Reconnecting one
-  // means giving it a provider and a source, the way ENG and REG-LOCATION are
-  // wired.
+  const refreshMmsInventory = useCallback(async () => {
+    mmsRequest.current?.abort()
+    const abort = new AbortController()
+    mmsRequest.current = abort
+    setMmsError(null)
+    if (!activeTwin) {
+      setMmsInventory(null)
+      setMmsLoading(false)
+      return
+    }
+    setMmsLoading(true)
+    try {
+      const inventory = await api.listMmsLightUnits(activeTwin.uuid, abort.signal)
+      if (!abort.signal.aborted) setMmsInventory(inventory)
+    } catch (err) {
+      if (!abort.signal.aborted) {
+        setMmsInventory(null)
+        setMmsError(err instanceof Error ? err.message : String(err))
+      }
+    } finally {
+      if (!abort.signal.aborted) setMmsLoading(false)
+      if (mmsRequest.current === abort) mmsRequest.current = null
+    }
+  }, [activeTwin?.uuid])
+
+  useEffect(() => {
+    if (workflow !== 'SC01' && workflow !== 'SC02') return
+    void refreshMmsInventory()
+    const timer = persona === 'MMS' ? window.setInterval(() => {
+      if (!mmsRequest.current) void refreshMmsInventory()
+    }, 10_000) : null
+    return () => {
+      if (timer !== null) window.clearInterval(timer)
+      mmsRequest.current?.abort()
+    }
+  }, [workflow, persona, refreshMmsInventory])
 
   // Switching twins abandons any edit in progress. The segment being edited
   // belongs to the twin that was selected, and leaving it loaded would let a
@@ -2521,7 +2550,7 @@ function Workspace({ user }: { user: CurrentUser }) {
    * still considering, and approval is not reversible from here.
    *
    * The queue is re-read afterwards so the states shown are the registry's, not
-   * a guess. MMS is not re-read: it is no longer backed by the sandbox.
+   * a guess. MMS reads its own provider independently after engine ingestion.
    */
   async function approveProposals() {
     const ids = stewardship
@@ -2654,7 +2683,6 @@ function Workspace({ user }: { user: CurrentUser }) {
     const tw = activeTwin.shortName
     if (persona === 'ENG') return segments.filter(s => s.registrationSite === tw)
     if (persona === 'REG') return segments.filter(s => s.registrationSite === tw && (s.status === 'published' || s.status === 'validated'))
-    if (persona === 'MMS') return segments.filter(s => s.registrationSite === tw && (s.status === 'approved' || s.storedMms))
     if (persona === 'GIS') return segments.filter(s => s.registrationSite === tw && (s.status === 'approved' || s.storedGis))
     if (persona === 'CMS') return segments.filter(s => s.registrationSite === tw && (s.status === 'approved' || s.storedCms))
     return []
@@ -2678,6 +2706,8 @@ function Workspace({ user }: { user: CurrentUser }) {
   // The registry's queue, shown wherever REG-LOCATION is the persona: it is the
   // receiving end of SC01 and the starting point of SC02.
   const showStewardship = (workflow === 'SC01' || workflow === 'SC02') && persona === 'REG'
+  const showMmsInventory = (workflow === 'SC01' || workflow === 'SC02') && persona === 'MMS'
+  const currentMmsInventory = mmsInventory?.iTwinId === activeTwin?.uuid ? mmsInventory : null
   const ibSegs = inboxSegments()
   const ibUpds = inboxUpdates()
   const ibAb = inboxAsBuilt()
@@ -2892,11 +2922,11 @@ function Workspace({ user }: { user: CurrentUser }) {
     return 'INCOMING ASSET UPDATES FROM TAMS'
   }
 
-  function sidebarCount(px: typeof PERSONAS[0]): number {
+  function sidebarCount(px: typeof PERSONAS[0]): number | string {
     if (workflow === 'SC01' || workflow === 'SC02') {
       if (px.id === 'ENG') return segments.length
       if (px.id === 'REG') return segments.filter(s => s.status === 'published' || s.status === 'validated').length
-      if (px.id === 'MMS') return segments.filter(s => s.status === 'approved' || s.storedMms).length
+      if (px.id === 'MMS') return currentMmsInventory?.count ?? (mmsLoading ? '...' : '—')
       if (px.id === 'GIS') return segments.filter(s => s.status === 'approved' || s.storedGis).length
       return segments.filter(s => s.status === 'approved' || s.storedCms).length
     }
@@ -3258,11 +3288,12 @@ function Workspace({ user }: { user: CurrentUser }) {
               />
             )}
 
-            {/* Mock inbox: retired for ENG and REG-LOCATION now that both have a
-                live panel above (IMODEL ELEMENTS / STEWARDSHIP QUEUE) backed by
-                the sandbox API. Still the only view for personas/workflows that
-                have not been migrated off seeded data. */}
-            {!showSegments && !showStewardship && (
+            {showMmsInventory && (
+              <MmsInventoryPanel inventory={currentMmsInventory} loading={mmsLoading} error={mmsError}
+                hasTwin={activeTwin !== null} onRefresh={() => void refreshMmsInventory()} />
+            )}
+            {/* Mock inbox remains only for personas/workflows without a live panel. */}
+            {!showSegments && !showStewardship && !showMmsInventory && (
               <section style={{ flex: 1 }}>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', letterSpacing: '0.14em', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span>INBOX</span>

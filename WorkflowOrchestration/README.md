@@ -39,10 +39,17 @@ strawman it started as, kept so the shape of the workflow is visible.
 - Class picker — `GET /admin/eng/class-catalog`
 - Publish Design — `POST /admin/eng/promote`
 - Stewardship queue — `GET /admin/reg-location/stewardship`
-- CMS asset register — `GET /admin/cms/customer-assets`
-- MMS inventory — `GET /admin/mms/locations`
+- MMS inventory (SC01/SC02, MMS/TAMS persona) — `GET /admin/mms/lightunits?twin={uuid}`
 
-**Still local state:** the INBOX tables, and every SC04 and SC11 action.
+**Still local state:** the other INBOX tables (including CMS), and the
+SC04/SC05/SC11 workflows.
+
+MMS inventory shows persisted `LIGHT_UNIT_INVENTORY` rows, not approved registry
+proposals. The MMS engine automatically ingests approved streetlights; there is
+no manual Store Assets action in SC02's MMS panel. The panel refreshes every
+10 seconds while open, with a manual refresh button and a live sidebar count.
+The API and UI must be deployed together; Azure dev received both on 2026-10-21,
+replacing the previous mock MMS view.
 
 Real panels are labelled `LIVE` with the endpoint they call, and are kept in
 their own sections rather than folded into the mock inbox — mixing the two would
@@ -74,15 +81,13 @@ Two panels look like they filter client-side and do not.
 an unfiltered response at all, so filtering the array the client already holds
 would show nothing — the registry has to be asked for them.
 
-**The CMS asset register is deliberately unscoped by twin.** It lists every row
-in `cms.Asset`, because the point of the panel is what CMS holds rather than what
-the registry currently relates to the selected twin. The endpoint accepts a
-`twin` and resolves it through ws-CIR; the panel simply does not pass one.
-
-CMS assets arriving from a segment are identification-only placeholders: no
-serial, manufacturer, model or commission date until CONSTRUCT supplies them via
-REG-ASSET. The `DETAIL` column says `PLACEHOLDER` for those, derived server-side
-rather than stored.
+**MMS inventory is always scoped by twin.** The API resolves the selected UUID
+through CIR's active `ITWIN-SITE/MMS` mapping and only returns light units with
+that native `OWNER_ID`. Missing mappings are shown explicitly and never fall
+back to all assets; unavailable or malformed provider responses produce a 502
+and an error on screen. Switching twins hides the previous site's rows while
+the next request completes. Provider and CIR keys stay on the API server;
+configure `Providers:Mms` and `Providers:Cir` with their base URLs and keys.
 
 ## Layout
 

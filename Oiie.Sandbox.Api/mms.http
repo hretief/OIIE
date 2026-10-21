@@ -1,0 +1,8 @@
+@baseUrl = https://localhost:7241
+@twin = d543ebf6-7f25-4c07-a8cf-cc43410b780d
+
+### Actual MMS light units scoped by CIR ITWIN-SITE/MMS owner
+GET {{baseUrl}}/admin/mms/lightunits?twin={{twin}}
+
+### Invalid/empty twin: HTTP 400, no unscoped inventory fallback
+GET {{baseUrl}}/admin/mms/lightunits?twin=00000000-0000-0000-0000-000000000000

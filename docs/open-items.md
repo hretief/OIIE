@@ -1599,12 +1599,31 @@ identify it.
 
 Raised 2026-09-11. **Provider/REST groundwork and first-pass streetlight
 ingestion implemented and deployed to Azure dev 2026-10-21. Deliberate
-backfill, live ingestion verification and live MMS UI integration remain outstanding.**
+backfill remains outstanding. XX01 ingestion and CIR write-back verified live;
+site-scoped MMS API/UI integration deployed and verified on Azure dev 2026-10-21.**
 
 MMS consumes sites into `SETUP_OWNER`. The new segment leg consumes REG-LOCATION
 SC02 approvals into `LIGHT_UNIT_INVENTORY`, mirrors verified governed class
 identities into `RDL-CLASS/MMS`, and writes the MMS-assigned key into `ASSET/MMS`.
-The operator MMS view still uses mock data; persistence does not make that view live.
+The deployed SC01/SC02 MMS
+panel now reads persisted light units through `GET /admin/mms/lightunits?twin=`
+and CIR's `ITWIN-SITE/MMS` owner mapping. The Sandbox API and built UI were
+deployed together; no MMS replay was needed for XX01.
+
+Deployment `6f7dc558-60e5-4efa-b2ff-ab7fb818ebfb` on
+`acme-api-sandbox-dev` reached `RuntimeSuccessful`. Live checks returned XX01 as
+light unit 2 under owner 5 and the expected federation UUID. Other-site requests
+did not expose XX01; an unmapped site returned `siteMapped=false`, and missing,
+empty and malformed twin parameters returned HTTP 400. Served HTML, JavaScript
+and CSS matched the local production build. No reset, approval replay, schema
+change or app-setting change was performed.
+
+Follow-up dev tuning on 2026-10-21 changed MMS segment polling to
+`*/30 * * * * *` (every 30 seconds); site polling remains every two minutes.
+The engine restarted successfully and restored all three site subscriptions.
+Local settings and the dev deployment script preserve the faster interval;
+other deployment environments retain two-minute segment polling. Subsequent
+live verification found XX01, XX02 and XX03 in District 2's MMS inventory.
 
 Most of the groundwork is already laid, largely by DR-030:
 
@@ -1734,8 +1753,9 @@ Originally estimated at 60-70% of the REG-LOCATION effort. DR-033 revises that
 upward, closer to parity: the leg is bidirectional rather than one-directional,
 and dispatch reads CIR rather than a local dictionary. The provider's nullable-parent contract and grouping-preserving SQL were
 corrected on 2026-10-21; the first engine leg is now implemented locally.
-Generic table writers, source-revision ordering and live UI data are not part of
-this first pass.
+Generic table writers and source-revision ordering are not part of this first
+ingestion pass. Live UI data is implemented as the separate Sandbox API/UI
+follow-up described above.
 
 ### `LIGHT_SYSTEM_ID` is not the engine's to populate
 

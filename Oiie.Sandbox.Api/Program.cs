@@ -90,6 +90,11 @@ if (!providerOptions.RegLocation.IsConfigured)
     unconfigured.Add($"{ProviderOptions.SectionName}:RegLocation");
 }
 
+if (!providerOptions.Mms.IsConfigured)
+    unconfigured.Add($"{ProviderOptions.SectionName}:Mms");
+if (!providerOptions.Cir.IsConfigured)
+    unconfigured.Add($"{ProviderOptions.SectionName}:Cir");
+
 if (unconfigured.Count > 0)
 {
     throw new InvalidOperationException(
@@ -106,6 +111,10 @@ builder.Services.AddHttpClient<RegLocationProviderClient>((sp, http) =>
 
 builder.Services.AddScoped<IEngSource, ProviderEngSource>();
 builder.Services.AddScoped<IRegLocationSource, ProviderRegLocationSource>();
+builder.Services.AddHttpClient<MmsProviderClient>((sp, http) =>
+    ConfigureProvider(http, providerOptions.Mms));
+builder.Services.AddHttpClient<IMmsInventorySource, MmsInventorySource>((sp, http) =>
+    ConfigureProvider(http, providerOptions.Cir));
 
 static void ConfigureProvider(HttpClient http, ProviderEndpointOptions options)
 {
@@ -200,6 +209,7 @@ app.UseCors();
 app.UseMiddleware<AdminKeyMiddleware>();
 
 app.MapSandboxAdminEndpoints();
+app.MapMmsInventoryEndpoints();
 
 // Anything not matched above is a client-side route, so the app's own shell
 // answers it.

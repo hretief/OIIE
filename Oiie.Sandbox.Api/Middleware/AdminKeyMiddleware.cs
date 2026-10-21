@@ -77,6 +77,7 @@ public sealed class AdminKeyMiddleware(RequestDelegate next, IConfiguration conf
         // rather than the Sandbox's reference data.
         "/admin/eng/element-class-catalog",
         "/admin/reg-location/stewardship",
+        "/admin/mms/lightunits",
     ];
 
     /// <summary>
